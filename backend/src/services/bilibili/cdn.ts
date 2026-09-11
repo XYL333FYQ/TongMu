@@ -60,24 +60,44 @@ export interface MediaTrackCandidate {
 }
 
 /**
- * 使用 HEAD + Range 探测单个 URL 是否可达。
- * 接受 2xx/3xx/405 等表示网络可达的响应。
+ * 使用 HEAD 探测单个 URL；HEAD 被拒绝或结果模糊时，用极小 Range GET
+ * 验证真实读取路径。部分 CDN 的 HEAD=403、GET=206，不能把 HEAD 当最终结论。
  */
-async function checkUrlReachable(url: string): Promise<boolean> {
+export async function checkUrlReachable(
+  url: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<boolean> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), HEALTH_CHECK_TIMEOUT_MS);
   try {
-    const response = await fetch(url, {
+    const response = await fetchImpl(url, {
       method: 'HEAD',
       signal: controller.signal,
       headers: {
         Referer: 'https://www.bilibili.com',
         Origin: 'https://www.bilibili.com',
         'User-Agent': DEFAULT_USER_AGENT,
-        Range: 'bytes=0-0',
       },
     });
-    return response.ok || response.status === 405;
+    if (response.ok) return true;
+
+    const rangeResponse = await fetchImpl(url, {
+      method: 'GET',
+      signal: controller.signal,
+      headers: {
+        Referer: 'https://www.bilibili.com',
+        Origin: 'https://www.bilibili.com',
+        'User-Agent': DEFAULT_USER_AGENT,
+        Range: 'bytes=0-1',
+      },
+    });
+    const reachable = rangeResponse.ok || rangeResponse.status === 206;
+    try {
+      await rangeResponse.body?.cancel();
+    } catch {
+      // 探测只读取响应头；取消失败不影响可达性结论。
+    }
+    return reachable;
   } catch {
     return false;
   } finally {

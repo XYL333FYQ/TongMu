@@ -8,7 +8,7 @@ const OPTIONS_CHANGE_EVENT = 'zcontrol:bilibili-parse-options-change'
 
 /** 默认解析偏好（新影片在未配置前使用此默认值） */
 export const DEFAULT_PARSE_OPTIONS = {
-  preferMp4: true,
+  preferMp4: false,
   bufferMode: false,
   p2pEnabled: false,
   cliEnabled: false,

@@ -42,6 +42,10 @@ interface ResolveProgressMessage {
   loggedIn?: boolean;
   vipStatus?: number;
   currentQn?: number;
+  requestedQn?: number;
+  qualityLabel?: string;
+  videoBandwidth?: number;
+  fallbackReason?: string;
   acceptQuality?: { id: number; label: string; resolution?: string }[];
   /** 多 P 视频的分集列表（单 P 视频为 undefined） */
   pages?: ResolvePageInfo[];
@@ -172,6 +176,10 @@ router.get('/resolve-bilibili', async (req: AuthenticatedRequest, res) => {
       loggedIn: result.loggedIn,
       vipStatus: result.vipStatus,
       currentQn: result.currentQn,
+      requestedQn: result.requestedQn,
+      qualityLabel: result.qualityLabel,
+      videoBandwidth: result.videoBandwidth,
+      fallbackReason: result.fallbackReason,
       acceptQuality: result.acceptQuality,
       pages: result.pages,
       currentPage: result.currentPage,

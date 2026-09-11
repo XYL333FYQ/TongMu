@@ -142,7 +142,7 @@ export function BilibiliParseSettings({
         setBilibiliParseOptions(movieId, {
           cliEnabled: false,
           p2pEnabled: undefined,
-          preferMp4: current.cliPrevPreferMp4 ?? true,
+          preferMp4: current.cliPrevPreferMp4 ?? false,
           cliPrevPreferMp4: undefined,
         })
       }
@@ -414,7 +414,7 @@ export function BilibiliParseSettings({
               displayPreferMp4,
               handlePreferMp4Change,
               'DASH 高清',
-              'MP4 流畅',
+              '兼容 MP4',
               !isHost || cliEnabled || dashLocked
             )}
             <div
@@ -429,7 +429,7 @@ export function BilibiliParseSettings({
                     ? 'CLI 代理已启用，当前使用本地 DASH 高画质解析（不再自动降级 MP4）'
                     : '已启用 CLI 但未连接本地代理，请先启动本地 zcontrol-cli 以播放 DASH 高画质'
                   : displayPreferMp4
-                    ? 'MP4 直链，seek 流畅，清晰度通常 480P/720P'
+                    ? '兼容模式（MP4，最高 720P），直链且 seek 流畅'
                     : 'DASH 分离流，支持 1080P/4K，seek 需缓冲'}
             </div>
           </div>

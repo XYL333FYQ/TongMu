@@ -142,6 +142,14 @@ export interface ResolveResult {
   loggedIn: boolean;
   vipStatus: number;
   currentQn?: number;
+  /** 用户/客户端请求的清晰度，用于识别是否发生降级。 */
+  requestedQn?: number;
+  /** 实际清晰度的人类可读标签。 */
+  qualityLabel?: string;
+  /** 实际选中视频 representation 的带宽。 */
+  videoBandwidth?: number;
+  /** 发生格式、权限或网络降级时的明确原因。 */
+  fallbackReason?: string;
   acceptQuality?: { id: number; label: string; resolution?: string }[];
   /**
    * 视频所有分集列表（多 P 视频才有，单 P 视频为单元素数组）。
@@ -156,6 +164,27 @@ export interface ResolveResult {
    * 下游 BV 号提取 / 分 P 解析 / 弹幕匹配不再依赖短链可达性。
    */
   resolvedUrl: string;
+}
+
+/**
+ * 根据账号权限生成低于请求值的候选清晰度，严格按从高到低尝试。
+ * 与旧的 `requestedQn > 32 ? 32 : 16` 相比，不会从 4K 直接跳崖到 480P。
+ */
+export function getQualityFallbackCandidates(
+  requestedQn: number,
+  isVip: boolean,
+  hasCookie: boolean,
+): number[] {
+  return Object.keys(QN_QUALITY_MAP)
+    .map(Number)
+    .filter((candidate) => candidate < requestedQn)
+    .filter((candidate) => (isVip ? true : !VIP_ONLY_QNS.includes(candidate)))
+    .filter((candidate) => (hasCookie ? true : candidate <= 32))
+    .sort((a, b) => b - a);
+}
+
+function qualityLabel(qn: number | undefined): string | undefined {
+  return qn === undefined ? undefined : (QN_QUALITY_MAP[qn]?.label ?? String(qn));
 }
 
 export class ResolveError extends Error {
@@ -445,6 +474,7 @@ export async function resolveBilibiliVideo(
   const hasCookie = !!cookie;
   const defaultQn = getDefaultQn(isVip, hasCookie);
   const requestedQn = qn ?? defaultQn;
+  let fallbackReason: string | undefined;
 
   // preferMp4 优先路径：直接请求 MP4 单流（fnval=1 + platform=html5），浏览器原生播放无需 MSE
   // MP4 模式最高支持 720P(qn=64)，失败时不再回退 DASH，避免用户明确选择 MP4 后仍被切换到 DASH
@@ -471,6 +501,12 @@ export async function resolveBilibiliVideo(
         loggedIn: !!cookie,
         vipStatus: isVip ? 1 : 0,
         currentQn: Math.min(mp4.currentQn ?? MP4_MAX_QN, MP4_MAX_QN),
+        requestedQn,
+        qualityLabel: qualityLabel(mp4.currentQn ?? MP4_MAX_QN),
+        fallbackReason:
+          requestedQn > MP4_MAX_QN
+            ? '兼容模式仅支持最高 720P，已按 MP4 上限请求'
+            : undefined,
         acceptQuality: mp4AcceptQuality,
         pages: pagesInfo,
         currentPage,
@@ -494,23 +530,26 @@ export async function resolveBilibiliVideo(
       { qn: requestedQn, codec, isVip },
     );
   } catch (err) {
-    // 权限错误：逐级降级重试
-    // 未登录时请求 480P 仍可能失败（部分视频限制），降级到 360P
-    // 已登录非会员请求 1080P 失败时，降级到 480P
-    // 已登录会员请求 4K 失败时，降级到 1080P
+    // 权限错误：按账号真正可能使用的质量从高到低逐级重试，避免跳崖降级。
     if (err instanceof NoPermissionError) {
-      const fallbackQn = requestedQn > 32 ? 32 : 16;
-      if (fallbackQn !== requestedQn) {
-        emit('playurl', `当前清晰度无权限，降级到 ${fallbackQn === 32 ? '480P' : '360P'}...`);
-        playUrl = await getPlayUrl(
-          info.bvid,
-          effectiveCid,
-          cookie,
-          { qn: fallbackQn, codec, isVip },
-        );
-      } else {
-        throw err;
+      playUrl = null;
+      for (const fallbackQn of getQualityFallbackCandidates(requestedQn, isVip, hasCookie)) {
+        emit('playurl', `当前清晰度无权限，尝试 ${qualityLabel(fallbackQn)}...`);
+        try {
+          playUrl = await getPlayUrl(info.bvid, effectiveCid, cookie, {
+            qn: fallbackQn,
+            codec,
+            isVip,
+          });
+          if (playUrl) {
+            fallbackReason = `请求 ${qualityLabel(requestedQn)} 无权限，使用最高可用的 ${qualityLabel(playUrl.currentQn ?? fallbackQn)}`;
+            break;
+          }
+        } catch (fallbackError) {
+          if (!(fallbackError instanceof NoPermissionError)) throw fallbackError;
+        }
       }
+      if (!playUrl) throw err;
     } else {
       throw err;
     }
@@ -609,6 +648,10 @@ export async function resolveBilibiliVideo(
           loggedIn: !!cookie,
           vipStatus: isVip ? 1 : 0,
           currentQn: Math.min(mp4.currentQn ?? MP4_MAX_QN, MP4_MAX_QN),
+          requestedQn,
+          qualityLabel: qualityLabel(mp4.currentQn ?? MP4_MAX_QN),
+          fallbackReason:
+            fallbackReason ?? 'DASH CDN 探测失败，已降级到 MP4 兼容模式',
           acceptQuality: mp4AcceptQuality,
           pages: pagesInfo,
           currentPage,
@@ -633,6 +676,14 @@ export async function resolveBilibiliVideo(
       loggedIn: !!cookie,
       vipStatus: isVip ? 1 : 0,
       currentQn: playUrl.currentQn,
+      requestedQn,
+      qualityLabel: qualityLabel(playUrl.currentQn),
+      videoBandwidth: playUrl.bestVideo.bandwidth,
+      fallbackReason:
+        fallbackReason ??
+        (playUrl.currentQn !== requestedQn
+          ? `服务端实际返回 ${qualityLabel(playUrl.currentQn)}，低于请求的 ${qualityLabel(requestedQn)}`
+          : undefined),
       acceptQuality,
       pages: pagesInfo,
       currentPage,
@@ -671,6 +722,12 @@ export async function resolveBilibiliVideo(
       loggedIn: !!cookie,
       vipStatus: isVip ? 1 : 0,
       currentQn: playUrl.currentQn,
+      requestedQn,
+      qualityLabel: qualityLabel(playUrl.currentQn),
+      fallbackReason:
+        playUrl.currentQn !== requestedQn
+          ? `服务端实际返回 ${qualityLabel(playUrl.currentQn)}，低于请求的 ${qualityLabel(requestedQn)}`
+          : fallbackReason,
       acceptQuality: mp4AcceptQuality,
       pages: pagesInfo,
       currentPage,
