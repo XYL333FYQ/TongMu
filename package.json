@@ -1,0 +1,55 @@
+{
+  "name": "zviewer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ZViewer —— 基于浏览器的在线观影与屏幕共享平台。",
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev -w backend\" \"npm run dev -w frontend\" --kill-others",
+    "dev:backend": "npm run dev -w backend",
+    "dev:frontend": "npm run dev -w frontend",
+    "build": "npm run build -ws",
+    "lint": "npm run lint -ws",
+    "start": "node scripts/start.js",
+    "build:exe": "node scripts/build-exe.js",
+    "build:backend-exe": "node scripts/build-exe.js",
+    "build:all": "node build-all.js",
+    "postinstall": "patch-package"
+  },
+  "pkg": {
+    "assets": [
+      "node_modules/sql.js/dist/sql-wasm.wasm",
+      "backend/.env"
+    ]
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.0",
+    "@yao-pkg/pkg": "^6.22.0",
+    "concurrently": "^8.2.2",
+    "patch-package": "^8.0.1"
+  },
+  "dependencies": {
+    "@types/multer": "^2.2.0",
+    "multer": "^2.2.0",
+    "node-forge": "^1.4.0",
+    "sql.js": "^1.14.1"
+  },
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Zero-wyc/ZViewer.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Zero-wyc/ZViewer/issues"
+  },
+  "homepage": "https://github.com/Zero-wyc/ZViewer#readme",
+  "overrides": {
+    "mediabunny": "file:frontend/vendor/mediabunny"
+  }
+}

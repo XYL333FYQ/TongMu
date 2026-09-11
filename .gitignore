@@ -1,0 +1,60 @@
+# ---- 依赖与构建产物 ----
+node_modules/
+dist/
+build/
+.zcode/
+.next/
+coverage/
+__pycache__/
+*.pyc
+.DS_Store
+
+# ---- 环境配置（含密钥，禁止提交） ----
+.env
+.env.local
+.env.*.local
+
+# ---- 日志 ----
+log/
+*.log
+*.log.*
+
+# ---- 数据库文件（含用户信息、cookie、密码哈希等敏感数据，禁止提交） ----
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.db
+*.db-journal
+
+# ---- 运行时数据根目录 ----
+# 所有持久化数据（数据库、用户上传文件、头像、媒体切片、SSL 自签名证书等）
+# 统一存放在 config/ 目录下；升级时仅需保留 config/ 即可保留全部数据，
+# 首次部署时由后端自动创建。
+config/
+
+# ---- 后端旧上传路径（新路径统一在 config/uploads/） ----
+backend/uploads/
+
+# ---- SSL 证书与私钥（禁止提交） ----
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# ---- 生产服务运行时状态 ----
+.prod.pids.json
+.prod.ports.json
+apply-update.bat
+
+# ---- 本地测试产物 ----
+bili_test.json
+test-dev.sqlite
+
+# ---- 编辑器与 IDE ----
+.vscode/
+.idea/
+.trae/
+.workbuddy/
+.update-temp/
