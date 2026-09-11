@@ -473,6 +473,8 @@ router.get('/proxy', async (req: AuthenticatedRequest, res: Response): Promise<v
 
     await proxyHttpUpstream(req, res, {
       url: upstreamUrl,
+      targetPolicy: 'trusted-private',
+      trustedPrivateHosts: [new URL(session.client.baseUrl).hostname],
       headers: {
         extra: {
           'X-Emby-Token': session.token,
@@ -537,6 +539,8 @@ router.get('/stream', async (req: AuthenticatedRequest, res: Response): Promise<
 
     await proxyHttpUpstream(req, res, {
       url: upstreamUrl,
+      targetPolicy: 'trusted-private',
+      trustedPrivateHosts: [new URL(session.client.baseUrl).hostname],
       headers: {
         extra: {
           'X-Emby-Token': session.token,

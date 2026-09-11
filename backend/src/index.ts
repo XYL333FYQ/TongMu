@@ -483,6 +483,8 @@ async function bootstrap() {
     if (!nmsService.isAvailable()) return next();
     void proxyHttpUpstream(req, res, {
       url: `http://localhost:${httpFlvPort}${req.originalUrl}`,
+      targetPolicy: 'trusted-private',
+      trustedPrivateHosts: ['localhost'],
       cors: 'wildcard',
       defaultContentType: 'video/x-flv',
       logTag: 'live',

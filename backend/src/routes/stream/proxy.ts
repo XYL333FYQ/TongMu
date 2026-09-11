@@ -85,6 +85,7 @@ export const imageProxyRouter = Router().get(
 
     await proxyHttpUpstream(req, res, {
       url: trimmedUrl,
+      targetPolicy: 'public-only',
       headers: { referer: BILIBILI_REFERER },
       // img 标签不携带凭证，CORS 交由全局中间件反射 Origin
       cors: 'global',
@@ -129,6 +130,7 @@ const router = Router().get(
 
     await proxyHttpUpstream(req, res, {
       url: trimmedUrl,
+      targetPolicy: 'public-only',
       headers: isBilibiliUrl
         ? { referer: BILIBILI_REFERER, origin: BILIBILI_REFERER }
         : {},

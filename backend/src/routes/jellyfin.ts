@@ -365,6 +365,8 @@ router.get('/proxy', async (req: AuthenticatedRequest, res: Response): Promise<v
 
     await proxyHttpUpstream(req, res, {
       url: upstreamUrl,
+      targetPolicy: 'trusted-private',
+      trustedPrivateHosts: [new URL(session.client.baseUrl).hostname],
       headers: { extra: { 'X-Emby-Token': session.token, Referer: session.client.baseUrl } },
       cors: 'wildcard',
       defaultContentType: audioTranscode ? 'application/x-mpegURL' : 'video/mp4',
@@ -415,6 +417,8 @@ router.get('/stream', async (req: AuthenticatedRequest, res: Response): Promise<
 
     await proxyHttpUpstream(req, res, {
       url: upstreamUrl,
+      targetPolicy: 'trusted-private',
+      trustedPrivateHosts: [new URL(session.client.baseUrl).hostname],
       headers: { extra: { 'X-Emby-Token': session.token, Referer: session.client.baseUrl } },
       cors: 'wildcard',
       defaultContentType: audioTranscode ? 'application/x-mpegURL' : 'video/mp4',

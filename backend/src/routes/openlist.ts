@@ -695,6 +695,8 @@ router.get('/proxy', async (req: AuthenticatedRequest, res: Response): Promise<v
     const contentType = getContentType(detectMediaFormat(entry.name || targetPath));
     await proxyHttpUpstream(req, res, {
       url: entry.rawUrl,
+      targetPolicy: 'trusted-private',
+      trustedPrivateHosts: [new URL(mount.serverUrl).hostname],
       cors: 'wildcard',
       defaultContentType: contentType,
       logTag: 'openlist-proxy',
@@ -792,6 +794,8 @@ router.get('/stream', async (req: AuthenticatedRequest, res: Response): Promise<
     const contentType = getContentType(detectMediaFormat(entry.name || movie.path));
     await proxyHttpUpstream(req, res, {
       url: entry.rawUrl,
+      targetPolicy: 'trusted-private',
+      trustedPrivateHosts: [new URL(normalizedServerUrl).hostname],
       cors: 'wildcard',
       defaultContentType: contentType,
       logTag: 'openlist-stream',

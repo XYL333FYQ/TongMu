@@ -47,6 +47,7 @@ router.get('/proxy', async (req: AuthenticatedRequest, res: Response) => {
   const q = req.query;
   await proxyHttpUpstream(req, res, {
     url: url.trim(),
+    targetPolicy: 'public-only',
     headers: {
       referer: typeof q.referer === 'string' ? q.referer : undefined,
       origin: typeof q.origin === 'string' ? q.origin : undefined,

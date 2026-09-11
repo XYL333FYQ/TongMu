@@ -16,6 +16,11 @@
 import { Request, Response } from 'express';
 import { Readable, Transform } from 'node:stream';
 import { isInternalNetworkHost } from '../network-utils';
+import {
+  fetchWithProxyPolicy,
+  ProxyTargetError,
+  type ProxyTargetPolicy,
+} from './safe-fetch';
 
 /** 将字节数格式化为人类可读单位 */
 function formatBytes(bytes: number): string {
@@ -61,6 +66,10 @@ export interface UpstreamHeaderOptions {
 export interface ProxyHttpOptions {
   /** 上游 URL（调用方需已完成校验） */
   url: string;
+  /** 公开用户 URL 必须 public-only；仅服务器配置派生的挂载可 trusted-private。 */
+  targetPolicy: ProxyTargetPolicy;
+  /** trusted-private 仅允许这些由服务器配置产生的 hostname 访问私网。 */
+  trustedPrivateHosts?: string[];
   headers?: UpstreamHeaderOptions;
   /**
    * wildcard：手动设置 ACAO:*（无凭证的 video.src 直连场景）；
@@ -182,11 +191,11 @@ export async function proxyHttpUpstream(
 
   try {
     const startUpstreamFetch = () =>
-      fetch(requestUrl, {
+      fetchWithProxyPolicy(requestUrl, {
         method: req.method,
         headers: buildUpstreamHeaders(req, h),
         signal: controller.signal,
-      });
+      }, opts.targetPolicy, opts.trustedPrivateHosts);
 
     // 转发原始 HTTP 方法：HEAD 请求转发为 HEAD（避免上游下载整个视频体），
     // GET 请求转发为 GET（含 Range 头时上游返回 206 部分内容）。
@@ -323,6 +332,14 @@ export async function proxyHttpUpstream(
     });
     stream.pipe(byteCounter).pipe(res);
   } catch (err) {
+    if (err instanceof ProxyTargetError) {
+      if (!res.headersSent) {
+        res.status(403).json({ success: false, message: err.message });
+      } else {
+        res.end();
+      }
+      return;
+    }
     const isAbort = err instanceof Error && err.name === 'AbortError';
     if (isAbort && res.writableEnded) return; // 客户端主动断连，无需响应
     if (isAbort) {
