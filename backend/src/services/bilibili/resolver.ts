@@ -44,7 +44,7 @@ export interface ResolveProgress {
  * 实测：B站 对 MP4 格式有硬性限制，无论是否会员，html5 接口最高仅返回 720P(qn=64)。
  * 1080P / 1080P+ / 4K / HDR / 杜比视界 / 8K 仅 DASH 格式支持，MP4 无法获取。
  */
-const MP4_MAX_QN = 64; // 720P
+export const MP4_MAX_QN = 64; // 720P
 
 /** B站 请求 UA（与 client.ts / cdn.ts 一致，短链展开请求也使用） */
 const DEFAULT_USER_AGENT =
@@ -55,7 +55,7 @@ const DEFAULT_USER_AGENT =
  *
  * 收窄后为空时回退到 [480P, 360P] 兜底，保证前端至少有可选项展示。
  */
-function narrowAcceptQualityForMp4(
+export function narrowAcceptQualityForMp4(
   list: { id: number; label: string; resolution?: string }[],
 ): { id: number; label: string; resolution?: string }[] {
   const filtered = list.filter((q) => q.id <= MP4_MAX_QN);
@@ -84,7 +84,7 @@ export interface ResolveOptions {
    * 优先 MP4 单流格式（fnval=1 + platform=html5）。
    * - true：先请求 MP4 直链，浏览器原生 video.src 播放，无需 MSE，seek 流畅
    * - false/undefined：默认 DASH 路径（分离 m4s，需 MSE 双轨合并）
-   * MP4 模式最高支持 1080P(qn=80),1080P+/4K/HDR 等高画质仍需 DASH。
+   * 兼容 MP4 模式最高请求 720P(qn=64)；1080P 及以上画质使用 DASH。
    * 失败时自动回退 DASH。
    */
   preferMp4?: boolean;
@@ -102,8 +102,8 @@ export interface ResolveOptions {
    */
   cid?: number;
   /**
-   * 跳过 CDN 健康检查（HEAD 探测）。
-   * - false/undefined（默认）：播放场景需要选择可达 URL，做 HEAD 探测
+   * 跳过 CDN 健康检查（advisory HEAD + bounded Range GET）。
+   * - false/undefined（默认）：播放场景需要选择可达 URL，执行有界探测
    * - true：下载场景直接返回 baseUrl，下载失败时由调用方重试 backupUrl
    *
    * 下载场景无需 HEAD 探测，因为 downloadToFile 本身就是连接验证；
@@ -181,6 +181,17 @@ export function getQualityFallbackCandidates(
     .filter((candidate) => (isVip ? true : !VIP_ONLY_QNS.includes(candidate)))
     .filter((candidate) => (hasCookie ? true : candidate <= 32))
     .sort((a, b) => b - a);
+}
+
+/** Choose from the service-returned accept_quality list, never from a guessed cliff. */
+export function selectBestAvailableQuality(
+  requestedQn: number,
+  available: Array<{ id: number }>,
+): number | undefined {
+  return available
+    .map((item) => item.id)
+    .filter((id) => Number.isFinite(id) && id <= requestedQn)
+    .sort((a, b) => b - a)[0];
 }
 
 function qualityLabel(qn: number | undefined): string | undefined {
@@ -530,26 +541,37 @@ export async function resolveBilibiliVideo(
       { qn: requestedQn, codec, isVip },
     );
   } catch (err) {
-    // 权限错误：按账号真正可能使用的质量从高到低逐级重试，避免跳崖降级。
+    // 权限错误：先请求该账号的保守默认档，以此拿到服务端真实的
+    // accept_quality，再从其中选择不高于用户请求的最高一档。
     if (err instanceof NoPermissionError) {
-      playUrl = null;
-      for (const fallbackQn of getQualityFallbackCandidates(requestedQn, isVip, hasCookie)) {
-        emit('playurl', `当前清晰度无权限，尝试 ${qualityLabel(fallbackQn)}...`);
+      const baselineQn = Math.min(requestedQn, getDefaultQn(isVip, hasCookie));
+      emit('playurl', `当前清晰度无权限，读取服务端可用清晰度...`);
+      try {
+        playUrl = await getPlayUrl(info.bvid, effectiveCid, cookie, {
+          qn: baselineQn,
+          codec,
+          isVip,
+        });
+      } catch (fallbackError) {
+        if (fallbackError instanceof NoPermissionError) throw err;
+        throw fallbackError;
+      }
+      if (!playUrl) throw err;
+      const available = filterQualitiesByVip(playUrl.acceptQuality, isVip, hasCookie);
+      const fallbackQn = selectBestAvailableQuality(requestedQn, available) ?? playUrl.currentQn;
+      if (fallbackQn && fallbackQn !== playUrl.currentQn) {
         try {
-          playUrl = await getPlayUrl(info.bvid, effectiveCid, cookie, {
+          const refetched = await getPlayUrl(info.bvid, effectiveCid, cookie, {
             qn: fallbackQn,
             codec,
             isVip,
           });
-          if (playUrl) {
-            fallbackReason = `请求 ${qualityLabel(requestedQn)} 无权限，使用最高可用的 ${qualityLabel(playUrl.currentQn ?? fallbackQn)}`;
-            break;
-          }
+          if (refetched) playUrl = refetched;
         } catch (fallbackError) {
           if (!(fallbackError instanceof NoPermissionError)) throw fallbackError;
         }
       }
-      if (!playUrl) throw err;
+      fallbackReason = `请求 ${qualityLabel(requestedQn)} 无权限，服务端最高可用 ${qualityLabel(playUrl.currentQn ?? fallbackQn)}`;
     } else {
       throw err;
     }
@@ -558,12 +580,9 @@ export async function resolveBilibiliVideo(
     throw new ResolveError('无法获取播放地址，可能需要登录或大会员', 'NO_PERMISSION');
   }
 
-  // 清晰度匹配：若请求的 qn 不在 acceptQuality 中，回退到首个可用清晰度
+  // 清晰度匹配：以 B站实际返回的 accept_quality 为事实源，选择不高于请求值的最高项。
   let acceptQuality = filterQualitiesByVip(playUrl.acceptQuality, isVip, hasCookie);
-  let effectiveQn = playUrl.currentQn;
-  if (effectiveQn && !acceptQuality.some((q) => q.id === effectiveQn)) {
-    effectiveQn = acceptQuality[0]?.id ?? playUrl.currentQn;
-  }
+  let effectiveQn = selectBestAvailableQuality(requestedQn, acceptQuality) ?? playUrl.currentQn;
 
   if (effectiveQn && effectiveQn !== playUrl.currentQn) {
     emit('quality', '正在匹配可用清晰度...');

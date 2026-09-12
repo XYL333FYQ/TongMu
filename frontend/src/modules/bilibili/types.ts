@@ -41,6 +41,10 @@ export interface ResolvedSource {
   loggedIn?: boolean
   cid?: number
   currentQn?: number
+  requestedQn?: number
+  qualityLabel?: string
+  videoBandwidth?: number
+  fallbackReason?: string
   acceptQuality?: QualityOption[]
   /** 大会员状态：0=非大会员，1=大会员。用于统一会员感知逻辑。 */
   vipStatus?: number
@@ -85,6 +89,10 @@ export interface ResolveProgressLine {
   loggedIn?: boolean
   cid?: number
   currentQn?: number
+  requestedQn?: number
+  qualityLabel?: string
+  videoBandwidth?: number
+  fallbackReason?: string
   acceptQuality?: QualityOption[]
   /** 大会员状态：0=非大会员，1=大会员。后端在解析时会回传该字段。 */
   vipStatus?: number
