@@ -1,0 +1,19 @@
+services:
+  zviewer-browser:
+    build:
+      context: .
+      dockerfile: Dockerfile.linux-browser
+    environment:
+      MEDIA_BROWSER_RESOLVER: "true"
+      MEDIA_BROWSER_MAX_CONCURRENCY: "${MEDIA_BROWSER_MAX_CONCURRENCY:-1}"
+      MEDIA_HANDLE_SECRET: "${MEDIA_HANDLE_SECRET:-}"
+    ports:
+      - "3333:3333"
+      - "3334:3334"
+    volumes:
+      - zviewer-browser-data:/app/config
+    shm_size: "1gb"
+    restart: unless-stopped
+
+volumes:
+  zviewer-browser-data:

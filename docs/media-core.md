@@ -28,9 +28,11 @@ Codec, dimensions and track metadata are available when a specialized resolver s
 
 `POST /api/stream/media/resolve` returns a media descriptor, playback plan and an encrypted, authenticated media handle. AES-256-GCM hides the upstream URL and anti-hotlink credentials. The handle expires after 12 hours and is bound to the room supplied by the host, or to the requesting user when no room is supplied. The key comes from `MEDIA_HANDLE_SECRET`; otherwise it is generated once inside `config/jwt-secrets.json`, so handles survive restarts when `config/` is persistent.
 
-The gateway revalidates HTTP(S), DNS results and every redirect. Public inputs cannot reach loopback, RFC1918, link-local, metadata, multicast or reserved ranges. Unsafe forwarding headers are removed. HLS manifests rewrite playlists, segments and key URLs into child handles. Standard MPD attributes are rewritten to a same-origin, handle-authorized segment endpoint; cross-origin template expansion is rejected rather than becoming an open proxy.
+Room handles require a separate encrypted room grant issued only after that exact Socket.IO connection joins the room. Every media request verifies both the grant and its still-active session; leaving, disconnecting, or being kicked revokes new requests immediately. Guests are isolated by socket capability rather than the shared numeric guest user ID. User-scoped handles remain bound to their original user.
 
-Range is passed through exactly. A valid upstream 206 retains `Content-Range`, `Content-Length` and status. If an upstream ignores a client Range and answers 200, the gateway cancels it and returns 502 instead of downloading an entire movie or falsely advertising seek support.
+The gateway revalidates HTTP(S), DNS results and every redirect. Public inputs cannot reach loopback, RFC1918, link-local, metadata, multicast or reserved ranges. Unsafe forwarding headers are removed. HLS manifests rewrite playlists, segments and key URLs into child handles. Standard MPD inheritance is parsed as XML: MPD, Period, AdaptationSet and Representation `BaseURL` values are resolved in order, inherited templates are materialized per Representation, and each base receives an origin-constrained child handle. Cookie/Authorization-like headers are valid only for their recorded credential origin and are stripped after cross-origin redirects.
+
+Range is passed through exactly. A valid upstream 206 retains `Content-Range`, `Content-Length` and status. If an upstream ignores a non-zero seek Range and answers 200, the gateway cancels it and returns 502 instead of downloading an entire movie or falsely advertising seek support. Only the initial open-ended `bytes=0-` request may degrade to an honest 200 sequential stream; no `Accept-Ranges` or `Content-Range` is invented. playsvideo remux/transcode is blocked when the probe confirms that Range is unavailable.
 
 ## Browser Resolver deployment
 
@@ -53,7 +55,13 @@ npm run build
 npm start
 ```
 
-For Linux containers, install Chromium plus its system libraries (`npx playwright install --with-deps chromium`) in the image and persist `/app/config`. Keep the concurrency at one for small deployments. The shipped single-file Docker image does not currently embed a Chromium binary, so Browser Resolver must stay disabled there unless a compatible executable is added and `PLAYWRIGHT_EXECUTABLE_PATH` is set.
+For Linux containers, keep the default `Dockerfile.linux-single` image lightweight, or explicitly select the Chromium-enabled image:
+
+```bash
+docker compose -f docker-compose.linux-browser.yml up -d --build
+```
+
+`Dockerfile.linux-browser` is pinned to the Playwright 1.62 Chromium image, enables `MEDIA_BROWSER_RESOLVER`, reserves a 1 GiB shared-memory area, and persists `/app/config`. Keep concurrency at one for small deployments. Set a stable, random `MEDIA_HANDLE_SECRET` in the Compose environment for production; otherwise the persisted config volume supplies the generated key. The lightweight image still does not contain Chromium and should leave Browser Resolver disabled.
 
 Every Chromium connection is forced through a short-lived loopback proxy owned by the resolver. The proxy validates the destination, resolves all addresses, rejects any non-public answer, and connects to the already-validated IP. This closes the DNS-rebinding gap between a page-route check and Chromium's actual socket. The request interceptor remains as an earlier rejection layer. High-risk multi-tenant deployments should still isolate Chromium with an egress firewall as defense in depth.
 
@@ -65,7 +73,7 @@ The historical database still uses `synchronize: true`; switching it off without
 TYPEORM_MIGRATIONS=true
 ```
 
-The stored descriptor never contains resolver headers/cookies. It keeps diagnostics and the original input. Playback uses an unexpired room handle directly and transparently re-resolves the original input when the handle is near expiry; refreshed results are cached for the current browser session. A later release can add a complete historical baseline and then safely disable synchronize.
+The stored descriptor never contains resolver headers/cookies. It keeps diagnostics, the original input, selected Bilibili quality metadata, signed room handles and the playback plan. Playback reuses an unexpired handle directly. Only the room host may refresh an expiring shared source and broadcast the replacement; viewers never independently re-resolve it with their own account/Cookie state. A later release can add a complete historical baseline and then safely disable synchronize.
 
 ## Validation
 
@@ -78,7 +86,7 @@ npm run build --workspace=frontend
 npm run build
 ```
 
-Automated fixtures cover magic detection for MP4, WebM, Matroska, TS, FLV, HLS and DASH; DRM; extensionless URLs; incorrect MIME; HEAD 403 plus Range 206; no-Range servers; anti-hotlink headers; signed/encrypted handles; SSRF addresses, browser CONNECT targets and redirect targets; exact 206 semantics; candidate scoring; and planner remux/audio-only decisions. Playwright starts an isolated full stack and verifies login, room creation, the unified media form, descriptor/plan diagnostics, persistence, and a 390 px layout without horizontal overflow.
+Automated fixtures cover magic detection for MP4, WebM, Matroska, AVI, WMV/ASF, TS, FLV, HLS and DASH; DRM; extensionless URLs; HTML behind misleading media suffixes; independent HEAD/Range timeouts; no-Range servers; anti-hotlink headers; signed/encrypted room handles; deterministic SSRF/DNS checks; exact 206 and sequential-200 semantics; Browser Resolver Cookie provenance and JSON limits; nested DASH BaseURL/SegmentTemplate/SegmentList resolution; candidate scoring; and planner remux/audio-only decisions. Playwright starts an isolated full stack and performs real playback of generated MP4 and extensionless MP4 (including seek), HLS master/extensionless child/AES-128/fMP4, and DASH nested BaseURL audio/video adaptations. It also verifies that HLS/DASH child requests remain authorized after a two-second access JWT expires, and checks the unified panel at 390 px without horizontal overflow.
 
 ## Manual acceptance checklist
 
@@ -96,6 +104,6 @@ Automated fixtures cover magic detection for MP4, WebM, Matroska, TS, FLV, HLS a
 
 - Generic parsing cannot defeat CAPTCHA, login workflows, obfuscated/proprietary players or DRM.
 - Browser sniffing captures normal page-session cookies only; it does not automate account login.
-- Cross-origin DASH layouts that rely on complex BaseURL inheritance may need a site-specific resolver.
+- Exotic DASH features outside BaseURL, SegmentTemplate and SegmentList (for example SegmentBase byte-range indexes) may still need a site-specific resolver.
 - A media handle expires after 12 hours. The host re-resolves it on playback when it is near expiry; this refresh is on demand rather than a background scheduler.
 - Full video transcoding and server-side ffprobe are intentionally not bundled.
