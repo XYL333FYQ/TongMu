@@ -1,6 +1,7 @@
-import { apiFetch, safeJson } from '@/lib/api'
+import { apiFetch, getApiUrl, safeJson } from '@/lib/api'
 import type { MediaFormat } from '@/lib/mediaFormat'
 import { getRoomMediaGrant } from './roomMediaGrant'
+import type { ResolvedSource } from '@/modules/bilibili/types'
 
 export interface MediaDescriptor {
   title?: string
@@ -32,6 +33,22 @@ export interface MediaDescriptor {
   loggedIn?: boolean
   vip?: boolean
   fallbackReason?: string
+  sourceMetadata?: {
+    bilibili?: {
+      cid: number
+      requestedQn?: number
+      actualQn?: number
+      preferMp4: boolean
+      availableQualities: Array<{ id: number; label: string; resolution?: string }>
+      qualityLabel?: string
+      videoCodec?: string
+      audioCodec?: string
+      videoBandwidth?: number
+      fallbackReason?: string
+      pages?: Array<{ page: number; cid: number; part: string; duration: number }>
+      currentPage?: number
+    }
+  }
   drm: { protected: boolean; systems?: string[]; reason?: string }
   expiresAt?: number
   probe: {
@@ -56,11 +73,51 @@ export interface ResolvedMedia {
   plan: PlaybackPlan
 }
 
+export function normalizeMediaGatewayUrl(url?: string): string | undefined {
+  if (!url || !url.startsWith('/') || url.startsWith('//')) return url
+  return new URL(url, `${getApiUrl()}/`).toString()
+}
+
+export function toBilibiliResolvedSource(resolved: ResolvedMedia): ResolvedSource {
+  const descriptor = resolved.descriptor
+  const metadata = descriptor.sourceMetadata?.bilibili
+  return {
+    title: descriptor.title,
+    videoUrl: descriptor.finalUrl,
+    audioUrl: descriptor.audioUrl,
+    videoCodec: descriptor.videoCodec,
+    audioCodec: descriptor.audioCodec,
+    duration: descriptor.duration,
+    format: descriptor.container,
+    loggedIn: descriptor.loggedIn,
+    vipStatus: descriptor.vip ? 1 : 0,
+    cid: metadata?.cid,
+    currentQn: metadata?.actualQn ?? descriptor.actualQuality,
+    requestedQn: metadata?.requestedQn ?? descriptor.requestedQuality,
+    qualityLabel: metadata?.qualityLabel ?? descriptor.qualityLabel,
+    videoBandwidth: metadata?.videoBandwidth ?? descriptor.bitrate,
+    fallbackReason: metadata?.fallbackReason ?? descriptor.fallbackReason,
+    acceptQuality: metadata?.availableQualities,
+    pages: metadata?.pages,
+    currentPage: metadata?.currentPage,
+    resolvedUrl: descriptor.originalUrl,
+  }
+}
+
+export interface ResolveMediaInputOptions {
+  browserSniff?: boolean
+  roomId?: string
+  requestedQn?: number
+  preferMp4?: boolean
+  page?: number
+  cid?: number
+}
+
 export async function resolveMediaInput(
   input: string,
-  browserSniff = false,
-  roomId?: string
+  options: ResolveMediaInputOptions = {}
 ): Promise<ResolvedMedia> {
+  const { browserSniff = false, roomId, requestedQn, preferMp4, page, cid } = options
   const video = document.createElement('video')
   const response = await apiFetch('/api/stream/media/resolve', {
     method: 'POST',
@@ -70,6 +127,10 @@ export async function resolveMediaInput(
       roomId,
       roomGrant: roomId ? getRoomMediaGrant(roomId) : undefined,
       browserSniff,
+      requestedQn,
+      preferMp4,
+      page,
+      cid,
       capabilities: {
         nativeHls: video.canPlayType('application/vnd.apple.mpegurl') !== '',
         mediaSource: typeof MediaSource !== 'undefined',
@@ -87,5 +148,12 @@ export async function resolveMediaInput(
   if (!response.ok || !data.success || !data.descriptor || !data.plan) {
     throw new Error(data.message || '媒体解析失败')
   }
-  return { descriptor: data.descriptor, plan: data.plan }
+  return {
+    descriptor: {
+      ...data.descriptor,
+      finalUrl: normalizeMediaGatewayUrl(data.descriptor.finalUrl) ?? data.descriptor.finalUrl,
+      audioUrl: normalizeMediaGatewayUrl(data.descriptor.audioUrl),
+    },
+    plan: data.plan,
+  }
 }

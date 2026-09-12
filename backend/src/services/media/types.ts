@@ -4,6 +4,8 @@ export type MediaContainer =
   | 'mp4'
   | 'webm'
   | 'mkv'
+  | 'avi'
+  | 'wmv'
   | 'mov'
   | 'flv'
   | 'ts'
@@ -57,6 +59,22 @@ export interface MediaDescriptor {
   loggedIn?: boolean;
   vip?: boolean;
   fallbackReason?: string;
+  sourceMetadata?: {
+    bilibili?: {
+      cid: number;
+      requestedQn?: number;
+      actualQn?: number;
+      preferMp4: boolean;
+      availableQualities: Array<{ id: number; label: string; resolution?: string }>;
+      qualityLabel?: string;
+      videoCodec?: string;
+      audioCodec?: string;
+      videoBandwidth?: number;
+      fallbackReason?: string;
+      pages?: Array<{ page: number; cid: number; part: string; duration: number }>;
+      currentPage?: number;
+    };
+  };
   drm: DrmInfo;
   expiresAt?: number;
   headers?: Record<string, string>;
@@ -93,6 +111,8 @@ export interface ResolverContext {
   browserSniff?: boolean;
   requestedQn?: number;
   preferMp4?: boolean;
+  page?: number;
+  cid?: number;
 }
 
 export interface SourceResolver {

@@ -11,7 +11,6 @@
  */
 import type { Movie } from '@/store/roomStore'
 import { detectMediaFormat, type MediaFormat } from '@/lib/mediaFormat'
-import { resolveBilibiliWithOptions } from '@/modules/bilibili/bilibiliApi'
 import { extractBvid, resolveBilibiliViaCli } from '@/modules/bilibili/cliApi'
 import { useCliAgentStore } from '@/store/cliAgentStore'
 import { getBilibiliParseOptions } from '@/modules/bilibili/parseOptions'
@@ -77,6 +76,8 @@ export interface ResolvedMovieSource {
    * 直接向用户提示错误，保持"源站直传、服务器零媒体流量"的直链语义。
    */
   noProxyFallback?: boolean
+  /** Present only for the server-side Bilibili Media Core path. */
+  mediaCore?: ResolvedMedia
 }
 
 export interface ResolveMovieSourceOptions {
@@ -89,6 +90,8 @@ export interface ResolveMovieSourceOptions {
   recovery?: RecoverySourceInfo | null
   /** B站 在线解析进度回调 */
   onProgress?: (step: string, message: string) => void
+  /** Only the room host may centrally refresh shared signed handles. */
+  canRefreshRoomMedia?: boolean
 }
 
 const mediaCoreResolveCache = new Map<
@@ -106,9 +109,19 @@ export function isMediaCoreMovie(movie: Movie): boolean {
 
 async function resolveMediaCoreMovie(
   movie: Movie,
-  roomId?: string
+  roomId?: string,
+  canRefreshRoomMedia = false
 ): Promise<ResolvedMovieSource> {
   const stored = movie.mediaDescriptor ?? {}
+  const storedBilibili = (stored.sourceMetadata as
+    | {
+        bilibili?: {
+          cid?: number
+          actualQn?: number
+          availableQualities?: QualityOption[]
+        }
+      }
+    | undefined)?.bilibili
   const storedExpiry = Number(stored.expiresAt ?? 0)
   const storedPlan = stored.playbackPlan as { engine?: string } | undefined
   if (storedExpiry > Date.now() + 60_000) {
@@ -119,6 +132,10 @@ async function resolveMediaCoreMovie(
       videoCodec: movie.videoCodec,
       audioCodec: movie.audioCodec,
       duration: movie.duration || 0,
+      cid: storedBilibili?.cid ?? movie.cid,
+      currentQn: storedBilibili?.actualQn ?? movie.currentQn,
+      acceptQuality:
+        storedBilibili?.availableQualities ?? movie.acceptQuality,
       reusedRecoveryUrl: false,
       playsvideoEnabled:
         storedPlan?.engine === 'playsvideo' ||
@@ -126,11 +143,23 @@ async function resolveMediaCoreMovie(
     }
   }
 
+  if (roomId && !canRefreshRoomMedia) {
+    throw new Error('房间媒体凭证已过期，正在等待房主统一刷新')
+  }
+
   const cached = mediaCoreResolveCache.get(movie.id)
   if (cached && cached.expiresAt > Date.now() + 60_000) {
     return mapMediaCoreResult(cached.resolved, movie)
   }
-  const resolved = await resolveMediaInput(movie.sourceInput!, true, roomId)
+  const bili = stored.sourceMetadata as
+    | { bilibili?: { requestedQn?: number; preferMp4?: boolean } }
+    | undefined
+  const resolved = await resolveMediaInput(movie.sourceInput!, {
+    browserSniff: true,
+    roomId,
+    requestedQn: bili?.bilibili?.requestedQn ?? movie.currentQn,
+    preferMp4: bili?.bilibili?.preferMp4 === true,
+  })
   mediaCoreResolveCache.set(movie.id, {
     resolved,
     expiresAt: resolved.descriptor.expiresAt ?? Date.now() + 5 * 60_000,
@@ -143,6 +172,7 @@ function mapMediaCoreResult(
   movie: Movie
 ): ResolvedMovieSource {
   const { descriptor, plan } = resolved
+  const bilibili = descriptor.sourceMetadata?.bilibili
   return {
     sourceUrl: descriptor.finalUrl,
     audioUrl: descriptor.audioUrl,
@@ -150,6 +180,9 @@ function mapMediaCoreResult(
     videoCodec: descriptor.videoCodec,
     audioCodec: descriptor.audioCodec,
     duration: descriptor.duration ?? movie.duration ?? 0,
+    cid: bilibili?.cid ?? movie.cid,
+    currentQn: bilibili?.actualQn ?? descriptor.actualQuality ?? movie.currentQn,
+    acceptQuality: bilibili?.availableQualities ?? movie.acceptQuality,
     reusedRecoveryUrl: false,
     mkvFastPath: plan.engine === 'direct' && descriptor.container === 'mkv',
     playsvideoEnabled:
@@ -288,8 +321,8 @@ function purgeBilibiliResolveCache(movieId: number): void {
  */
 export async function resolveBilibiliOnline(
   movie: Movie,
-  onProgress?: (step: string, message: string) => void,
-  options?: { preferMp4?: boolean; forceRefresh?: boolean }
+  _onProgress?: (step: string, message: string) => void,
+  options?: { preferMp4?: boolean; forceRefresh?: boolean; roomId?: string }
 ): Promise<ResolvedMovieSource> {
   const parsePrefs = getBilibiliParseOptions(movie.id)
   const proxyUrl = parsePrefs.cliEnabled ? getActiveCliProxyUrl() : null
@@ -332,23 +365,15 @@ export async function resolveBilibiliOnline(
         forceDash
       )
       resolvedSource = mapResolvedSourceToMovieSource(resolved, movie)
-    } else {
-      const resolved = await resolveBilibiliWithOptions(
-        movie.url,
-        movie.currentQn,
-        onProgress,
-        { preferMp4: effectivePreferMp4 }
-      )
-      resolvedSource = mapResolvedSourceToMovieSource(resolved, movie)
-    }
+    } else throw new Error('CLI 解析缺少有效 BV 号或 cid')
   } else {
-    const resolved = await resolveBilibiliWithOptions(
-      movie.url,
-      movie.currentQn,
-      onProgress,
-      { preferMp4: effectivePreferMp4 }
-    )
-    resolvedSource = mapResolvedSourceToMovieSource(resolved, movie)
+    const core = await resolveMediaInput(movie.sourceInput || movie.url, {
+      roomId: options?.roomId,
+      requestedQn: movie.currentQn,
+      preferMp4: effectivePreferMp4,
+      cid: movie.cid,
+    })
+    resolvedSource = { ...mapMediaCoreResult(core, movie), mediaCore: core }
   }
 
   bilibiliResolveCache.set(cacheKey, {
@@ -444,10 +469,13 @@ export async function resolveMovieSource({
   sourceType,
   recovery,
   onProgress,
+  canRefreshRoomMedia,
 }: ResolveMovieSourceOptions): Promise<ResolvedMovieSource> {
   // 新媒体核心创建的影片必须先走 descriptor/handle 路径。尤其是通过统一
   // 入口识别出的 B站 项目，其 movie.url 是句柄，绝不能交给旧 BV 解析器。
-  if (isMediaCoreMovie(movie)) return resolveMediaCoreMovie(movie, roomId)
+  if (isMediaCoreMovie(movie)) {
+    return resolveMediaCoreMovie(movie, roomId, canRefreshRoomMedia)
+  }
 
   if (sourceType === 'bilibili') {
     // 恢复场景且旧 URL 可用：直接复用，跳过在线解析
@@ -475,7 +503,7 @@ export async function resolveMovieSource({
         reusedRecoveryUrl: true,
       }
     }
-    return resolveBilibiliOnline(movie, onProgress)
+    return resolveBilibiliOnline(movie, onProgress, { roomId })
   }
 
   if (sourceType === 'anime') {

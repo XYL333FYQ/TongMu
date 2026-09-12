@@ -31,7 +31,6 @@ import {
   resolveBilibiliOnline,
   getEffectivePreferMp4,
 } from '@/modules/room/watch-together/movie-source-resolver'
-import { isCliProxyUrl } from '@/modules/player/services/url-proxy'
 import type { WatchTogetherState } from '../types'
 import type { ResolvedSource } from '@/modules/bilibili/types'
 import { safePlay } from '../safePlay'
@@ -44,18 +43,10 @@ interface ViewerLocalOverride {
 }
 
 /**
- * 确保观众端按本地解析偏好获得独立的 B站 源。
+ * 仅在观众明确启用本机 CLI 时获得客户端本地 B站 源。
  *
- * 当房主广播的源格式/地址与观众本地偏好不一致时（例如房主使用 CLI DASH，
- * 而观众默认 MP4），观众端按自己的偏好重新解析，避免被迫使用房主的 CLI 代理
- * 或被切换到自己不期望的格式。
- *
- * 房主启用 CLI 时广播 hostCliEnabled=true。CLI 是各客户端独立的本地代理，
- * 观众无法使用房主的 CLI，因此收到此标记时强制走 MP4（即使观众本地偏好 DASH），
- * 避免观众被迫走服务器 DASH 消耗带宽。
- *
- * 若本地偏好与房主一致且房主源不是本地 CLI 代理地址，则返回 null，直接使用房主源。
- * 本地已启用 CLI 时同样会按 DASH 偏好解析并覆盖。
+ * 普通观众必须消费房主广播的 room-scoped signed handle；否则不同账号、Cookie
+ * 或 VIP 状态会让同一房间解析出不同源。CLI 是唯一例外，因为它只访问观众本机。
  */
 async function ensureViewerLocalOverride(
   state: WatchTogetherState
@@ -70,31 +61,24 @@ async function ensureViewerLocalOverride(
     return null
   }
 
-  const effectivePreferMp4 = getEffectivePreferMp4(movieId)
-  const hostIsMp4 = state.format === 'mp4'
   const existing = storeState.viewerCliResolvedSource
   const existingIsMp4 = existing?.resolved.format === 'mp4'
 
-  // 房主启用了 CLI（hostCliEnabled=true）但观众本地未开启 CLI 时，
-  // 强制观众走 MP4：CLI 仅为房主本地高画质代理，观众无法使用。
   const viewerCliEnabled = getBilibiliParseOptions(movieId).cliEnabled
-  const forceViewerMp4 = !!state.hostCliEnabled && !viewerCliEnabled
-  const adjustedPreferMp4 = forceViewerMp4 || effectivePreferMp4
-
-  // 本地偏好与房主一致且房主源不是 CLI 代理地址：直接使用房主广播源
-  if (adjustedPreferMp4 === hostIsMp4 && !isCliProxyUrl(state.sourceUrl)) {
+  if (!viewerCliEnabled) {
     if (existing?.movieId === movieId) {
       storeState.setViewerCliResolvedSource(null)
     }
     return null
   }
+  const adjustedPreferMp4 = getEffectivePreferMp4(movieId)
 
   // 已有匹配的本地覆盖时直接复用，避免重复解析
   if (existing?.movieId === movieId && existingIsMp4 === adjustedPreferMp4) {
     return existing
   }
 
-  // 按本地偏好独立解析
+  // 此分支只能走本机 CLI；服务器解析路径由房主统一刷新和广播。
   try {
     const resolved = await resolveBilibiliOnline(movie, undefined, {
       preferMp4: adjustedPreferMp4,

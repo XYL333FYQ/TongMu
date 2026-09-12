@@ -9,11 +9,12 @@ import { Modal } from '@/components/ui/Modal'
 import { message } from '@/components/ui/message'
 import { useSocket } from '@/hooks/useSocket'
 import { useRoomStore, type Movie } from '@/store/roomStore'
+import { filterQualitiesByVip, getBilibiliUserInfo } from '@/modules/bilibili/bilibiliApi'
 import {
-  resolveBilibiliWithOptions,
-  filterQualitiesByVip,
-  getBilibiliUserInfo,
-} from '@/modules/bilibili/bilibiliApi'
+  resolveMediaInput,
+  toBilibiliResolvedSource,
+  type ResolvedMedia,
+} from '@/modules/media/mediaApi'
 import { extractBvid, resolveBilibiliViaCli } from '@/modules/bilibili/cliApi'
 import type { ResolvedSource } from '@/modules/bilibili/types'
 import { BilibiliParseSettings } from './BilibiliParseSettings'
@@ -156,6 +157,7 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
         throw new Error('CLI 代理未连接，请先启动本地 zcontrol-cli')
       }
       let resolved: ResolvedSource
+      let mediaCore: ResolvedMedia | undefined
 
       if (proxyUrl) {
         // CLI 已连接：使用本地 CLI 代理解析，强制 DASH，不再降级 MP4
@@ -173,12 +175,25 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
           throw new Error('无法提取 BV 号或 cid，无法使用 CLI 代理')
         }
       } else {
-        // CLI 未连接时强制 MP4 降级
-        resolved = await resolveBilibiliWithOptions(movie.url, qn, undefined, {
+        mediaCore = await resolveMediaInput(movie.sourceInput || movie.url, {
+          roomId,
+          requestedQn: qn,
           preferMp4: getEffectivePreferMp4(movie.id),
+          cid: movie.cid,
         })
+        resolved = toBilibiliResolvedSource(mediaCore)
       }
       await updateMovie(roomId, movie.id, {
+        ...(mediaCore
+          ? {
+              url: mediaCore.descriptor.finalUrl,
+              sourceInput: movie.sourceInput || movie.url,
+              mediaDescriptor: {
+                ...mediaCore.descriptor,
+                playbackPlan: mediaCore.plan,
+              },
+            }
+          : {}),
         audioUrl: resolved.audioUrl,
         format: resolved.format,
         videoCodec: resolved.videoCodec,
@@ -264,6 +279,7 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
       }
       const targetPage = movie.pages?.find((p) => p.page === page)
       let resolved: ResolvedSource
+      let mediaCore: ResolvedMedia | undefined
 
       if (proxyUrl && targetPage) {
         // CLI 已连接：使用本地 CLI 代理解析目标分P，强制 DASH，不再降级 MP4
@@ -281,18 +297,25 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
           throw new Error('无法提取 BV 号或 cid，无法使用 CLI 代理')
         }
       } else {
-        // CLI 未连接时强制 MP4 降级
-        resolved = await resolveBilibiliWithOptions(
-          movie.url,
-          movie.currentQn,
-          undefined,
-          {
-            preferMp4: getEffectivePreferMp4(movie.id),
-            page,
-          }
-        )
+        mediaCore = await resolveMediaInput(movie.sourceInput || movie.url, {
+          roomId,
+          requestedQn: movie.currentQn,
+          preferMp4: getEffectivePreferMp4(movie.id),
+          page,
+        })
+        resolved = toBilibiliResolvedSource(mediaCore)
       }
       await updateMovie(roomId, movie.id, {
+        ...(mediaCore
+          ? {
+              url: mediaCore.descriptor.finalUrl,
+              sourceInput: movie.sourceInput || movie.url,
+              mediaDescriptor: {
+                ...mediaCore.descriptor,
+                playbackPlan: mediaCore.plan,
+              },
+            }
+          : {}),
         audioUrl: resolved.audioUrl,
         format: resolved.format,
         videoCodec: resolved.videoCodec,

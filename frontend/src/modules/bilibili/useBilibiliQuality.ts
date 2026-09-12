@@ -1,6 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
 import type { RefObject, MutableRefObject } from 'react'
-import { resolveBilibiliWithOptions } from './bilibiliApi'
 import type { QualityOption, ResolvedSource } from './types'
 import { useRoomStore } from '@/store/roomStore'
 // 分P 切换支持：applyQualityChange 在有 preResolved 时跳过 format 检查
@@ -9,6 +8,7 @@ import { safePlay } from '@/modules/sync-playback/safePlay'
 import { getBilibiliParseOptions } from './parseOptions'
 import { extractBvid, resolveBilibiliViaCli } from './cliApi'
 import { getActiveCliProxyUrl } from '@/modules/room/watch-together/movie-source-resolver'
+import { resolveMediaInput } from '@/modules/media/mediaApi'
 
 function qualitiesEqual(a: QualityOption[], b: QualityOption[]): boolean {
   if (a.length !== b.length) return false
@@ -59,7 +59,7 @@ export interface BilibiliQualityContext {
 export interface ApplyQualityChangeOptions {
   /** 是否广播给观众（房主 true，观众 false） */
   broadcast?: boolean
-  /** 已解析的结果（来自 MovieListPanel 预解析），不传则内部调用 resolveBilibiliWithOptions */
+  /** 已解析的结果（来自 MovieListPanel 预解析），不传则走 CLI 或 Media Core */
   resolved?: ResolvedSource
 }
 
@@ -111,6 +111,9 @@ export function useBilibiliQuality(ctx: BilibiliQualityContext) {
 
       try {
         let resolved: ResolvedSource
+        let mediaCore:
+          | Awaited<ReturnType<typeof resolveMediaInput>>
+          | undefined
         if (preResolved) {
           resolved = preResolved
         } else {
@@ -131,7 +134,36 @@ export function useBilibiliQuality(ctx: BilibiliQualityContext) {
               throw new Error('无法提取 BV 号或 cid，无法使用 CLI 代理')
             }
           } else {
-            resolved = await resolveBilibiliWithOptions(movie.url, qn)
+            const roomId = useRoomStore.getState().roomId
+            mediaCore = await resolveMediaInput(movie.sourceInput || movie.url, {
+              roomId,
+              requestedQn: qn,
+              preferMp4: parsePrefs.preferMp4 === true,
+              cid: movie.cid,
+            })
+            const descriptor = mediaCore.descriptor
+            const metadata = descriptor.sourceMetadata?.bilibili
+            resolved = {
+              title: descriptor.title,
+              videoUrl: descriptor.finalUrl,
+              audioUrl: descriptor.audioUrl,
+              videoCodec: descriptor.videoCodec,
+              audioCodec: descriptor.audioCodec,
+              duration: descriptor.duration,
+              format: descriptor.container,
+              cid: metadata?.cid,
+              currentQn: metadata?.actualQn ?? descriptor.actualQuality,
+              requestedQn: metadata?.requestedQn ?? descriptor.requestedQuality,
+              qualityLabel: metadata?.qualityLabel ?? descriptor.qualityLabel,
+              videoBandwidth: metadata?.videoBandwidth ?? descriptor.bitrate,
+              fallbackReason: metadata?.fallbackReason ?? descriptor.fallbackReason,
+              acceptQuality: metadata?.availableQualities,
+              loggedIn: descriptor.loggedIn,
+              vipStatus: descriptor.vip ? 1 : 0,
+              pages: metadata?.pages,
+              currentPage: metadata?.currentPage,
+              resolvedUrl: descriptor.originalUrl,
+            }
           }
         }
 
@@ -181,6 +213,26 @@ export function useBilibiliQuality(ctx: BilibiliQualityContext) {
 
         setCurrentQuality(newState.currentQn ?? null)
         setAvailableQualities(newState.acceptQuality ?? [])
+
+        if (mediaCore && ctx.isHostRef.current) {
+          const roomId = useRoomStore.getState().roomId
+          await useRoomStore.getState().updateMovie(roomId, movie.id, {
+            url: mediaCore.descriptor.finalUrl,
+            audioUrl: mediaCore.descriptor.audioUrl,
+            sourceInput: movie.sourceInput || movie.url,
+            mediaDescriptor: {
+              ...mediaCore.descriptor,
+              playbackPlan: mediaCore.plan,
+            },
+            format: mediaCore.descriptor.container,
+            videoCodec: mediaCore.descriptor.videoCodec,
+            audioCodec: mediaCore.descriptor.audioCodec,
+            duration: mediaCore.descriptor.duration,
+            cid: mediaCore.descriptor.sourceMetadata?.bilibili?.cid,
+            currentQn: newState.currentQn,
+            acceptQuality: newState.acceptQuality,
+          })
+        }
 
         // 协议精简（v2）：清晰度切换仅通过 broadcastState 推送完整 state（含 currentQn）。
         // 旧版额外 emit 'quality-change' 事件，但后端从未实现转发 handler 导致功能失效。

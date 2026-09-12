@@ -1,5 +1,6 @@
 import { resolveBilibiliVideo } from '../../bilibili/resolver';
 import type { MediaDescriptor, ResolverContext, SourceResolver } from '../types';
+import { getBilibiliMediaHeaders } from '../../bilibili/cdn';
 
 export class BilibiliResolver implements SourceResolver {
   readonly name = 'bilibili';
@@ -12,6 +13,7 @@ export class BilibiliResolver implements SourceResolver {
     const result = await resolveBilibiliVideo({
       url: input, userId: context.userId, cookie: context.cookie,
       qn: context.requestedQn, preferMp4: context.preferMp4,
+      page: context.page, cid: context.cid,
     });
     return {
       title: result.title,
@@ -25,6 +27,23 @@ export class BilibiliResolver implements SourceResolver {
       actualQuality: result.currentQn, qualityLabel: result.qualityLabel,
       loggedIn: result.loggedIn, vip: result.vipStatus === 1,
       fallbackReason: result.fallbackReason, drm: { protected: false },
+      headers: getBilibiliMediaHeaders(),
+      sourceMetadata: {
+        bilibili: {
+          cid: result.cid,
+          requestedQn: result.requestedQn,
+          actualQn: result.currentQn,
+          preferMp4: context.preferMp4 === true,
+          availableQualities: result.acceptQuality ?? [],
+          qualityLabel: result.qualityLabel,
+          videoCodec: result.videoCodec,
+          audioCodec: result.audioCodec,
+          videoBandwidth: result.videoBandwidth,
+          fallbackReason: result.fallbackReason,
+          pages: result.pages,
+          currentPage: result.currentPage,
+        },
+      },
       probe: { method: 'resolver', bytesRead: 0, warnings: result.fallbackReason ? [result.fallbackReason] : [] },
     };
   }

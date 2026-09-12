@@ -37,7 +37,6 @@ import {
   type KazumiEpisode,
 } from '@/modules/kazumi'
 import {
-  resolveBilibili,
   resolveFTP,
   buildBilibiliImageProxyUrl,
   getBilibiliQrCode,
@@ -49,10 +48,7 @@ import {
   type ResolvedSource,
   type FTPParams,
 } from '@/modules/room/watch-together/resolveSource'
-import {
-  resolveBilibiliWithOptions,
-  filterQualitiesByVip,
-} from '@/modules/bilibili/bilibiliApi'
+import { filterQualitiesByVip } from '@/modules/bilibili/bilibiliApi'
 import {
   extractBvid,
   resolveBilibiliViaCli,
@@ -86,7 +82,11 @@ import {
 import { useAuthStore } from '@/store/authStore'
 import { useSystemSettingsStore } from '@/store/systemSettingsStore'
 import { cn } from '@/lib/utils'
-import { resolveMediaInput, type ResolvedMedia } from '@/modules/media/mediaApi'
+import {
+  resolveMediaInput,
+  toBilibiliResolvedSource,
+  type ResolvedMedia,
+} from '@/modules/media/mediaApi'
 
 type SourceType =
   | 'bilibili'
@@ -855,9 +855,17 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
 
       if (!resolved) {
         setResolveProgress('正在通过服务器解析...')
-        resolved = await resolveBilibili(url.trim(), undefined, (_step, msg) =>
-          setResolveProgress(msg)
-        )
+        const mediaResolved = await resolveMediaInput(url.trim(), {
+          roomId,
+          requestedQn: undefined,
+          preferMp4: false,
+        })
+        setMediaDiagnostics(mediaResolved)
+        resolved = toBilibiliResolvedSource(mediaResolved)
+      } else {
+        // CLI path remains client-local and deliberately does not create a
+        // server media handle.
+        setMediaDiagnostics(null)
       }
 
       setResolvedMovie(resolved)
@@ -911,11 +919,16 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
 
       if (!resolved) {
         setResolveProgress('正在通过服务器切换清晰度...')
-        resolved = await resolveBilibiliWithOptions(
-          url.trim(),
-          qn,
-          (_step, msg) => setResolveProgress(msg)
-        )
+        const mediaResolved = await resolveMediaInput(url.trim(), {
+          roomId,
+          requestedQn: qn,
+          preferMp4: false,
+          cid: resolvedMovie.cid,
+        })
+        setMediaDiagnostics(mediaResolved)
+        resolved = toBilibiliResolvedSource(mediaResolved)
+      } else {
+        setMediaDiagnostics(null)
       }
       setResolvedMovie(resolved)
     } catch (err) {
@@ -966,12 +979,16 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
 
       if (!resolved) {
         setResolveProgress(`正在通过服务器解析 P${page}...`)
-        resolved = await resolveBilibiliWithOptions(
-          url.trim(),
-          resolvedMovie.currentQn,
-          (_step, msg) => setResolveProgress(msg),
-          { page }
-        )
+        const mediaResolved = await resolveMediaInput(url.trim(), {
+          roomId,
+          requestedQn: resolvedMovie.currentQn,
+          preferMp4: false,
+          page,
+        })
+        setMediaDiagnostics(mediaResolved)
+        resolved = toBilibiliResolvedSource(mediaResolved)
+      } else {
+        setMediaDiagnostics(null)
       }
       setResolvedMovie(resolved)
     } catch (err) {
@@ -1000,30 +1017,28 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
     try {
       if (sourceType === 'bilibili' && resolvedMovie) {
         const title = resolvedMovie.title || url.trim()
+        const serverMedia =
+          mediaDiagnostics?.descriptor.resolver === 'bilibili'
+            ? mediaDiagnostics
+            : null
         // 存展开后的完整地址：短链（b23.tv 等）由后端解析时 302 展开，
         // 下游 BV 号提取 / 分 P 解析 / 弹幕匹配不再依赖短链可达性
-        const movieUrl = resolvedMovie.resolvedUrl || url.trim()
+        const movieUrl =
+          serverMedia?.descriptor.finalUrl ||
+          resolvedMovie.resolvedUrl ||
+          url.trim()
         await addMovie(roomId, {
           url: movieUrl,
           title,
           source: 'bilibili',
-          sourceInput: url.trim(),
-          mediaDescriptor: {
-            resolver: 'bilibili',
-            input: url.trim(),
-            sourceType: 'bilibili',
-            format: resolvedMovie.format,
-            requestedQuality: resolvedMovie.requestedQn,
-            actualQuality: resolvedMovie.currentQn,
-            qualityLabel: resolvedMovie.qualityLabel,
-            videoCodec: resolvedMovie.videoCodec,
-            audioCodec: resolvedMovie.audioCodec,
-            bitrate: resolvedMovie.videoBandwidth,
-            loggedIn: resolvedMovie.loggedIn,
-            vip: resolvedMovie.vipStatus === 1,
-            fallbackReason: resolvedMovie.fallbackReason,
-          },
-          audioUrl: resolvedMovie.audioUrl,
+          sourceInput: serverMedia ? url.trim() : undefined,
+          mediaDescriptor: serverMedia
+            ? {
+                ...serverMedia.descriptor,
+                playbackPlan: serverMedia.plan,
+              }
+            : undefined,
+          audioUrl: serverMedia?.descriptor.audioUrl || resolvedMovie.audioUrl,
           format: resolvedMovie.format,
           videoCodec: resolvedMovie.videoCodec,
           audioCodec: resolvedMovie.audioCodec,
@@ -1043,7 +1058,10 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
         }
         setMediaResolveError('')
         setResolveProgress('正在识别来源、探测真实格式并规划播放路径...')
-        const resolved = await resolveMediaInput(url.trim(), true, roomId)
+        const resolved = await resolveMediaInput(url.trim(), {
+          browserSniff: true,
+          roomId,
+        })
         setMediaDiagnostics(resolved)
         const media = resolved.descriptor
         const movieUrl = media.finalUrl

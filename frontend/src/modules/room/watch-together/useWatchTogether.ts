@@ -562,7 +562,7 @@ export function useWatchTogether({
         const resolved = await resolveBilibiliOnline(
           movie,
           undefined,
-          resolvedOptions
+          { ...resolvedOptions, roomId }
         )
         // 解析期间若已开始新的加载（切影片等），放弃本次结果
         if (loadSeqRef.current !== seq) return
@@ -616,6 +616,17 @@ export function useWatchTogether({
         // 导致 CLI 开启后无法选择高画质。
         try {
           await useRoomStore.getState().updateMovie(roomId, movie.id, {
+            ...(resolved.mediaCore
+              ? {
+                  url: resolved.sourceUrl,
+                  audioUrl: resolved.audioUrl,
+                  sourceInput: movie.sourceInput || movie.url,
+                  mediaDescriptor: {
+                    ...resolved.mediaCore.descriptor,
+                    playbackPlan: resolved.mediaCore.plan,
+                  },
+                }
+              : {}),
             acceptQuality: newState.acceptQuality,
             currentQn: newState.currentQn,
             format: newState.format,
@@ -873,6 +884,7 @@ export function useWatchTogether({
         return await resolveBilibiliOnline(movie, undefined, {
           preferMp4: getEffectivePreferMp4(movie.id),
           forceRefresh,
+          roomId,
         })
       } finally {
         setIsResolving(false)
@@ -925,6 +937,7 @@ export function useWatchTogether({
               roomId,
               sourceType,
               recovery: null, // anime 源不复用 recovery URL（短期有效）
+              canRefreshRoomMedia: isHostRef.current,
             })
           } finally {
             setIsResolving(false)
@@ -935,6 +948,7 @@ export function useWatchTogether({
             roomId,
             sourceType,
             recovery: isRecovery ? recovery : null,
+            canRefreshRoomMedia: isHostRef.current,
           })
         }
       } catch (err) {

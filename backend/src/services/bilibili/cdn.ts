@@ -7,8 +7,17 @@
  * - 与解析模块解耦，可独立测试与替换。
  */
 
-const DEFAULT_USER_AGENT =
+export const BILIBILI_MEDIA_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+/** Canonical anti-hotlink policy for Bilibili CDN media requests. */
+export function getBilibiliMediaHeaders(): Record<string, string> {
+  return {
+    Referer: 'https://www.bilibili.com/',
+    Origin: 'https://www.bilibili.com',
+    'User-Agent': BILIBILI_MEDIA_USER_AGENT,
+  };
+}
 
 /** 单条 URL 健康检查超时（毫秒）。 */
 const HEALTH_CHECK_TIMEOUT_MS = 3500;
@@ -66,42 +75,43 @@ export interface MediaTrackCandidate {
 export async function checkUrlReachable(
   url: string,
   fetchImpl: typeof fetch = fetch,
+  timeoutMs = HEALTH_CHECK_TIMEOUT_MS,
 ): Promise<boolean> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), HEALTH_CHECK_TIMEOUT_MS);
   try {
-    const response = await fetchImpl(url, {
-      method: 'HEAD',
-      signal: controller.signal,
-      headers: {
-        Referer: 'https://www.bilibili.com',
-        Origin: 'https://www.bilibili.com',
-        'User-Agent': DEFAULT_USER_AGENT,
-      },
-    });
-    if (response.ok) return true;
-
-    const rangeResponse = await fetchImpl(url, {
-      method: 'GET',
-      signal: controller.signal,
-      headers: {
-        Referer: 'https://www.bilibili.com',
-        Origin: 'https://www.bilibili.com',
-        'User-Agent': DEFAULT_USER_AGENT,
-        Range: 'bytes=0-1',
-      },
-    });
-    const reachable = rangeResponse.ok || rangeResponse.status === 206;
+    const headController = new AbortController();
+    const headTimer = setTimeout(() => headController.abort(), timeoutMs);
     try {
-      await rangeResponse.body?.cancel();
+      const response = await fetchImpl(url, {
+        method: 'HEAD',
+        signal: headController.signal,
+        headers: getBilibiliMediaHeaders(),
+      });
+      if (response.ok) return true;
     } catch {
-      // 探测只读取响应头；取消失败不影响可达性结论。
+      // HEAD is advisory; use a fresh signal for the real Range request.
+    } finally {
+      clearTimeout(headTimer);
     }
-    return reachable;
+
+    const rangeController = new AbortController();
+    const rangeTimer = setTimeout(() => rangeController.abort(), timeoutMs);
+    try {
+      const rangeResponse = await fetchImpl(url, {
+        method: 'GET',
+        signal: rangeController.signal,
+        headers: {
+          ...getBilibiliMediaHeaders(),
+          Range: 'bytes=0-1',
+        },
+      });
+      const reachable = rangeResponse.ok || rangeResponse.status === 206;
+      try { await rangeResponse.body?.cancel(); } catch { /* ignore */ }
+      return reachable;
+    } finally {
+      clearTimeout(rangeTimer);
+    }
   } catch {
     return false;
-  } finally {
-    clearTimeout(timer);
   }
 }
 
