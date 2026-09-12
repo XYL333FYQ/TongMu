@@ -67,6 +67,12 @@ export class Movie {
   source!: string | null;
 
   @Column({ type: 'varchar', nullable: true })
+  sourceInput!: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  mediaDescriptor!: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
   audioUrl!: string | null;
 
   @Column({ type: 'varchar', nullable: true })

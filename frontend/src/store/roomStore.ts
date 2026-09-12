@@ -56,6 +56,8 @@ export interface Movie {
   id: number
   sourceType: MovieSourceType
   title: string
+  sourceInput?: string | null
+  mediaDescriptor?: Record<string, unknown> | null
   url: string
   cover?: string | null
   order?: number
@@ -99,6 +101,8 @@ export interface MovieDto {
   title: string
   cover: string | null
   source: string | null
+  sourceInput: string | null
+  mediaDescriptor: Record<string, unknown> | null
   audioUrl: string | null
   format: string | null
   videoCodec: string | null
@@ -128,6 +132,8 @@ export function mapDtoToMovie(dto: MovieDto): Movie {
     id: dto.id,
     sourceType,
     title: dto.title,
+    sourceInput: dto.sourceInput,
+    mediaDescriptor: dto.mediaDescriptor,
     url: dto.url,
     cover: dto.cover,
     order: dto.order,
@@ -315,6 +321,8 @@ interface RoomState {
       title: string
       cover?: string
       source?: string
+      sourceInput?: string
+      mediaDescriptor?: Record<string, unknown>
       audioUrl?: string
       format?: string
       videoCodec?: string
@@ -341,6 +349,8 @@ interface RoomState {
     payload: {
       url?: string
       title?: string
+      sourceInput?: string
+      mediaDescriptor?: Record<string, unknown>
       cover?: string | null
       order?: number
       audioUrl?: string

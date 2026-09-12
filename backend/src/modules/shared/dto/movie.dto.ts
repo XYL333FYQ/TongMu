@@ -43,6 +43,10 @@ export interface MovieDto {
   cover?: string | null;
   /** 源类型 */
   source?: MovieSourceType | null;
+  /** 用户最初粘贴的页面或媒体地址，用于诊断和未来重新解析。 */
+  sourceInput?: string | null;
+  /** 解析时的 MediaDescriptor 与 PlaybackPlan（不含凭证 headers）。 */
+  mediaDescriptor?: Record<string, unknown> | null;
   /** DASH 音频流地址 */
   audioUrl?: string | null;
   /** 媒体容器格式 */

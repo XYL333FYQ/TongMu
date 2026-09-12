@@ -14,6 +14,7 @@ import { DanmakuTrack } from './entities/DanmakuTrack';
 import { RoomDanmakuMeta } from './entities/RoomDanmakuMeta';
 import { AuditLog } from './entities/AuditLog';
 import { DATABASE_PATH } from './services/paths';
+import { AddMediaCoreMetadata1789160000000 } from './migrations/1789160000000-AddMediaCoreMetadata';
 
 export const AppDataSource = new DataSource({
   // sql.js（wasm）驱动：纯 JS 实现，无原生模块，单文件版可在任意平台运行
@@ -25,8 +26,10 @@ export const AppDataSource = new DataSource({
   autoSave: true,
   useLocalForage: false,
   synchronize: true,
+  // Transitional opt-in while the historical schema is still synchronize-managed.
+  migrationsRun: process.env.TYPEORM_MIGRATIONS === 'true',
   logging: process.env.NODE_ENV === 'development',
   entities: [Room, Session, User, Comment, BilibiliCredential, Movie, UserMount, SystemSettings, PlaybackState, ServerFolder, DanmakuTrack, RoomDanmakuMeta, AuditLog],
-  migrations: [],
+  migrations: [AddMediaCoreMetadata1789160000000],
   subscribers: [],
 });

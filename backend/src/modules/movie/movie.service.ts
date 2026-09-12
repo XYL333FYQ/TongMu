@@ -81,6 +81,37 @@ function normalizeSourceMeta(value: unknown): string | null {
   return null;
 }
 
+function normalizeMediaDescriptor(value: unknown): string | null {
+  if (value == null) return null;
+  try {
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const blockedKeys = new Set([
+      'headers', 'cookie', 'authorization', 'proxy-authorization',
+      'password', 'candidates',
+    ]);
+    const scrub = (item: unknown, depth = 0): unknown => {
+      if (depth > 12 || item === null || typeof item !== 'object') return item;
+      if (Array.isArray(item)) return item.map((child) => scrub(child, depth + 1));
+      return Object.fromEntries(
+        Object.entries(item as Record<string, unknown>)
+          .filter(([key]) => !blockedKeys.has(key.toLowerCase()))
+          .map(([key, child]) => [key, scrub(child, depth + 1)]),
+      );
+    };
+    const serialized = JSON.stringify(scrub(parsed));
+    return Buffer.byteLength(serialized, 'utf8') <= 128 * 1024 ? serialized : null;
+  } catch { return null; }
+}
+
+function parseMediaDescriptor(value: string | null | undefined): Record<string, unknown> | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null;
+  } catch { return null; }
+}
+
 /**
  * 将 DB 中的 sourceMeta JSON 字符串解析为对象。
  *
@@ -196,6 +227,8 @@ export class MovieService {
       title: (data.title ?? '').trim(),
       cover: typeof data.cover === 'string' ? data.cover : null,
       source: typeof data.source === 'string' ? (data.source as MovieSourceType | string) : null,
+      sourceInput: typeof data.sourceInput === 'string' ? data.sourceInput.slice(0, 4096) : null,
+      mediaDescriptor: normalizeMediaDescriptor(data.mediaDescriptor),
       audioUrl: typeof data.audioUrl === 'string' ? data.audioUrl : null,
       format: typeof data.format === 'string' ? data.format : null,
       videoCodec: typeof data.videoCodec === 'string' ? data.videoCodec : null,
@@ -268,6 +301,8 @@ export class MovieService {
     if (typeof data.cover === 'string') update.cover = data.cover;
     if (typeof data.order === 'number' && Number.isFinite(data.order)) update.order = data.order;
     if (typeof data.source === 'string') update.source = data.source;
+    if (typeof data.sourceInput === 'string') update.sourceInput = data.sourceInput.slice(0, 4096);
+    if (data.mediaDescriptor !== undefined) update.mediaDescriptor = normalizeMediaDescriptor(data.mediaDescriptor);
     if (typeof data.audioUrl === 'string') update.audioUrl = data.audioUrl;
     if (typeof data.format === 'string') update.format = data.format;
     if (typeof data.videoCodec === 'string') update.videoCodec = data.videoCodec;
@@ -342,6 +377,8 @@ export class MovieService {
       title: movie.title,
       cover: movie.cover,
       source: (movie.source as MovieSourceType | null) ?? null,
+      sourceInput: movie.sourceInput,
+      mediaDescriptor: parseMediaDescriptor(movie.mediaDescriptor),
       audioUrl: movie.audioUrl,
       format: movie.format,
       videoCodec: movie.videoCodec,
