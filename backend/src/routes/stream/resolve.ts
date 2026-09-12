@@ -22,6 +22,7 @@ import {
 } from '../../services/bilibili/resolver';
 import { getUserCookie } from './helpers';
 import { getSystemSettings } from '../../services/system-settings';
+import { redactMediaError, redactMediaUrl } from '../../services/media/redact';
 
 const router = Router();
 
@@ -140,7 +141,7 @@ router.get('/resolve-bilibili', async (req: AuthenticatedRequest, res) => {
   const cookie = (await getUserCookie(userId)) || undefined;
   const resolveStartTime = Date.now();
   console.log(
-    `[bilibili] resolve-bilibili start preferMp4=${preferMp4} forceDash=${forceDash} qn=${qn ?? 'auto'} cookie=${!!cookie} url=${url.slice(0, 60)}`,
+    `[bilibili] resolve-bilibili start preferMp4=${preferMp4} forceDash=${forceDash} qn=${qn ?? 'auto'} cookie=${!!cookie} url=${redactMediaUrl(url)}`,
   );
 
   try {
@@ -159,7 +160,7 @@ router.get('/resolve-bilibili', async (req: AuthenticatedRequest, res) => {
     });
 
     console.log(
-      `[bilibili] resolve-bilibili done format=${result.format} qn=${result.currentQn} ${Date.now() - resolveStartTime}ms url=${url.slice(0, 60)}`,
+      `[bilibili] resolve-bilibili done format=${result.format} qn=${result.currentQn} ${Date.now() - resolveStartTime}ms url=${redactMediaUrl(url)}`,
     );
 
     writer.send({
@@ -187,7 +188,7 @@ router.get('/resolve-bilibili', async (req: AuthenticatedRequest, res) => {
     });
     writer.end();
   } catch (err) {
-    console.error('[bilibili] resolve-bilibili error:', err);
+    console.error('[bilibili] resolve-bilibili error:', redactMediaError(err));
     const normalized = normalizeResolveError(err);
     writer.fail(normalized.message, normalized.code);
   }
@@ -215,7 +216,7 @@ router.get('/bilibili/danmaku', async (req: AuthenticatedRequest, res) => {
       }
       effectiveCid = info.cid;
     } catch (err) {
-      console.error('[bilibili] danmaku video info error:', err);
+      console.error('[bilibili] danmaku video info error:', redactMediaError(err));
       res.status(500).json({
         success: false,
         message: err instanceof Error ? err.message : '获取 B站 视频信息失败',
@@ -233,7 +234,7 @@ router.get('/bilibili/danmaku', async (req: AuthenticatedRequest, res) => {
     const danmaku = await getDanmaku(effectiveCid);
     res.json({ success: true, danmaku });
   } catch (err) {
-    console.error('[bilibili] danmaku fetch error:', err);
+    console.error('[bilibili] danmaku fetch error:', redactMediaError(err));
     res.status(500).json({
       success: false,
       message: err instanceof Error ? err.message : '解析 B站 弹幕失败',

@@ -1,5 +1,10 @@
-import { fetchWithProxyPolicy, type ProxyTargetPolicy } from '../proxy/safe-fetch';
+import {
+  fetchWithProxyPolicy,
+  fetchWithProxyPolicyDetailed,
+  type ProxyTargetPolicy,
+} from '../proxy/safe-fetch';
 import type { MediaContainer, MediaDescriptor, MediaTransport } from './types';
+import { redactMediaError } from './redact';
 
 const MAX_PROBE_BYTES = 64 * 1024;
 const DEFAULT_TIMEOUT_MS = 8_000;
@@ -158,7 +163,7 @@ export async function probeMediaUrl(input: string, options: ProbeOptions = {}): 
           clearTimeout(headTimeout);
         }
       } catch (error) {
-        warnings.push(`HEAD failed: ${error instanceof Error ? error.message : String(error)}`);
+        warnings.push(`HEAD failed: ${redactMediaError(error)}`);
       } finally {
         await head?.body?.cancel().catch(() => undefined);
       }
@@ -166,9 +171,10 @@ export async function probeMediaUrl(input: string, options: ProbeOptions = {}): 
       const getHeaders = { ...options.headers, Range: `bytes=0-${MAX_PROBE_BYTES - 1}` };
       const getController = new AbortController();
       const getTimeout = setTimeout(() => getController.abort(), options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-      const response = await fetchWithProxyPolicy(input, {
+      const fetched = await fetchWithProxyPolicyDetailed(input, {
         method: 'GET', headers: getHeaders, signal: getController.signal,
       }, options.targetPolicy ?? 'public-only', options.trustedPrivateHosts);
+      const response = fetched.response;
       if (!response.ok) {
         await response.body?.cancel();
         throw new Error(`媒体探测失败（HTTP ${response.status}）`);
@@ -191,16 +197,20 @@ export async function probeMediaUrl(input: string, options: ProbeOptions = {}): 
       const rangeSupported = response.status === 206 || !!response.headers.get('content-range') ||
         (response.headers.get('accept-ranges') ?? head?.headers.get('accept-ranges'))?.toLowerCase() === 'bytes';
       const drmSystems = magic.drm ?? [];
+      const mediaHeaders = Object.fromEntries(
+        Object.entries(fetched.headers).filter(([name]) => name.toLowerCase() !== 'range'),
+      );
       return {
         title: (() => { try { return decodeURIComponent(new URL(response.url || input).pathname.split('/').pop() || '媒体'); } catch { return '媒体'; } })(),
         sourceType: options.sourceType ?? 'url', resolver: options.resolver ?? 'direct-url',
-        input, originalUrl: input, finalUrl: response.url || input,
+        input, originalUrl: input, finalUrl: fetched.finalUrl || response.url || input,
         transport: transportFor(container), container, contentType,
         contentLength: Number.isFinite(contentLength) ? contentLength : undefined,
         rangeSupported, contentDisposition: response.headers.get('content-disposition') ?? undefined,
         drm: { protected: drmSystems.length > 0, systems: drmSystems.length ? drmSystems : undefined,
           reason: drmSystems.length ? 'manifest contains unsupported DRM encryption' : undefined },
-        headers: options.headers,
+        headers: mediaHeaders,
+        credentialOrigins: fetched.credentialOrigins,
         probe: { method: 'range-get', bytesRead: bytes.length, magic: magic.magic, warnings },
       };
     } finally { /* each request owns an independent abort budget */ }

@@ -7,6 +7,8 @@
  * - 与解析模块解耦，可独立测试与替换。
  */
 
+import { redactMediaUrl } from '../media/redact';
+
 export const BILIBILI_MEDIA_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
@@ -147,7 +149,7 @@ export async function findReachableMediaUrl(
       checkUrlReachable(url)
         .then((ok) => {
           if (ok) {
-            console.log('[bilibili-cdn] 选择可达 URL:', url);
+            console.log('[bilibili-cdn] 选择可达 URL:', redactMediaUrl(url));
             finish(url);
             return;
           }

@@ -78,6 +78,8 @@ export interface MediaDescriptor {
   drm: DrmInfo;
   expiresAt?: number;
   headers?: Record<string, string>;
+  /** Internal-only credential provenance; stripped from public descriptors. */
+  credentialOrigins?: string[];
   candidates?: MediaCandidate[];
   probe: {
     method: 'head' | 'range-get' | 'resolver';

@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type Artplayer from 'artplayer'
 import { cn, formatDuration } from '@/lib/utils'
+import { redactMediaError } from '@/modules/player/services/media-redaction'
 import { PlayerControlBar } from './PlayerControlBar'
 import { Text } from '@/components/ui/Typography'
 import { message } from '@/components/ui/message'
@@ -683,7 +684,7 @@ export function WatchTogetherCore({
         danmakuLayerRef.current?.seek(videoRef.current?.currentTime ?? 0)
       })
       .catch((err) => {
-        console.error('[WatchTogether] load danmaku error:', err)
+        console.error('[WatchTogether] load danmaku error:', redactMediaError(err))
       })
   }, [watchTogether.cid, watchTogether.sourceType, setDefaultTrack, videoRef])
 

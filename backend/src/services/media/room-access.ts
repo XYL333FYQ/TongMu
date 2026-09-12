@@ -1,4 +1,4 @@
-import { IsNull } from 'typeorm';
+import { IsNull, type Repository } from 'typeorm';
 import { AppDataSource } from '../../data-source';
 import { Session } from '../../entities/Session';
 import {
@@ -9,6 +9,21 @@ import {
 
 export function createRoomMediaGrant(roomId: string, socketId: string): string {
   return issueRoomMediaGrant(roomId, socketId);
+}
+
+/**
+ * A process restart cannot preserve a live Socket.IO connection. Close every
+ * database session that was still marked active before accepting new requests,
+ * so persisted room grants cannot survive a crash and restart.
+ */
+export async function cleanupStaleRoomSessions(
+  sessionRepo: Pick<Repository<Session>, 'update'> = AppDataSource.getRepository(Session),
+): Promise<number> {
+  const result = await sessionRepo.update(
+    { endedAt: IsNull() },
+    { endedAt: new Date() },
+  );
+  return result.affected ?? 0;
 }
 
 /**

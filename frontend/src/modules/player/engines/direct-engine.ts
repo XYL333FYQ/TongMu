@@ -29,6 +29,7 @@ import {
   isRelativeUrl,
   isCliProxyUrl,
 } from '../services/url-proxy'
+import { redactMediaError } from '../services/media-redaction'
 
 /** metadata 等待超时（毫秒）：网络挂起时兜底，避免 attach 永久 pending */
 const METADATA_TIMEOUT_MS = 30_000
@@ -191,12 +192,12 @@ export const directEngine: PlayerEngine = {
         if (source.noProxyFallback === true) {
           console.warn(
             '[direct-engine] 直链模式：直连失败，不回退服务器代理:',
-            err
+            redactMediaError(err)
           )
         }
         throw err
       }
-      console.warn('[direct-engine] 直连失败，回退到服务器代理:', err)
+      console.warn('[direct-engine] 直连失败，回退到服务器代理:', redactMediaError(err))
       resetVideoElement(video)
       try {
         await loadOnce(buildProxyUrl(source.url))

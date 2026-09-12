@@ -25,6 +25,7 @@ import dashjs from 'dashjs'
 import type { MediaPlayerClass } from 'dashjs'
 import type { PlayerController, SeekResult } from '../../types'
 import { resolveProxyUrl, isCliProxyUrl } from '../../services/url-proxy'
+import { redactMediaError, redactMediaUrl } from '../../services/media-redaction'
 import { findAllSidxInBuffer, findMoovRange } from './mp4-box-parser'
 import { useP2PStatsStore } from '../../services/p2p-stats-store'
 
@@ -128,7 +129,6 @@ export class DashPlayer implements PlayerController {
   private lastDashError: {
     code?: string
     message?: string
-    raw?: unknown
   } | null = null
   /**
    * SwarmCloud P2P 引擎实例（可选）。
@@ -277,13 +277,19 @@ export class DashPlayer implements PlayerController {
       // 6.1 监听 dash.js 错误事件，记录详细错误信息用于 seek 失败诊断
       //     dash.js 在 segment 下载失败、解析错误、CORS 问题时都会触发 ERROR 事件
       player.on(dashjs.MediaPlayer.events.ERROR, (event: unknown) => {
-        const e = event as { error?: { code?: string; message?: string } }
+        const e = event as {
+          error?: { code?: string; message?: string; url?: string }
+          request?: { url?: string }
+        }
         this.lastDashError = {
           code: e.error?.code,
-          message: e.error?.message,
-          raw: event,
+          message: e.error?.message ? redactMediaError(e.error.message) : undefined,
         }
-        console.warn('[DashPlayer] dash.js ERROR 事件:', e.error ?? event)
+        console.warn('[DashPlayer] dash.js ERROR 事件:', {
+          code: e.error?.code,
+          message: e.error?.message ? redactMediaError(e.error.message) : undefined,
+          url: redactMediaUrl(e.error?.url ?? e.request?.url),
+        })
       })
 
       // 6.2 P2P 引擎集成（仅在流模式 + p2pEnabled 时启用）
@@ -450,6 +456,7 @@ export class DashPlayer implements PlayerController {
     } catch (err) {
       this.state = prevState
       const message = err instanceof Error ? err.message : 'seek 失败'
+      const safeMessage = redactMediaError(message)
       // 输出详细诊断信息：video.error + dash.js 错误事件 + 缓冲状态
       const videoErr = this.video.error
       const buffered =
@@ -457,8 +464,8 @@ export class DashPlayer implements PlayerController {
           ? `${this.video.buffered.start(0).toFixed(1)}-${this.video.buffered.end(this.video.buffered.length - 1).toFixed(1)}`
           : '空'
       console.error(
-        `[DashPlayer] seek 到 ${targetTime.toFixed(1)}s 失败: ${message}\n` +
-          `  video.error: ${videoErr ? `code=${videoErr.code} ${videoErr.message}` : '无'}\n` +
+        `[DashPlayer] seek 到 ${targetTime.toFixed(1)}s 失败: ${safeMessage}\n` +
+          `  video.error: ${videoErr ? `code=${videoErr.code} ${redactMediaError(videoErr.message)}` : '无'}\n` +
           `  dash.js 错误: ${this.lastDashError ? `${this.lastDashError.code || ''} ${this.lastDashError.message || ''}` : '无'}\n` +
           `  缓冲范围: ${buffered}\n` +
           `  readyState: ${this.video.readyState}\n` +
@@ -573,10 +580,10 @@ export class DashPlayer implements PlayerController {
 
       this.p2pEngine = engine
       console.log(
-        `[DashPlayer] P2P 引擎已启用: channelId=${this.videoUrl.substring(0, 80)}...`
+        `[DashPlayer] P2P 引擎已启用: channelId=${redactMediaUrl(this.videoUrl)}`
       )
     } catch (err) {
-      console.warn('[DashPlayer] P2P 引擎初始化失败，回退到 HTTP:', err)
+      console.warn('[DashPlayer] P2P 引擎初始化失败，回退到 HTTP:', redactMediaError(err))
       useP2PStatsStore.getState().reset()
     }
   }
@@ -721,7 +728,7 @@ export class DashPlayer implements PlayerController {
 
       return info
     } catch (err) {
-      console.warn('[DashPlayer] 预下载 init segment 异常:', err)
+      console.warn('[DashPlayer] 预下载 init segment 异常:', redactMediaError(err))
       return info
     }
   }
@@ -770,7 +777,7 @@ export class DashPlayer implements PlayerController {
         info.sidxCoverage = totalCoverage
       }
     } catch (err) {
-      console.warn('[DashPlayer] 二次扫描异常:', err)
+      console.warn('[DashPlayer] 二次扫描异常:', redactMediaError(err))
     }
   }
 

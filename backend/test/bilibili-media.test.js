@@ -32,15 +32,25 @@ const {
   resolveMediaHandle,
   resolveRoomMediaGrant,
 } = require('../dist/services/media/handles');
-const { authorizeRoomMediaGrant } = require('../dist/services/media/room-access');
+const {
+  authorizeRoomMediaGrant,
+  cleanupStaleRoomSessions,
+} = require('../dist/services/media/room-access');
 const { discoverCandidatesFromHtml } = require('../dist/services/media/resolvers/generic-web');
-const { rewriteManifest, shouldRewriteManifest, toPublicDescriptor } = require('../dist/routes/stream/media');
+const {
+  rewriteManifest,
+  shouldRewriteManifest,
+  toPublicDescriptor,
+  credentialOriginsFor,
+  expandDashTemplate,
+} = require('../dist/routes/stream/media');
 const { createBrowserSafeProxy } = require('../dist/services/media/resolvers/browser-safe-proxy');
 const {
   headersForJsonCandidate,
   readBoundedJsonBody,
   safeForwardHeaders,
 } = require('../dist/services/media/resolvers/browser');
+const { redactMediaError, redactMediaUrl } = require('../dist/services/media/redact');
 
 async function listen(server) {
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -431,6 +441,128 @@ test('extensionless probe uses Range GET after HEAD 403 and preserves anti-hotli
   assert.match(descriptor.probe.warnings.join(' '), /HEAD returned 403/);
 });
 
+test('cross-origin probe redirects never resurrect source credentials in the media handle', async (t) => {
+  const body = Buffer.concat([Buffer.alloc(4), Buffer.from('ftypisom')]);
+  let probeCookie;
+  let playbackCookie;
+  const destination = http.createServer((req, res) => {
+    if (req.method === 'GET') {
+      if (req.headers.range) probeCookie = req.headers.cookie;
+      else playbackCookie = req.headers.cookie;
+    }
+    res.writeHead(req.method === 'HEAD' ? 200 : 206, {
+      'Content-Type': 'application/octet-stream',
+      'Content-Range': `bytes 0-${body.length - 1}/${body.length}`,
+    });
+    if (req.method !== 'HEAD') res.end(body);
+    else res.end();
+  });
+  const destinationPort = await listen(destination);
+  t.after(() => destination.close());
+
+  const source = http.createServer((_req, res) => {
+    res.writeHead(302, { Location: `http://127.0.0.1:${destinationPort}/asset` });
+    res.end();
+  });
+  const sourcePort = await listen(source);
+  t.after(() => source.close());
+
+  const descriptor = await probeMediaUrl(`http://127.0.0.1:${sourcePort}/start`, {
+    targetPolicy: 'trusted-private',
+    trustedPrivateHosts: ['127.0.0.1'],
+    headers: { Cookie: 'session-a' },
+  });
+  assert.equal(probeCookie, undefined, 'probe must strip Cookie after A -> B');
+  assert.deepEqual(descriptor.credentialOrigins, [], 'cross-origin provenance must be empty');
+
+  const handle = issueMediaHandle({
+    url: descriptor.finalUrl,
+    scope: 'user:7',
+    headers: descriptor.headers,
+    credentialOrigins: credentialOriginsFor(
+      descriptor.finalUrl,
+      descriptor.headers,
+      descriptor.credentialOrigins,
+    ),
+    contentType: 'video/mp4',
+  });
+  const app = express();
+  app.get('/media', (req, res) => proxyHttpUpstream(req, res, {
+    url: resolveMediaHandle(handle.id, '7').url,
+    targetPolicy: 'trusted-private',
+    trustedPrivateHosts: ['127.0.0.1'],
+    headers: { extra: resolveMediaHandle(handle.id, '7').headers },
+    logTag: 'credential-provenance-test',
+    errorMessage: 'failed',
+  }));
+  const gateway = http.createServer(app);
+  const gatewayPort = await listen(gateway);
+  t.after(() => gateway.close());
+  const playback = await request(gatewayPort, '/media');
+  assert.equal(playback.status, 206);
+  assert.equal(playbackCookie, undefined, 'formal playback must not send Cookie A to B');
+});
+
+test('probe keeps same-origin credentials but permanently strips them across A to B to A', async (t) => {
+  const body = Buffer.concat([Buffer.alloc(4), Buffer.from('ftypisom')]);
+  let sameOriginCookie;
+  let returnedOriginCookie;
+  let destinationPort;
+  const source = http.createServer((req, res) => {
+    if (req.url === '/same-start') {
+      res.writeHead(302, { Location: '/same-asset' }); res.end(); return;
+    }
+    if (req.url === '/same-asset') {
+      if (req.method === 'GET') sameOriginCookie = req.headers.cookie;
+      res.writeHead(req.method === 'HEAD' ? 200 : 206, {
+        'Content-Type': 'video/mp4',
+        'Content-Range': `bytes 0-${body.length - 1}/${body.length}`,
+      });
+      if (req.method !== 'HEAD') res.end(body); else res.end();
+      return;
+    }
+    if (req.url === '/cross-start') {
+      res.writeHead(302, { Location: `http://127.0.0.1:${destinationPort}/bounce` });
+      res.end(); return;
+    }
+    if (req.url === '/cross-back') {
+      if (req.method === 'GET') returnedOriginCookie = req.headers.cookie;
+      res.writeHead(req.method === 'HEAD' ? 200 : 206, {
+        'Content-Type': 'video/mp4',
+        'Content-Range': `bytes 0-${body.length - 1}/${body.length}`,
+      });
+      if (req.method !== 'HEAD') res.end(body); else res.end();
+      return;
+    }
+    res.writeHead(404); res.end();
+  });
+  const sourcePort = await listen(source);
+  t.after(() => source.close());
+
+  const destination = http.createServer((_req, res) => {
+    res.writeHead(302, { Location: `http://127.0.0.1:${sourcePort}/cross-back` });
+    res.end();
+  });
+  destinationPort = await listen(destination);
+  t.after(() => destination.close());
+
+  const sameOrigin = await probeMediaUrl(`http://127.0.0.1:${sourcePort}/same-start`, {
+    targetPolicy: 'trusted-private',
+    trustedPrivateHosts: ['127.0.0.1'],
+    headers: { Cookie: 'session-a' },
+  });
+  assert.equal(sameOriginCookie, 'session-a');
+  assert.deepEqual(sameOrigin.credentialOrigins, [`http://127.0.0.1:${sourcePort}`]);
+
+  const crossOrigin = await probeMediaUrl(`http://127.0.0.1:${sourcePort}/cross-start`, {
+    targetPolicy: 'trusted-private',
+    trustedPrivateHosts: ['127.0.0.1'],
+    headers: { Cookie: 'session-a' },
+  });
+  assert.equal(returnedOriginCookie, undefined);
+  assert.deepEqual(crossOrigin.credentialOrigins, []);
+});
+
 test('probe follows multiple safe redirects and preserves a signed query string', async (t) => {
   const body = Buffer.concat([Buffer.alloc(4), Buffer.from('ftypisom')]);
   const upstream = http.createServer((req, res) => {
@@ -601,6 +733,32 @@ test('room media handles require a live socket capability and never trust userId
   assert.equal(resolveRoomMediaGrant(`${ownerGrantToken.slice(0, -1)}x`), undefined);
 });
 
+test('server restart cleanup invalidates stale active room grants before rejoin', async () => {
+  let endedAt = null;
+  const staleRepo = {
+    async update(criteria, values) {
+      assert.equal(criteria.endedAt._type, 'isNull');
+      endedAt = values.endedAt;
+      return { affected: 1 };
+    },
+  };
+  const oldGrant = issueRoomMediaGrant('restart-room', 'old-socket');
+  const isActive = async () => endedAt === null;
+  assert.ok(await authorizeRoomMediaGrant(oldGrant, 'restart-room', isActive));
+
+  await cleanupStaleRoomSessions(staleRepo);
+  assert.ok(endedAt instanceof Date);
+  assert.equal(
+    await authorizeRoomMediaGrant(oldGrant, 'restart-room', isActive),
+    undefined,
+    'a persisted endedAt cleanup must revoke the pre-restart grant',
+  );
+
+  endedAt = null;
+  const newGrant = issueRoomMediaGrant('restart-room', 'new-socket');
+  assert.ok(await authorizeRoomMediaGrant(newGrant, 'restart-room', isActive));
+});
+
 test('public media descriptor strips upstream headers and signed candidate URLs', () => {
   const descriptor = {
     sourceType: 'web-page', resolver: 'generic-web', input: 'https://watch.example/movie',
@@ -767,6 +925,46 @@ test('media gateway rewrites HLS resources and preserves DASH segment templates'
   assert.equal(redirectedChild.headers.Cookie, undefined, 'redirected origin cannot regain the source cookie');
 });
 
+test('DASH rewrite preserves formatted template tokens and merges parent templates', () => {
+  const resource = {
+    url: 'https://cdn.example/root/manifest.mpd',
+    scope: 'user:7',
+    headers: { Referer: 'https://watch.example/' },
+    expiresAt: Date.now() + 60_000,
+  };
+  const body = '<MPD><Period><AdaptationSet>' +
+    '<SegmentTemplate media="chunk-$Number%05d$.m4s" timescale="1" duration="2"/>' +
+    '<Representation id="v1"><SegmentTemplate initialization="init-$RepresentationID$.m4s"/></Representation>' +
+    '</AdaptationSet></Period></MPD>';
+  const rewritten = rewriteManifest(body, 'application/dash+xml', resource, { id: 'unused' });
+  assert.match(rewritten, /media="[^"]*chunk-\$Number%05d\$\.m4s"/);
+  assert.match(rewritten, /initialization="[^"]*init-\$RepresentationID\$\.m4s"/);
+  assert.match(rewritten, /timescale="1"/);
+  assert.match(rewritten, /duration="2"/);
+  assert.equal(expandDashTemplate('chunk-$Number%05d$.m4s', { Number: 3 }), 'chunk-00003.m4s');
+  const rewrittenMedia = rewritten.match(/media="([^"]+)"/)[1].replaceAll('&amp;', '&');
+  const expandedAssetUrl = rewrittenMedia.replace('$Number%05d$', '00003');
+  assert.equal(
+    new URL(expandedAssetUrl, 'https://gateway.example').searchParams.get('path'),
+    'chunk-00003.m4s',
+    'the rewritten asset URL must resolve segment 3 after dash.js expands the token',
+  );
+
+  const segmentList = rewriteManifest(
+    '<MPD><Period><AdaptationSet>' +
+      '<SegmentList timescale="1"><Initialization sourceURL="init.m4s"/><SegmentURL media="seg-1.m4s"/></SegmentList>' +
+      '<Representation><SegmentList duration="2"/></Representation>' +
+      '</AdaptationSet></Period></MPD>',
+    'application/dash+xml',
+    resource,
+    { id: 'unused' },
+  );
+  assert.match(segmentList, /Initialization/);
+  assert.match(segmentList, /SegmentURL/);
+  assert.match(segmentList, /timescale="1"/);
+  assert.match(segmentList, /duration="2"/);
+});
+
 test('manifest rewrite detection distinguishes MPD from Bilibili dual m4s DASH', () => {
   const base = {
     sourceType: 'fixture', resolver: 'test', input: 'fixture', originalUrl: 'https://example/media',
@@ -777,4 +975,32 @@ test('manifest rewrite detection distinguishes MPD from Bilibili dual m4s DASH',
   assert.equal(shouldRewriteManifest({
     ...base, contentType: 'application/octet-stream', probe: { ...base.probe, magic: 'MPD XML' },
   }), true);
+});
+
+test('media log redaction removes credentials, capability queries, and signed paths', () => {
+  const redacted = redactMediaUrl(
+    'https://user:pass@cdn.example/api/stream/media/opaque-handle?roomGrant=room-secret&token=access-secret#fragment',
+  );
+  assert.equal(redacted, 'https://cdn.example/api/stream/media/<redacted>');
+  assert.equal(redacted.includes('room-secret'), false);
+  assert.equal(redacted.includes('access-secret'), false);
+  assert.equal(redacted.includes('opaque-handle'), false);
+  assert.equal(
+    redactMediaUrl('https://cdn.example/path/video.mp4?sig=signed-secret#fragment'),
+    'https://cdn.example/path/video.mp4',
+  );
+  const error = redactMediaError(
+    'fetch failed https://cdn.example/api/stream/media/opaque?token=access-secret Cookie: session-secret Authorization: Bearer auth-secret roomGrant=grant-secret',
+  );
+  assert.equal(error.includes('access-secret'), false);
+  assert.equal(error.includes('session-secret'), false);
+  assert.equal(error.includes('auth-secret'), false);
+  assert.equal(error.includes('grant-secret'), false);
+  const multiCookieError = redactMediaError(
+    'Cookie: session-secret; bili_jct=csrf-secret Authorization: Bearer auth-secret status=403',
+  );
+  assert.equal(multiCookieError.includes('session-secret'), false);
+  assert.equal(multiCookieError.includes('csrf-secret'), false);
+  assert.equal(multiCookieError.includes('auth-secret'), false);
+  assert.match(multiCookieError, /status=403/);
 });

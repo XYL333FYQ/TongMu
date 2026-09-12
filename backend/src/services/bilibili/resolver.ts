@@ -31,6 +31,7 @@ import {
   getCachedVideoInfo,
   setCachedVideoInfo,
 } from './cache';
+import { redactMediaError, redactMediaUrl } from '../media/redact';
 
 export interface ResolveProgress {
   status: 'parsing' | 'done' | 'error';
@@ -254,11 +255,11 @@ export async function expandBilibiliShortLink(input: string): Promise<string> {
       /* ignore */
     }
     if (res.url && /^https?:\/\//.test(res.url)) {
-      console.log('[bilibili-resolver] 短链已展开:', input, '->', res.url);
+      console.log('[bilibili-resolver] 短链已展开:', redactMediaUrl(input), '->', redactMediaUrl(res.url));
       return res.url;
     }
   } catch (err) {
-    console.warn('[bilibili-resolver] 短链展开失败，使用原地址继续:', err);
+    console.warn('[bilibili-resolver] 短链展开失败，使用原地址继续:', redactMediaError(err));
   }
   return input;
 }
@@ -389,7 +390,7 @@ async function fallbackToMp4(
     // 若 URL 真的不可达，浏览器播放时会显示错误，但这比直接拒绝解析更合理。
     console.warn(
       '[bilibili-mp4] HEAD 检测全部失败，回退到原始 URL:',
-      httpsUrl,
+      redactMediaUrl(httpsUrl),
     );
     return {
       videoUrl: httpsUrl,

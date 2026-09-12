@@ -182,6 +182,79 @@ async function assertRoomMediaOutlivesAccessJwt(
   expect(response.status(), await response.text()).toBe(200);
 }
 
+async function forceSocketReconnect(page: Page): Promise<{
+  oldSocketId: string;
+  newSocketId: string;
+}> {
+  const oldSocketId = await page.evaluate(() => {
+    const socket = (window as unknown as {
+      __debugSocket?: { id?: string; disconnect: () => void; connect: () => void };
+    }).__debugSocket;
+    if (!socket?.id) throw new Error("debug socket is not connected");
+    socket.disconnect();
+    setTimeout(() => socket.connect(), 100);
+    return socket.id;
+  });
+  const socketId = () =>
+    page.evaluate(
+      () =>
+        (window as unknown as { __debugSocket?: { id?: string } }).__debugSocket
+          ?.id ?? "",
+    );
+  await expect.poll(socketId, { timeout: 15_000 }).not.toBe("");
+  await expect.poll(socketId, { timeout: 15_000 }).not.toBe(oldSocketId);
+  const newSocketId = await page.evaluate(
+    () =>
+      (window as unknown as { __debugSocket?: { id?: string } }).__debugSocket
+        ?.id ?? "",
+  );
+  expect(newSocketId).not.toBe("");
+  return { oldSocketId, newSocketId };
+}
+
+async function assertRoomGrantRefreshesAfterReconnect(
+  page: Page,
+  mediaUrl: string,
+  engine: RegExp,
+): Promise<void> {
+  const mediaRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/stream/media/")) {
+      mediaRequests.push(request.url());
+    }
+  });
+  await addAndPlay(page, mediaUrl, engine);
+  await expect.poll(() => mediaRequests.some((url) => url.includes("roomGrant="))).toBe(true);
+  const oldGrantUrl = mediaRequests.find((url) => url.includes("roomGrant="));
+  expect(oldGrantUrl).toBeTruthy();
+  const oldGrant = new URL(oldGrantUrl!).searchParams.get("roomGrant");
+  expect(oldGrant).toBeTruthy();
+  const video = page.locator("video").first();
+  await expect.poll(() => video.evaluate((element: HTMLVideoElement) => element.currentTime)).toBeGreaterThan(0);
+  const beforeReconnect = await video.evaluate((element: HTMLVideoElement) => element.currentTime);
+
+  await forceSocketReconnect(page);
+  const staleResponse = await page.request.get(oldGrantUrl!);
+  expect(staleResponse.status(), await staleResponse.text()).toBe(403);
+
+  await expect
+    .poll(
+      () =>
+        mediaRequests.some((url) => {
+          const grant = new URL(url).searchParams.get("roomGrant");
+          return !!grant && grant !== oldGrant;
+        }),
+      { timeout: 15_000 },
+    )
+    .toBe(true);
+  await expect
+    .poll(
+      () => video.evaluate((element: HTMLVideoElement) => element.currentTime),
+      { timeout: 15_000 },
+    )
+    .toBeGreaterThan(beforeReconnect + 0.05);
+}
+
 test.beforeAll(async ({ browser }) => {
   const page = await browser.newPage();
   await configureGeneratedMedia(page);
@@ -246,6 +319,15 @@ test("real HLS master, extensionless child playlist, AES key, and fMP4 segment p
   );
 });
 
+test("HLS reattaches with a new room grant after Socket.IO reconnect", async ({ page }) => {
+  await loginAndCreateRoom(page);
+  await assertRoomGrantRefreshesAfterReconnect(
+    page,
+    `${FIXTURE_ORIGIN}/hls/master.m3u8`,
+    /Engine: hls/,
+  );
+});
+
 test("real DASH nested BaseURL requests video/audio init and relative segments", async ({
   page,
 }) => {
@@ -273,6 +355,15 @@ test("real DASH nested BaseURL requests video/audio init and relative segments",
   }
   await assertRoomMediaOutlivesAccessJwt(page, mediaRequests, (url) =>
     url.includes("/asset?path=chunk-1.m4s"),
+  );
+});
+
+test("DASH reattaches with a new room grant after Socket.IO reconnect", async ({ page }) => {
+  await loginAndCreateRoom(page);
+  await assertRoomGrantRefreshesAfterReconnect(
+    page,
+    `${FIXTURE_ORIGIN}/dash/manifest.mpd`,
+    /Engine: dash/,
   );
 });
 

@@ -20,6 +20,7 @@ import { Text } from '@/components/ui/Typography'
 import { message } from '@/components/ui/message'
 import { Modal } from '@/components/ui/Modal'
 import { cn } from '@/lib/utils'
+import { redactMediaError } from '@/modules/player/services/media-redaction'
 import { useDanmakuStore } from '@/store/danmakuStore'
 import {
   searchDanmaku,
@@ -97,7 +98,7 @@ export function DanmakuSearchModal({
           message.info('未找到相关结果')
         }
       } catch (err) {
-        console.error('[DanmakuSearchModal] search error:', err)
+        console.error('[DanmakuSearchModal] search error:', redactMediaError(err))
         message.error(err instanceof Error ? err.message : '搜索失败')
       } finally {
         setLoading(false)
@@ -145,7 +146,7 @@ export function DanmakuSearchModal({
         message.info('该作品暂无可用集数')
       }
     } catch (err) {
-      console.error('[DanmakuSearchModal] episodes error:', err)
+      console.error('[DanmakuSearchModal] episodes error:', redactMediaError(err))
       message.error(err instanceof Error ? err.message : '获取集数失败')
     } finally {
       setLoading(false)
@@ -164,7 +165,7 @@ export function DanmakuSearchModal({
       message.success(`已添加 ${label} 弹幕轨道（共 ${items.length} 条）`)
       onClose()
     } catch (err) {
-      console.error('[DanmakuSearchModal] fetch error:', err)
+      console.error('[DanmakuSearchModal] fetch error:', redactMediaError(err))
       message.error(err instanceof Error ? err.message : '添加弹幕轨道失败')
     } finally {
       setAddingEpisodeId(null)

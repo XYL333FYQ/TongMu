@@ -18,6 +18,7 @@ import {
   isRelativeUrl,
   buildProxyUrl,
 } from '../services/url-proxy'
+import { redactMediaError, redactMediaUrl } from '../services/media-redaction'
 
 /** Safari 等原生 HLS 支持检测 */
 function canPlayNativeHls(video: HTMLVideoElement): boolean {
@@ -97,11 +98,9 @@ function waitForHlsReady(hls: Hls, timeoutMs = 15000): Promise<void> {
       if (!data.fatal) return
       settled = true
       cleanup()
-      reject(
-        new Error(
-          `HLS加载失败: type=${data.type} details=${data.details} url=${data.url?.slice(0, 80)}`
-        )
-      )
+      reject(new Error(
+        `HLS加载失败: type=${data.type} details=${data.details} url=${redactMediaUrl(data.url)}`
+      ))
     }
 
     const onTimeout = () => {
@@ -134,8 +133,8 @@ export const hlsEngine: PlayerEngine = {
 
     const targetUrl = resolveProxyUrl(source.url, source.headers, source.format)
     console.log('[hls-engine] attach start', {
-      originalUrl: source.url?.slice(0, 80),
-      resolvedUrl: targetUrl?.slice(0, 80),
+      originalUrl: redactMediaUrl(source.url),
+      resolvedUrl: redactMediaUrl(targetUrl),
       format: source.format,
     })
 
@@ -169,11 +168,11 @@ export const hlsEngine: PlayerEngine = {
           type: data.type,
           details: data.details,
           fatal: data.fatal,
-          url: data.url?.slice(0, 80),
+          url: redactMediaUrl(data.url),
           response: data.response
             ? {
                 code: data.response.code,
-                text: data.response.text?.slice(0, 100),
+                text: data.response.text ? redactMediaError(data.response.text) : undefined,
               }
             : null,
         })

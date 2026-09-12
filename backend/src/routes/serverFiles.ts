@@ -45,6 +45,7 @@ import {
 } from '../services/bilibili/resolver';
 import { VIP_ONLY_QNS } from '../services/bilibili/permission';
 import { getUserCookie } from '../routes/stream/helpers';
+import { redactMediaError } from '../services/media/redact';
 
 const router = Router();
 
@@ -890,7 +891,7 @@ router.post('/bilibili-download', async (req: AuthenticatedRequest, res: Respons
     });
     res.end();
   } catch (err) {
-    console.error('[server-files] bilibili-download error:', err);
+    console.error('[server-files] bilibili-download error:', redactMediaError(err));
     const normalized = normalizeResolveError(err);
     fail(normalized.message, normalized.code);
   }

@@ -29,6 +29,7 @@ import {
 import type { PlayerSource, PlayerController } from '@/modules/player'
 import { refreshAccessToken } from '@/lib/api'
 import { formatVideoLoadError } from '@/modules/player/utils'
+import { redactMediaError } from '@/modules/player/services/media-redaction'
 
 import {
   isBrowserPlayableFormat,
@@ -222,7 +223,7 @@ export function usePlayerSource(
             // attach 成功后的播放期 error，这里覆盖 attach 期间的 error。
             console.warn(
               '[usePlayerSource] MKV 原生 attach 失败，回退 playsvideo 管线:',
-              err
+              redactMediaError(err)
             )
             source.forcePlaysVideo = true
             resetVideoElement(video)

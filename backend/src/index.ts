@@ -42,6 +42,7 @@ import clientLogsRoutes from './routes/client-logs';
 import cliRoutes from './routes/cli';
 import { createRoomsRouter } from './routes/rooms';
 import { verifyAccessToken } from './middleware/auth';
+import { cleanupStaleRoomSessions } from './services/media/room-access';
 
 // 新模块化架构
 import { SocketRegistry } from './modules/socket';
@@ -213,6 +214,10 @@ async function bootstrap() {
 
   await AppDataSource.initialize();
   console.log('TypeORM Data Source has been initialized.');
+  const staleSessions = await cleanupStaleRoomSessions();
+  if (staleSessions > 0) {
+    console.log(`Closed ${staleSessions} stale room sessions from the previous process.`);
+  }
   await seedRootAdmin();
   ensureUploadsRoot();
 

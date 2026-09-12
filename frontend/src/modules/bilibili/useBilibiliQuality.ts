@@ -9,6 +9,7 @@ import { getBilibiliParseOptions } from './parseOptions'
 import { extractBvid, resolveBilibiliViaCli } from './cliApi'
 import { getActiveCliProxyUrl } from '@/modules/room/watch-together/movie-source-resolver'
 import { resolveMediaInput } from '@/modules/media/mediaApi'
+import { redactMediaError } from '@/modules/player/services/media-redaction'
 
 function qualitiesEqual(a: QualityOption[], b: QualityOption[]): boolean {
   if (a.length !== b.length) return false
@@ -242,7 +243,7 @@ export function useBilibiliQuality(ctx: BilibiliQualityContext) {
           ctx.broadcastState(newState)
         }
       } catch (err) {
-        console.error('[useBilibiliQuality] 切换清晰度失败:', err)
+        console.error('[useBilibiliQuality] 切换清晰度失败:', redactMediaError(err))
         // 回退到原 source
         try {
           await ctx.applySourceToVideo(video, state)

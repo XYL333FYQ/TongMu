@@ -93,7 +93,7 @@ export async function fetchBlobsForBufferMode(
   const cached = await getCacheEntry(cacheKey)
   if (cached) {
     console.log(
-      `[buffer-mode] 缓冲模式命中缓存: ${cacheKey}, ` +
+      `[buffer-mode] 缓冲模式命中缓存: cid=${state.cid} qn=${state.currentQn ?? 0}, ` +
         `video=${(cached.videoBlob.size / 1024 / 1024).toFixed(1)}MB, ` +
         `audio=${(cached.audioBlob.size / 1024 / 1024).toFixed(1)}MB`
     )
@@ -106,7 +106,9 @@ export async function fetchBlobsForBufferMode(
   }
 
   // 未命中：下载 m4s 流
-  console.log(`[buffer-mode] 缓冲模式开始下载: ${cacheKey}`)
+  console.log(
+    `[buffer-mode] 缓冲模式开始下载: cid=${state.cid} qn=${state.currentQn ?? 0}`
+  )
 
   // 内部取消器：组合"外部取消（切源/卸载）"与"超大小上限主动中止"
   const externalSignal = signal

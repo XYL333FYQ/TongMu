@@ -13,6 +13,7 @@
 import type { MutableRefObject } from 'react'
 import type { WatchTogetherState } from '../types'
 import { useRoomStore } from '@/store/roomStore'
+import { redactMediaError } from '@/modules/player/services/media-redaction'
 import {
   getGapFromLiveEdge,
   isInBufferedRange,
@@ -139,7 +140,7 @@ export async function executeSeek(params: ExecuteSeekParams): Promise<boolean> {
       if (onSeekFailed) {
         console.warn(
           '[seek-service] MSE seek 不可恢复失败，调用 forceReload 重新加载:',
-          result.message
+          redactMediaError(result.message)
         )
         await onSeekFailed(video, target)
         return true
@@ -148,14 +149,14 @@ export async function executeSeek(params: ExecuteSeekParams): Promise<boolean> {
       setCurrentTimeSafe(video, target)
       return false
     } catch (err) {
-      console.error('[seek-service] MSE seek 异常:', err)
+      console.error('[seek-service] MSE seek 异常:', redactMediaError(err))
       // 异常时也尝试 forceReload（可能是未预期的错误）
       if (onSeekFailed) {
         try {
           await onSeekFailed(video, target)
           return true
         } catch (reloadErr) {
-          console.error('[seek-service] forceReload 也失败:', reloadErr)
+          console.error('[seek-service] forceReload 也失败:', redactMediaError(reloadErr))
         }
       }
       setCurrentTimeSafe(video, target)

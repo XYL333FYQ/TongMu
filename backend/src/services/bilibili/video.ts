@@ -1,5 +1,6 @@
 import { bilibiliFetch } from './client';
 import { getWbiKeys, signParams, clearWbiKeyCache } from './wbi';
+import { redactMediaError } from '../media/redact';
 
 export interface BilibiliVideoPage {
   cid: number;
@@ -191,7 +192,7 @@ export async function getVideoInfo(
   try {
     return await getVideoInfoWbi(bvid, cookie);
   } catch (err) {
-    console.warn('[bilibili] WBI view 失败，降级到未签名接口:', err);
+    console.warn('[bilibili] WBI view 失败，降级到未签名接口:', redactMediaError(err));
     clearWbiKeyCache();
     return getVideoInfoLegacy(bvid, cookie);
   }

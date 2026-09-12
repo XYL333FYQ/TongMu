@@ -12,6 +12,7 @@
 import { Response } from 'express';
 import { Readable } from 'node:stream';
 import { setWildcardCors } from './http-proxy';
+import { redactMediaError } from '../media/redact';
 
 export interface ParsedRange {
   start: number;
@@ -126,7 +127,7 @@ export function pipeRangeStream(
   });
 
   stream.on('error', (err) => {
-    console.error(`[${logTag}] proxy stream error:`, err);
+    console.error(`[${logTag}] proxy stream error: ${redactMediaError(err)}`);
     if (!res.headersSent) {
       res.status(502).json({
         success: false,

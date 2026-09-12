@@ -19,6 +19,7 @@
  * 携带世代号，消费侧据此丢弃过期结果，避免切影片后旧字幕串台。
  */
 import { parseSubtitle, type ParsedCue } from '@/lib/subtitleParser'
+import { redactMediaError } from '../services/media-redaction'
 
 /** playsvideo 提取出的一条内嵌字幕轨（已解析为 ZViewer 内部格式）。 */
 export interface PlaysVideoEmbeddedSubtitle {
@@ -66,7 +67,7 @@ export function publishPlaysVideoSubtitle(
     try {
       listener(subtitle)
     } catch (err) {
-      console.error('[playsvideo-subtitles] 订阅者处理失败:', err)
+      console.error('[playsvideo-subtitles] 订阅者处理失败:', redactMediaError(err))
     }
   }
 }
@@ -107,7 +108,7 @@ export async function fetchPlaysVideoTrackCues(
     if (signal?.aborted) return []
     console.warn(
       '[playsvideo-subtitles] 读取字幕 blob 失败:',
-      err instanceof Error ? err.message : err
+      redactMediaError(err)
     )
     return []
   }

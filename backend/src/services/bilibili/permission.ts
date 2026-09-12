@@ -1,5 +1,6 @@
 import { bilibiliFetch } from './client';
 import { getCachedVipStatus, setCachedVipStatus } from './cache';
+import { redactMediaError } from '../media/redact';
 
 /**
  * Bilibili 权限识别统一模块
@@ -65,7 +66,7 @@ export async function getVipStatus(cookie: string | undefined): Promise<boolean>
     setCachedVipStatus(trimmedCookie, isVip);
     return isVip;
   } catch (err) {
-    console.error('[bilibili] getVipStatus error:', err);
+    console.error('[bilibili] getVipStatus error:', redactMediaError(err));
     return false;
   }
 }

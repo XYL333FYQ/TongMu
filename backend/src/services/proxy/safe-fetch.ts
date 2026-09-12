@@ -168,14 +168,28 @@ function stripCrossOriginCredentials(headers: Record<string, string>): Record<st
   return output;
 }
 
-export async function fetchWithProxyPolicy(
+export interface ProxyFetchResult {
+  response: Response;
+  /** URL reached after the redirect chain. */
+  finalUrl: string;
+  /** Headers actually sent to the final request. */
+  headers: Record<string, string>;
+  /** Origins that may receive credential-like headers, or [] after a cross-origin strip. */
+  credentialOrigins: string[];
+}
+
+export async function fetchWithProxyPolicyDetailed(
   rawUrl: string,
   init: RequestInit,
   policy: ProxyTargetPolicy,
   trustedPrivateHosts: string[] = [],
-): Promise<Response> {
+): Promise<ProxyFetchResult> {
   let current = validateProxyUrl(rawUrl);
   let headers = sanitizeProxyHeaders(init.headers as Record<string, string> | undefined);
+  let credentialOrigins = Object.keys(headers).some((name) => {
+    const lower = name.toLowerCase();
+    return lower === 'cookie' || lower === 'authorization' || lower.includes('token') || /(?:^|[-_])api[-_]?key$/.test(lower);
+  }) ? [current.origin] : [];
   const trustedHosts = new Set(trustedPrivateHosts.map(normalizeHostname).map((host) => host.toLowerCase()));
 
   for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
@@ -200,22 +214,51 @@ export async function fetchWithProxyPolicy(
       }
       throw error;
     }
-    if (![301, 302, 303, 307, 308].includes(response.status)) return response;
+    if (![301, 302, 303, 307, 308].includes(response.status)) {
+      return {
+        response,
+        finalUrl: current.toString(),
+        headers,
+        credentialOrigins,
+      };
+    }
     if (redirects === MAX_REDIRECTS) {
       await response.body?.cancel();
       throw new ProxyTargetError('代理重定向次数过多');
     }
     const location = response.headers.get('location');
-    if (!location) return response;
+    if (!location) {
+      return {
+        response,
+        finalUrl: current.toString(),
+        headers,
+        credentialOrigins,
+      };
+    }
     const next = validateProxyUrl(new URL(location, current).toString());
     const nextPrivateHostAllowed =
       isExplicitE2eFixture(next) ||
       (policy === 'trusted-private' &&
         trustedHosts.has(normalizeHostname(next.hostname).toLowerCase()));
     if (!nextPrivateHostAllowed) assertLiteralHostIsPublic(next);
-    if (next.origin !== current.origin) headers = stripCrossOriginCredentials(headers);
+    if (next.origin !== current.origin) {
+      headers = stripCrossOriginCredentials(headers);
+      // Once credentials have crossed an origin boundary they are permanently
+      // disassociated from the redirect chain. A later redirect back to the
+      // original origin must not resurrect them.
+      credentialOrigins = [];
+    }
     await response.body?.cancel();
     current = next;
   }
   throw new ProxyTargetError('代理重定向次数过多');
+}
+
+export async function fetchWithProxyPolicy(
+  rawUrl: string,
+  init: RequestInit,
+  policy: ProxyTargetPolicy,
+  trustedPrivateHosts: string[] = [],
+): Promise<Response> {
+  return (await fetchWithProxyPolicyDetailed(rawUrl, init, policy, trustedPrivateHosts)).response;
 }

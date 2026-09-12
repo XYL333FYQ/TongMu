@@ -45,6 +45,10 @@ import {
   UrlExpiredError,
   DownloadAbortedError,
 } from '@/modules/player/services/buffer-mode'
+import {
+  ROOM_MEDIA_GRANT_CHANGED_EVENT,
+} from '@/modules/media/roomMediaGrant'
+import { redactMediaError } from '@/modules/player/services/media-redaction'
 
 export type SourceType =
   'url' | 'webdav' | 'ftp' | 'openlist' | 'smb' | 'bilibili' | string
@@ -177,6 +181,11 @@ export function useWatchTogether({
   // 观众端 reload 忙时补跑标记（语义同 pendingBilibiliRerunRef）。
   const pendingViewerRerunRef = useRef(false)
 
+  // Socket.IO reconnects issue a new room grant. Keep one serialized media-core
+  // reattach in flight and coalesce further grant changes to the newest value.
+  const roomGrantReloadRef = useRef<Promise<void> | null>(null)
+  const pendingRoomGrantRef = useRef<string | null>(null)
+
   // 加载代际：每次启动新的加载流程（loadMovie / reloadBilibili / previewPlay）递增。
   // 旧流程在任意 await 恢复后若发现自己已过期（序号不再是最新）则静默放弃，
   // 避免"快速切片 A(慢解析)→B(快)时 A 迟到完成覆盖 B"的竞态。
@@ -217,6 +226,72 @@ export function useWatchTogether({
       watchTogether,
       isHostRef,
     })
+
+  // A room grant is appended by the player URL layer at attach time. Existing
+  // HLS/DASH child URLs cannot be edited in place, so a changed grant must
+  // reattach the original signed media handle. Local CLI URLs are deliberately
+  // excluded.
+  useEffect(() => {
+    const isMediaCoreUrl = (url?: string): boolean => {
+      if (!url) return false
+      try {
+        return new URL(url, window.location.origin).pathname.startsWith(
+          '/api/stream/media/'
+        )
+      } catch {
+        return false
+      }
+    }
+
+    const handleGrantChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        roomId?: string
+        grant?: string
+      }>).detail
+      if (detail?.roomId !== roomId || !detail.grant) return
+      const current = useRoomStore.getState().watchTogether
+      if (!isMediaCoreUrl(current.sourceUrl)) return
+      if (roomGrantReloadRef.current) {
+        pendingRoomGrantRef.current = detail.grant
+        return
+      }
+
+      const run = async (): Promise<void> => {
+        const video = videoRef.current
+        const state = useRoomStore.getState().watchTogether
+        if (!video || !isMediaCoreUrl(state.sourceUrl)) return
+        suppressEventsRef.current = true
+        try {
+          await reloadVideo(video)
+        } catch (error) {
+          console.error('[useWatchTogether] 房间媒体凭证更新后重挂载失败:', redactMediaError(error))
+        } finally {
+          suppressEventsRef.current = false
+        }
+      }
+
+      const promise = run().finally(() => {
+        roomGrantReloadRef.current = null
+        if (pendingRoomGrantRef.current) {
+          const nextGrant = pendingRoomGrantRef.current
+          pendingRoomGrantRef.current = null
+          const latest = useRoomStore.getState().watchTogether
+          if (isMediaCoreUrl(latest.sourceUrl)) {
+            window.dispatchEvent(new CustomEvent(ROOM_MEDIA_GRANT_CHANGED_EVENT, {
+              detail: { roomId, grant: nextGrant },
+            }))
+          }
+        }
+      })
+      roomGrantReloadRef.current = promise
+    }
+
+    window.addEventListener(ROOM_MEDIA_GRANT_CHANGED_EVENT, handleGrantChanged)
+    return () => {
+      window.removeEventListener(ROOM_MEDIA_GRANT_CHANGED_EVENT, handleGrantChanged)
+      pendingRoomGrantRef.current = null
+    }
+  }, [roomId, reloadVideo, suppressEventsRef, videoRef])
 
   // 2. 房主同步编排（组合广播+状态请求+心跳+事件绑定，内部按 isHostRef 判断）
   const { broadcastState, sendControl, forceSync } = useHostSync({
@@ -303,7 +378,7 @@ export function useWatchTogether({
         } else if (err instanceof DownloadError) {
           message.error(`缓冲下载失败: ${err.message}`)
         } else {
-          console.error('[useWatchTogether] 缓冲下载失败:', err)
+          console.error('[useWatchTogether] 缓冲下载失败:', redactMediaError(err))
           message.error('缓冲下载失败，请重试')
         }
         throw err
@@ -412,7 +487,7 @@ export function useWatchTogether({
           suppressEventsRef.current = false
         })
         .catch((err: unknown) => {
-          console.error('[useWatchTogether] 观众端预览源加载失败:', err)
+          console.error('[useWatchTogether] 观众端预览源加载失败:', redactMediaError(err))
           suppressEventsRef.current = false
           message.error(err instanceof Error ? err.message : '预览源加载失败')
         })
@@ -424,7 +499,7 @@ export function useWatchTogether({
 
     // 房间加入/刷新时优先通过 REST 接口加载影片列表
     fetchMovies(roomId).catch((err) => {
-      console.error('[useWatchTogether] fetchMovies error:', err)
+      console.error('[useWatchTogether] fetchMovies error:', redactMediaError(err))
     })
     socket.emit(SOCKET_EVENT.REQUEST_CURRENT_MOVIE, { roomId })
 
@@ -640,7 +715,7 @@ export function useWatchTogether({
       } catch (err) {
         // 已过期的失败（被新加载取代）无需提示或回退，避免覆盖新状态
         if (loadSeqRef.current !== seq) return
-        console.error('[useWatchTogether] 重新解析 B站 视频失败:', err)
+        console.error('[useWatchTogether] 重新解析 B站 视频失败:', redactMediaError(err))
         message.error(err instanceof Error ? err.message : '重新解析失败')
         try {
           await applySourceToVideo(video, state, preserveTime)
@@ -761,7 +836,7 @@ export function useWatchTogether({
 
         await applySourceToVideo(video, state, video.currentTime)
       } catch (err) {
-        console.error('[useWatchTogether] 观众重新 attach 源失败:', err)
+        console.error('[useWatchTogether] 观众重新 attach 源失败:', redactMediaError(err))
         message.error(err instanceof Error ? err.message : '本地代理加载失败')
         // 出错时回退到房主广播源
         try {
@@ -955,7 +1030,7 @@ export function useWatchTogether({
       } catch (err) {
         // 已被更新的加载取代（切影片等）：静默放弃，不提示也不重置（新流程自管理状态）
         if (loadSeqRef.current !== seq) return
-        console.error('[useWatchTogether] 解析视频源失败:', err)
+        console.error('[useWatchTogether] 解析视频源失败:', redactMediaError(err))
         message.error(err instanceof Error ? err.message : '视频源解析失败')
         resetForRetry(err instanceof Error ? err.message : '视频源解析失败')
         return
@@ -1089,7 +1164,7 @@ export function useWatchTogether({
         // MSE attach 失败时必须释放 suppressEventsRef，否则房主端
         // play/pause/seek/timeupdate 事件全部被吞，broadcastState 永不调用，
         // 导致观众端永久黑屏。
-        console.error('[useWatchTogether] applySourceToVideo 失败:', err)
+        console.error('[useWatchTogether] applySourceToVideo 失败:', redactMediaError(err))
 
         // 房主刷新恢复 + 复用旧 B站 URL 失败（通常 403/404 deadline 过期）：
         // 回退到重新解析 B站 获取最新 URL，attach 后再次 applyAndRecover。
@@ -1130,7 +1205,7 @@ export function useWatchTogether({
             return
           } catch (retryErr) {
             if (loadSeqRef.current !== seq) return
-            console.error('[useWatchTogether] 回退重新解析失败:', retryErr)
+            console.error('[useWatchTogether] 回退重新解析失败:', redactMediaError(retryErr))
             const retryMsg =
               retryErr instanceof Error ? retryErr.message : 'B站视频解析失败'
             message.error(retryMsg)
@@ -1388,7 +1463,7 @@ export function useWatchTogether({
           })
         })
         .catch((err: unknown) => {
-          console.error('[useWatchTogether] previewPlay 加载失败:', err)
+          console.error('[useWatchTogether] previewPlay 加载失败:', redactMediaError(err))
           suppressEventsRef.current = false
           message.error(err instanceof Error ? err.message : '预览源加载失败')
         })

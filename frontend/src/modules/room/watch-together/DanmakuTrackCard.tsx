@@ -9,6 +9,7 @@ import { DanmakuSearchModal } from './DanmakuSearchModal'
 import { useDanmakuStore } from '@/store/danmakuStore'
 import { useRoomStore } from '@/store/roomStore'
 import { cn } from '@/lib/utils'
+import { redactMediaError } from '@/modules/player/services/media-redaction'
 import { extractMediaTitle } from '@/lib/mediaTitleParser'
 import { getDanmakuEpisodes, fetchDanmaku } from '@/modules/danmaku/api'
 import type { DanmakuSource } from '@/modules/danmaku/types'
@@ -95,7 +96,7 @@ export function DanmakuTrackCard() {
         setBvInput('')
       }
     } catch (err) {
-      console.error('[DanmakuTrackCard] BV add error:', err)
+      console.error('[DanmakuTrackCard] BV add error:', redactMediaError(err))
       message.error(err instanceof Error ? err.message : '添加弹幕轨道失败')
     } finally {
       setBvLoading(false)

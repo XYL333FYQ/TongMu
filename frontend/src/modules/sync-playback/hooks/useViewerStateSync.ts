@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import type { RefObject, MutableRefObject } from 'react'
 import { useSocket } from '@/hooks/useSocket'
 import { message } from '@/components/ui/message'
+import { redactMediaError } from '@/modules/player/services/media-redaction'
 import { useRoomStore } from '@/store/roomStore'
 import type {
   WatchTogetherState,
@@ -160,7 +161,7 @@ export function useViewerStateSync({
             } else if (err instanceof DownloadError) {
               message.error(`缓冲下载失败: ${err.message}`)
             } else {
-              console.error('[useViewerStateSync] 缓冲下载失败:', err)
+              console.error('[useViewerStateSync] 缓冲下载失败:', redactMediaError(err))
               message.error('缓冲下载失败，请等待房主重新广播')
             }
             // 缓冲失败：不应用源（避免半成品导致黑屏），等待房主重新广播
@@ -275,7 +276,7 @@ export function useViewerStateSync({
         try {
           await applyStateChanges(s, isSourceChange)
         } catch (err: unknown) {
-          console.error('[useViewerStateSync] applyStateChanges failed:', err)
+          console.error('[useViewerStateSync] applyStateChanges failed:', redactMediaError(err))
           message.error(err instanceof Error ? err.message : '视频源加载失败')
         } finally {
           isApplyingRef.current = false

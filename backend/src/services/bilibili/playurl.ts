@@ -5,6 +5,7 @@ import {
   QN_QUALITY_MAP,
   DEFAULT_QN,
 } from './permission';
+import { redactMediaError } from '../media/redact';
 
 export interface DashMediaTrack {
   baseUrl: string;
@@ -417,7 +418,7 @@ export async function getPlayUrl(
     if (isPermissionError(err)) {
       throw new NoPermissionError();
     }
-    console.warn('[bilibili] WBI playurl 失败，降级到未签名接口:', err);
+    console.warn('[bilibili] WBI playurl 失败，降级到未签名接口:', redactMediaError(err));
     clearWbiKeyCache();
     try {
       return await getPlayUrlLegacy(bvid, cid, cookie, options);

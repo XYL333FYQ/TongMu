@@ -19,6 +19,7 @@
 
 import { getApiUrl } from '@/lib/api'
 import { appendRoomMediaGrant } from '@/modules/media/roomMediaGrant'
+import { redactMediaUrl } from './media-redaction'
 
 /**
  * B站媒体 CDN 域名白名单（host 精确或子域后缀匹配）。
@@ -264,7 +265,7 @@ export function resolveProxyUrl(
   // 带防盗链 headers：浏览器无法设置 forbidden header，必须走服务器代理
   if (hasHeaders) {
     console.warn('[url-proxy] 走服务器代理(headers):', {
-      url: url.slice(0, 80),
+      url: redactMediaUrl(url),
       format,
       hasHeaders,
     })
@@ -309,7 +310,7 @@ export function resolveProxyUrl(
       if (new URL(url).protocol === 'http:') {
         console.warn(
           '[url-proxy] https 页面下的 http 跨域源（源站不支持 TLS，配置期已探测），走服务器代理:',
-          url.slice(0, 80)
+          redactMediaUrl(url)
         )
         return buildProxyUrl(url)
       }

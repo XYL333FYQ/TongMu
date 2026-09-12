@@ -34,6 +34,7 @@ import {
   type BilibiliQrPollResponse,
   type BilibiliNavData,
 } from './helpers';
+import { redactMediaError } from '../../services/media/redact';
 
 const router = Router();
 
@@ -55,7 +56,7 @@ router.get('/bilibili/qr', async (_req, res) => {
       qrDataUrl,
     });
   } catch (err) {
-    console.error('[bilibili] qr generate error:', err);
+    console.error('[bilibili] qr generate error:', redactMediaError(err));
     res.status(500).json({ success: false, message: '生成二维码失败' });
   }
 });
@@ -144,7 +145,7 @@ router.get('/bilibili/qr/poll', async (req: AuthenticatedRequest, res) => {
       loggedIn: !!(await getUserCookie(userId)),
     });
   } catch (err) {
-    console.error('[bilibili] qr poll error:', err);
+    console.error('[bilibili] qr poll error:', redactMediaError(err));
     res.status(500).json({ success: false, message: '轮询二维码状态失败' });
   }
 });
@@ -155,7 +156,7 @@ router.get('/bilibili/login-status', async (req: AuthenticatedRequest, res) => {
     const userId = req.user?.userId;
     res.json({ success: true, loggedIn: !!(await getUserCookie(userId)) });
   } catch (err) {
-    console.error('login-status error:', err);
+    console.error('login-status error:', redactMediaError(err));
     res.status(500).json({ success: false, message: '查询登录状态失败' });
   }
 });
@@ -171,7 +172,7 @@ router.get('/bilibili/cookie', async (req: AuthenticatedRequest, res) => {
     }
     res.json({ success: true, cookie });
   } catch (err) {
-    console.error('bilibili cookie error:', err);
+    console.error('bilibili cookie error:', redactMediaError(err));
     res.status(500).json({ success: false, message: '获取 Cookie 失败' });
   }
 });
@@ -222,7 +223,7 @@ router.post('/bilibili/cookie-login', async (req: AuthenticatedRequest, res) => 
       avatar: validation.avatar,
     });
   } catch (err) {
-    console.error('[bilibili] cookie login error:', err);
+    console.error('[bilibili] cookie login error:', redactMediaError(err));
     res.status(500).json({
       success: false,
       message: err instanceof Error ? err.message : 'Cookie 登录失败',
@@ -241,7 +242,7 @@ router.post('/bilibili/logout', async (req: AuthenticatedRequest, res) => {
     }
     res.json({ success: true, message: '已退出登录' });
   } catch (err) {
-    console.error('bilibili logout error:', err);
+    console.error('bilibili logout error:', redactMediaError(err));
     res.status(500).json({ success: false, message: '退出登录失败' });
   }
 });
@@ -308,7 +309,7 @@ router.get('/bilibili/user-info', async (req: AuthenticatedRequest, res) => {
       vipStatus: vipStatus ?? 0,
     });
   } catch (err) {
-    console.error('[bilibili] user-info error:', err);
+    console.error('[bilibili] user-info error:', redactMediaError(err));
     res.json({
       success: false,
       message: err instanceof Error ? err.message : '获取 B站 用户信息失败',
@@ -348,7 +349,7 @@ router.get('/bilibili/following-bangumi', async (req: AuthenticatedRequest, res:
           });
         }
       } catch (err) {
-        console.error('[bilibili] following-bangumi fetch mid error:', err);
+        console.error('[bilibili] following-bangumi fetch mid error:', redactMediaError(err));
       }
     }
   }
@@ -408,7 +409,7 @@ router.get('/bilibili/following-bangumi', async (req: AuthenticatedRequest, res:
 
     res.json({ success: true, list });
   } catch (err) {
-    console.error('[bilibili] following-bangumi error:', err);
+    console.error('[bilibili] following-bangumi error:', redactMediaError(err));
     res.status(502).json({
       success: false,
       message: err instanceof Error ? err.message : '获取关注番剧列表失败',
@@ -469,7 +470,7 @@ router.get('/bilibili/bangumi-episodes', async (req: AuthenticatedRequest, res: 
 
     res.json({ success: true, episodes });
   } catch (err) {
-    console.error('[bilibili] bangumi-episodes error:', err);
+    console.error('[bilibili] bangumi-episodes error:', redactMediaError(err));
     res.status(502).json({
       success: false,
       message: err instanceof Error ? err.message : '获取番剧集数失败',

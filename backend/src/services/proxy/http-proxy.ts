@@ -21,6 +21,7 @@ import {
   ProxyTargetError,
   type ProxyTargetPolicy,
 } from './safe-fetch';
+import { redactMediaError, redactMediaUrl } from '../media/redact';
 
 /** 将字节数格式化为人类可读单位 */
 function formatBytes(bytes: number): string {
@@ -215,7 +216,7 @@ export async function proxyHttpUpstream(
       const reason =
         fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
       console.warn(
-        `[${logTag}] https 上游失败（${reason}），降级 http 重试: ${requestUrl.slice(0, 100)}`,
+        `[${logTag}] https 上游失败（${redactMediaError(reason)}），降级 http 重试: ${redactMediaUrl(requestUrl)}`,
       );
       // 重建超时与中断控制器：旧 controller 已 abort，旧计时器已触发
       clearTimeout(timeout);
@@ -236,7 +237,7 @@ export async function proxyHttpUpstream(
 
     if (!upstream.ok) {
       console.log(
-        `[${logTag}] proxy ${upstream.status} ${formatBytes(bytesSent)} ${Date.now() - startTime}ms range=${rangeHeader || '-'} ${requestUrl.slice(0, 100)}`,
+        `[${logTag}] proxy ${upstream.status} ${formatBytes(bytesSent)} ${Date.now() - startTime}ms range=${rangeHeader || '-'} ${redactMediaUrl(requestUrl)}`,
       );
       res.status(upstream.status);
       // 透传语义头：如 416 的 Content-Range: bytes */size（RFC 9110 要求），
@@ -309,7 +310,7 @@ export async function proxyHttpUpstream(
       // 仅返回头信息，不传输 body。
       // 非 HEAD 的无 body 响应（如 204）：保持上游状态码。
       console.log(
-        `[${logTag}] proxy ${res.statusCode} ${formatBytes(0)} ${Date.now() - startTime}ms range=${rangeHeader || '-'} ${requestUrl.slice(0, 100)}`,
+        `[${logTag}] proxy ${res.statusCode} ${formatBytes(0)} ${Date.now() - startTime}ms range=${rangeHeader || '-'} ${redactMediaUrl(requestUrl)}`,
       );
       res.end();
       return;
@@ -326,9 +327,9 @@ export async function proxyHttpUpstream(
       },
     });
     stream.on('error', (err) => {
-      console.error(`[${logTag}] proxy upstream stream error:`, err);
+      console.error(`[${logTag}] proxy upstream stream error: ${redactMediaError(err)}`);
       console.log(
-        `[${logTag}] proxy ERROR ${formatBytes(bytesSent)} ${Date.now() - startTime}ms range=${rangeHeader || '-'} ${requestUrl.slice(0, 100)}`,
+        `[${logTag}] proxy ERROR ${formatBytes(bytesSent)} ${Date.now() - startTime}ms range=${rangeHeader || '-'} ${redactMediaUrl(requestUrl)}`,
       );
       if (!res.headersSent) {
         res.status(502).json({ success: false, message: errorMessage });
@@ -339,7 +340,7 @@ export async function proxyHttpUpstream(
     // 响应结束时输出流量日志
     res.on('finish', () => {
       console.log(
-        `[${logTag}] proxy ${res.statusCode} ${formatBytes(bytesSent)} ${Date.now() - startTime}ms range=${rangeHeader || '-'} ${requestUrl.slice(0, 100)}`,
+        `[${logTag}] proxy ${res.statusCode} ${formatBytes(bytesSent)} ${Date.now() - startTime}ms range=${rangeHeader || '-'} ${redactMediaUrl(requestUrl)}`,
       );
     });
     stream.pipe(byteCounter).pipe(res);
@@ -357,7 +358,7 @@ export async function proxyHttpUpstream(
     if (isAbort) {
       // 超时触发的中断
       console.warn(
-        `[${logTag}] proxy TIMEOUT ${formatBytes(bytesSent)} ${Date.now() - startTime}ms range=${rangeHeader || '-'} ${requestUrl.slice(0, 100)}`,
+        `[${logTag}] proxy TIMEOUT ${formatBytes(bytesSent)} ${Date.now() - startTime}ms range=${rangeHeader || '-'} ${redactMediaUrl(requestUrl)}`,
       );
       if (!res.headersSent) {
         res.status(504).json({ success: false, message: '上游请求超时' });
@@ -366,9 +367,9 @@ export async function proxyHttpUpstream(
       }
       return;
     }
-    console.error(`[${logTag}] proxy error:`, err);
+    console.error(`[${logTag}] proxy error: ${redactMediaError(err)}`);
     console.log(
-      `[${logTag}] proxy ERR ${formatBytes(bytesSent)} ${Date.now() - startTime}ms range=${rangeHeader || '-'} ${requestUrl.slice(0, 100)}`,
+      `[${logTag}] proxy ERR ${formatBytes(bytesSent)} ${Date.now() - startTime}ms range=${rangeHeader || '-'} ${redactMediaUrl(requestUrl)}`,
     );
     if (!res.headersSent) {
       res.status(502).json({ success: false, message: errorMessage });

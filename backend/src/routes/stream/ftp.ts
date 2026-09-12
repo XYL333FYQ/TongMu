@@ -12,6 +12,7 @@ import { Router, Response } from 'express';
 import { AuthenticatedRequest } from '../../middleware/auth';
 import { statFTPFile, createFTPReadStream } from '../../services/ftp';
 import { pipeRangeStream } from '../../services/proxy';
+import { redactMediaError } from '../../services/media/redact';
 
 const router = Router();
 
@@ -81,7 +82,7 @@ router.get('/resolve-ftp', async (req: AuthenticatedRequest, res: Response) => {
       duration: 0,
     });
   } catch (err) {
-    console.error('[stream] resolve-ftp error:', err);
+    console.error('[stream] resolve-ftp error:', redactMediaError(err));
     res.status(500).json({
       success: false,
       message: err instanceof Error ? err.message : '解析 FTP 文件失败',
@@ -106,7 +107,7 @@ router.get('/proxy-ftp', async (req: AuthenticatedRequest, res: Response) => {
       errorMessage: 'FTP 代理失败',
     });
   } catch (err) {
-    console.error('[stream] proxy-ftp error:', err);
+    console.error('[stream] proxy-ftp error:', redactMediaError(err));
     res.status(502).json({ success: false, message: 'FTP 代理失败' });
   }
 });

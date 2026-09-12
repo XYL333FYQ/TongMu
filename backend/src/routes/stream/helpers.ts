@@ -7,6 +7,7 @@ import { bilibiliFetch } from '../../services/bilibili/client';
 import { getCredential } from '../../services/bilibili/credential';
 import { setCachedUserInfo } from '../../services/bilibili/cache';
 import { DEFAULT_PROXY_UA } from '../../services/proxy';
+import { redactMediaError, redactMediaUrl } from '../../services/media/redact';
 
 export interface BilibiliQrGenerateResponse {
   data?: {
@@ -139,7 +140,7 @@ export async function fetchCookiesFromSsoUrl(
 
     for (let i = 0; i <= maxRedirects; i++) {
       if (seenUrls.has(currentUrl)) {
-        console.warn('[bilibili] sso redirect loop detected at', currentUrl);
+        console.warn('[bilibili] sso redirect loop detected at', redactMediaUrl(currentUrl));
         break;
       }
       seenUrls.add(currentUrl);
@@ -189,7 +190,7 @@ export async function fetchCookiesFromSsoUrl(
     );
     return cookie;
   } catch (err) {
-    console.error('[bilibili] fetch sso url error:', err);
+    console.error('[bilibili] fetch sso url error:', redactMediaError(err));
     return null;
   }
 }
@@ -227,7 +228,7 @@ export async function validateCookieAndCacheUserInfo(
 
     return { valid: true, name, avatar, mid };
   } catch (err) {
-    console.error('[bilibili] cookie validation error:', err);
+    console.error('[bilibili] cookie validation error:', redactMediaError(err));
     return { valid: false };
   }
 }

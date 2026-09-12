@@ -11,6 +11,8 @@
  * 房主端通常已通过点击"播放影片"按钮获得用户交互，play() 不会被阻止。
  */
 
+import { redactMediaError } from '@/modules/player/services/media-redaction'
+
 export interface SafePlayOptions {
   /**
    * 当因自动播放策略被强制静音时触发，UI 层可据此更新静音按钮状态。
@@ -37,11 +39,11 @@ export function safePlay(
         console.warn(
           '[safePlay] muted play retry also failed:',
           retryErr?.name,
-          retryErr?.message
+          redactMediaError(retryErr?.message)
         )
       })
     }
     // 其他错误（如 AbortError：play() 被 load() 中断）静默处理
-    console.warn('[safePlay] play failed:', err?.name, err?.message)
+    console.warn('[safePlay] play failed:', err?.name, redactMediaError(err?.message))
   })
 }

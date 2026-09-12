@@ -345,7 +345,12 @@ export async function resolveBilibiliOnline(
   if (!forceRefresh) {
     const cached = bilibiliResolveCache.get(cacheKey)
     if (cached && cached.expiresAt > Date.now()) {
-      console.log('[movie-source-resolver] B站 解析命中缓存:', cacheKey)
+      console.log('[movie-source-resolver] B站 解析命中缓存:', {
+        movieId: movie.id,
+        qn: movie.currentQn ?? null,
+        mode: effectivePreferMp4 ? 'mp4' : 'dash',
+        cliProxy: Boolean(proxyUrl),
+      })
       return cached.resolved
     }
   } else {
@@ -486,7 +491,7 @@ export async function resolveMovieSource({
       if (recovery.headers && Object.keys(recovery.headers).length > 0) {
         console.warn(
           '[movie-source-resolver] B站 recovery 路径中清除非 B站 headers:',
-          recovery.headers
+          Object.keys(recovery.headers)
         )
       }
       return {

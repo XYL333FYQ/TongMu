@@ -36,8 +36,13 @@ export function toPublicDescriptor(
   descriptor: MediaDescriptor,
   finalUrl: string,
   audioUrl?: string,
-): Omit<MediaDescriptor, 'headers' | 'candidates'> {
-  const { headers: _headers, candidates: _candidates, ...safe } = descriptor;
+): Omit<MediaDescriptor, 'headers' | 'candidates' | 'credentialOrigins'> {
+  const {
+    headers: _headers,
+    credentialOrigins: _credentialOrigins,
+    candidates: _candidates,
+    ...safe
+  } = descriptor;
   return { ...safe, finalUrl, audioUrl };
 }
 
@@ -74,8 +79,13 @@ function headersForTarget(resource: MediaHandleResource, target: string): Record
   );
 }
 
-function credentialOriginsFor(url: string, headers?: Record<string, string>): string[] | undefined {
+export function credentialOriginsFor(
+  url: string,
+  headers?: Record<string, string>,
+  provenance?: string[],
+): string[] | undefined {
   if (!headers || !Object.keys(headers).some(isCredentialHeader)) return undefined;
+  if (provenance) return provenance;
   return [new URL(url).origin];
 }
 
@@ -96,10 +106,41 @@ function appendAccessToken(url: string, token?: string): string {
 }
 
 function dashAssetUrl(id: string, path: string, token?: string, roomGrant?: string): string {
-  const encodedPath = encodeURIComponent(path).replace(/%24/gi, '$');
+  const encodedPath = encodeDashAssetPath(path);
   const auth = token ? `&amp;token=${encodeURIComponent(token)}` : '';
   const roomAuth = roomGrant ? `&amp;roomGrant=${encodeURIComponent(roomGrant)}` : '';
   return `/api/stream/media/${encodeURIComponent(id)}/asset?path=${encodedPath}${auth}${roomAuth}`;
+}
+
+const DASH_TEMPLATE_TOKEN = /\$\$|\$(?:RepresentationID|Number|Time|Bandwidth)(?:%0\d+d)?\$/g;
+
+/** Encode an asset path without hiding DASH template tokens from dash.js. */
+export function encodeDashAssetPath(path: string): string {
+  let output = '';
+  let lastIndex = 0;
+  for (const match of path.matchAll(DASH_TEMPLATE_TOKEN)) {
+    const index = match.index ?? 0;
+    output += encodeURIComponent(path.slice(lastIndex, index));
+    output += match[0];
+    lastIndex = index + match[0].length;
+  }
+  return output + encodeURIComponent(path.slice(lastIndex));
+}
+
+export function expandDashTemplate(
+  template: string,
+  values: Partial<Record<'RepresentationID' | 'Number' | 'Time' | 'Bandwidth', string | number>>,
+): string {
+  return template.replace(DASH_TEMPLATE_TOKEN, (token) => {
+    if (token === '$$') return '$';
+    const match = /^\$(RepresentationID|Number|Time|Bandwidth)(%0(\d+)d)?\$$/.exec(token);
+    if (!match) return token;
+    const value = values[match[1] as keyof typeof values];
+    if (value === undefined) return token;
+    const text = String(value);
+    const width = match[3] ? Number(match[3]) : 0;
+    return width > 0 ? text.padStart(width, '0') : text;
+  });
 }
 
 export function rewriteManifest(
@@ -147,12 +188,31 @@ function effectiveDashBase(node: XmlElement, manifestUrl: string): string {
   return base;
 }
 
-function closestTemplate(node: XmlElement, name: 'SegmentTemplate' | 'SegmentList'): XmlElement | undefined {
+function effectiveDashTemplate(node: XmlElement, name: 'SegmentTemplate' | 'SegmentList'): XmlElement | undefined {
+  const chain: XmlElement[] = [];
   for (let current: XmlNode | null = node; current?.nodeType === 1; current = current.parentNode) {
-    const found = directChildrenByName(current as XmlElement, name)[0];
-    if (found) return found;
+    chain.unshift(current as XmlElement);
   }
-  return undefined;
+  const templates = chain.flatMap((current) => directChildrenByName(current, name));
+  if (templates.length === 0) return undefined;
+
+  const effective = templates[0].cloneNode(true) as XmlElement;
+  for (const template of templates.slice(1)) {
+    for (let index = 0; index < template.attributes.length; index += 1) {
+      const attribute = template.attributes.item(index);
+      if (attribute) effective.setAttribute(attribute.name, attribute.value);
+    }
+    const childNames = name === 'SegmentTemplate'
+      ? ['SegmentTimeline']
+      : ['Initialization', 'SegmentURL'];
+    for (const childName of childNames) {
+      const children = directChildrenByName(template, childName);
+      if (children.length === 0) continue;
+      for (const oldChild of directChildrenByName(effective, childName)) effective.removeChild(oldChild);
+      for (const child of children) effective.appendChild(child.cloneNode(true));
+    }
+  }
+  return effective;
 }
 
 function rewriteDashManifest(
@@ -167,19 +227,20 @@ function rewriteDashManifest(
   for (const representation of representations) {
     const base = effectiveDashBase(representation, resource.url);
     const baseHandle = childBaseResource(resource, base);
-    const template = closestTemplate(representation, 'SegmentTemplate');
+    const template = effectiveDashTemplate(representation, 'SegmentTemplate');
     if (template) {
-      const local = template.parentNode === representation ? template : template.cloneNode(true) as XmlElement;
+      const local = template;
       for (const attribute of ['media', 'initialization']) {
         const value = local.getAttribute(attribute);
         if (value) local.setAttribute(attribute, dashAssetUrl(baseHandle.id, value, handle.token, handle.roomGrant).replace(/&amp;/g, '&'));
       }
-      if (local.parentNode !== representation) representation.appendChild(local);
+      for (const existing of directChildrenByName(representation, 'SegmentTemplate')) representation.removeChild(existing);
+      representation.appendChild(local);
     }
 
-    const segmentList = closestTemplate(representation, 'SegmentList');
+    const segmentList = effectiveDashTemplate(representation, 'SegmentList');
     if (segmentList) {
-      const local = segmentList.parentNode === representation ? segmentList : segmentList.cloneNode(true) as XmlElement;
+      const local = segmentList;
       for (const elementName of ['Initialization', 'SegmentURL']) {
         const elements = Array.from(local.getElementsByTagName(elementName));
         for (const element of elements) {
@@ -189,7 +250,8 @@ function rewriteDashManifest(
           }
         }
       }
-      if (local.parentNode !== representation) representation.appendChild(local);
+      for (const existing of directChildrenByName(representation, 'SegmentList')) representation.removeChild(existing);
+      representation.appendChild(local);
     }
 
     // A Representation containing only BaseURL points directly at a media file.
@@ -288,7 +350,11 @@ router.post('/media/resolve', authenticateToken, mediaResolveLimiter, async (req
     }
     const videoHandle = issueMediaHandle({
       url: descriptor.finalUrl, scope, headers: descriptor.headers,
-      credentialOrigins: credentialOriginsFor(descriptor.finalUrl, descriptor.headers),
+      credentialOrigins: credentialOriginsFor(
+        descriptor.finalUrl,
+        descriptor.headers,
+        descriptor.credentialOrigins,
+      ),
       contentType: descriptor.contentType,
       // Magic handles octet-stream manifests; Bilibili's dual m4s "dash"
       // descriptor deliberately has video/mp4 and must not be parsed as MPD XML.
@@ -296,7 +362,11 @@ router.post('/media/resolve', authenticateToken, mediaResolveLimiter, async (req
     });
     const audioHandle = descriptor.audioUrl ? issueMediaHandle({
       url: descriptor.audioUrl, scope, headers: descriptor.headers, contentType: 'audio/mp4',
-      credentialOrigins: credentialOriginsFor(descriptor.audioUrl, descriptor.headers),
+      credentialOrigins: credentialOriginsFor(
+        descriptor.audioUrl,
+        descriptor.headers,
+        descriptor.credentialOrigins,
+      ),
       expiresAt: videoHandle.expiresAt,
     }) : undefined;
     descriptor.expiresAt = videoHandle.expiresAt;

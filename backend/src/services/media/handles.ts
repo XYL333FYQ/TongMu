@@ -2,6 +2,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:
 import fs from 'node:fs';
 import path from 'node:path';
 import { CONFIG_DIR } from '../paths';
+import { redactMediaError } from './redact';
 
 const DEFAULT_TTL_MS = 12 * 60 * 60 * 1000;
 const ROOM_GRANT_TTL_MS = 12 * 60 * 60 * 1000;
@@ -41,7 +42,7 @@ function loadKey(): Buffer {
     fs.writeFileSync(SECRETS_FILE, JSON.stringify(existing, null, 2));
     return generated;
   } catch (error) {
-    console.warn('[media-handle] 无法持久化密钥，本次启动使用临时密钥:', error);
+    console.warn('[media-handle] 无法持久化密钥，本次启动使用临时密钥:', redactMediaError(error));
     return randomBytes(32);
   }
 }

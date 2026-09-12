@@ -36,6 +36,8 @@ import type { ResolvedSource } from '@/modules/bilibili/types'
 import { safePlay } from '../safePlay'
 import { executeSeek } from '../services'
 import type { SeekToResult } from '../services'
+import { stripMediaGatewayAuth } from '@/modules/media/roomMediaGrant'
+import { redactMediaError } from '@/modules/player/services/media-redaction'
 
 interface ViewerLocalOverride {
   movieId: number
@@ -102,7 +104,7 @@ async function ensureViewerLocalOverride(
     storeState.setViewerCliResolvedSource(override)
     return override
   } catch (err) {
-    console.error('[useVideoSource] 观众本地解析失败:', err)
+    console.error('[useVideoSource] 观众本地解析失败:', redactMediaError(err))
     // 失败后清除旧覆盖，回退到房主源（可能无法播放，由上层提示）
     if (existing?.movieId === movieId) {
       storeState.setViewerCliResolvedSource(null)
@@ -152,8 +154,8 @@ function toPlayerSource(
   blobs?: { videoBlob: Blob; audioBlob: Blob }
 ): PlayerSource {
   const source: PlayerSource = {
-    url: state.sourceUrl,
-    audioUrl: state.audioUrl,
+    url: stripMediaGatewayAuth(state.sourceUrl),
+    audioUrl: state.audioUrl ? stripMediaGatewayAuth(state.audioUrl) : state.audioUrl,
     format: state.format,
     videoCodec: state.videoCodec,
     audioCodec: state.audioCodec,
@@ -376,7 +378,7 @@ export function useVideoSource({
         // MSE attach 失败时必须释放 suppressEventsRef，否则房主端
         // play/pause/seek/timeupdate 事件全部被吞，无法广播 state 给观众，
         // 导致观众端永久黑屏。
-        console.error('[useVideoSource] 恢复视频源失败:', err)
+        console.error('[useVideoSource] 恢复视频源失败:', redactMediaError(err))
         suppressEventsRef.current = false
         // 向用户展示错误（如不支持的视频格式），避免黑屏无反馈
         message.error(err instanceof Error ? err.message : '视频源加载失败')
@@ -409,7 +411,7 @@ export function useVideoSource({
         await forceReload(video, toPlayerSource(state, snapshot.currentTime))
         await restoreSnapshot(video, snapshot)
       } catch (err) {
-        console.error('[useVideoSource] 重载视频源失败:', err)
+        console.error('[useVideoSource] 重载视频源失败:', redactMediaError(err))
         message.error(err instanceof Error ? err.message : '视频重载失败')
       } finally {
         suppressEventsRef.current = false

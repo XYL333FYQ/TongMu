@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api'
+import { redactMediaError } from '@/modules/player/services/media-redaction'
 import type {
   BilibiliQrData,
   BilibiliUserInfo,
@@ -204,7 +205,7 @@ async function parseNdjsonStream(
   try {
     text = await res.text()
   } catch (err) {
-    console.warn('[resolveBilibili] 读取响应体失败:', err)
+    console.warn('[resolveBilibili] 读取响应体失败:', redactMediaError(err))
     throw new Error('解析响应失败', { cause: err })
   }
 
@@ -228,7 +229,7 @@ async function parseNdjsonStream(
         }
       }
     } catch (err) {
-      console.warn('[resolveBilibili] 解析进度行失败:', line, err)
+      console.warn('[resolveBilibili] 解析进度行失败:', redactMediaError(line), redactMediaError(err))
     }
   }
 

@@ -16,6 +16,7 @@
  * - 启动时扫描所有缓存，删除超过 MAX_AGE_MS 的条目
  * - 写入前若总大小超过 MAX_TOTAL_SIZE，按 lastAccessedAt 升序删除最旧的
  */
+import { redactMediaError } from './media-redaction'
 
 const DB_NAME = 'zcontrol-buffer'
 const DB_VERSION = 1
@@ -112,7 +113,7 @@ export async function getCacheEntry(
       }
     })
   } catch (err) {
-    console.warn('[buffer-cache] 读取缓存失败:', err)
+    console.warn('[buffer-cache] 读取缓存失败:', redactMediaError(err))
     return null
   }
 }
@@ -131,7 +132,7 @@ export async function setCacheEntry(entry: BufferCacheEntry): Promise<void> {
     // 写入后异步清理超限缓存
     void evictIfOverLimit()
   } catch (err) {
-    console.warn('[buffer-cache] 写入缓存失败:', err)
+    console.warn('[buffer-cache] 写入缓存失败:', redactMediaError(err))
     throw err
   }
 }
@@ -148,7 +149,7 @@ export async function deleteCacheEntry(key: string): Promise<void> {
       request.onsuccess = () => resolve()
     })
   } catch (err) {
-    console.warn('[buffer-cache] 删除缓存失败:', err)
+    console.warn('[buffer-cache] 删除缓存失败:', redactMediaError(err))
   }
 }
 
@@ -214,7 +215,7 @@ export async function evictIfOverLimit(): Promise<void> {
       }
     }
   } catch (err) {
-    console.warn('[buffer-cache] 清理缓存失败:', err)
+    console.warn('[buffer-cache] 清理缓存失败:', redactMediaError(err))
   }
 }
 
