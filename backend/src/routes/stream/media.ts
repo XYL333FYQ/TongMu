@@ -121,6 +121,10 @@ router.post('/media/resolve', mediaResolveLimiter, async (req: AuthenticatedRequ
       res.status(422).json({ success: false, message: '检测到 DRM 加密，当前无法作为普通媒体播放', descriptor, plan });
       return;
     }
+    if (plan.engine === 'blocked') {
+      res.status(422).json({ success: false, message: plan.reasons.join('；') || '当前客户端无法播放该媒体', descriptor: toPublicDescriptor(descriptor, ''), plan });
+      return;
+    }
     const videoHandle = issueMediaHandle({
       url: descriptor.finalUrl, scope, headers: descriptor.headers,
       contentType: descriptor.contentType,

@@ -60,6 +60,7 @@ export async function resolveMediaInput(
   browserSniff = false,
   roomId?: string
 ): Promise<ResolvedMedia> {
+  const video = document.createElement('video')
   const response = await apiFetch('/api/stream/media/resolve', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -68,8 +69,10 @@ export async function resolveMediaInput(
       roomId,
       browserSniff,
       capabilities: {
+        nativeHls: video.canPlayType('application/vnd.apple.mpegurl') !== '',
         mediaSource: typeof MediaSource !== 'undefined',
         playsvideo: typeof Worker !== 'undefined',
+        hevc: video.canPlayType('video/mp4; codecs="hvc1.1.6.L93.B0"') !== '',
       },
     }),
   })

@@ -15,6 +15,13 @@ export function planPlayback(
     };
   }
   if (media.transport === 'hls') {
+    if (capabilities.nativeHls === false && capabilities.mediaSource === false) {
+      return {
+        engine: 'blocked', mode: 'unsupported', proxy: false,
+        videoAction: 'none', audioAction: 'none',
+        reasons: ['当前浏览器既不支持原生 HLS，也没有 MediaSource'],
+      };
+    }
     return {
       engine: 'hls', mode: 'manifest', proxy: !!media.headers,
       videoAction: 'direct', audioAction: 'direct',
@@ -22,19 +29,45 @@ export function planPlayback(
     };
   }
   if (media.transport === 'dash') {
+    if (capabilities.mediaSource === false) {
+      return {
+        engine: 'blocked', mode: 'unsupported', proxy: false,
+        videoAction: 'none', audioAction: 'none', reasons: ['当前浏览器没有 MediaSource，无法播放 DASH'],
+      };
+    }
     return {
       engine: 'dash', mode: 'manifest', proxy: !!media.headers,
       videoAction: 'direct', audioAction: 'direct', reasons: ['使用现有 DASH 引擎'],
     };
   }
   if (media.transport === 'flv') {
+    if (capabilities.mediaSource === false) {
+      return {
+        engine: 'blocked', mode: 'unsupported', proxy: false,
+        videoAction: 'none', audioAction: 'none', reasons: ['当前浏览器没有 MediaSource，无法播放 FLV'],
+      };
+    }
     return {
       engine: 'flv', mode: 'manifest', proxy: !!media.headers,
       videoAction: 'direct', audioAction: 'direct', reasons: ['使用现有 FLV 引擎'],
     };
   }
   const audioCodec = media.audioCodec?.toLowerCase();
+  const videoCodec = media.videoCodec?.toLowerCase();
+  if (videoCodec && /^(?:hevc|h265|hev1|hvc1)/.test(videoCodec) && capabilities.hevc === false) {
+    return {
+      engine: 'blocked', mode: 'unsupported', proxy: false,
+      videoAction: 'none', audioAction: 'none',
+      reasons: ['当前浏览器不支持 HEVC，且项目未启用全视频转码'],
+    };
+  }
   if (audioCodec && AUDIO_TRANSCODE_CODECS.has(audioCodec)) {
+    if (capabilities.playsvideo === false) {
+      return {
+        engine: 'blocked', mode: 'unsupported', proxy: false,
+        videoAction: 'none', audioAction: 'none', reasons: ['当前浏览器无法运行音频转码工作线程'],
+      };
+    }
     return {
       engine: 'playsvideo', mode: 'audio-transcode', proxy: !!media.headers,
       videoAction: 'copy', audioAction: 'transcode-aac',
@@ -42,6 +75,12 @@ export function planPlayback(
     };
   }
   if (['mkv', 'ts'].includes(media.container)) {
+    if (capabilities.playsvideo === false) {
+      return {
+        engine: 'blocked', mode: 'unsupported', proxy: false,
+        videoAction: 'none', audioAction: 'none', reasons: ['当前浏览器无法运行 playsvideo 重封装'],
+      };
+    }
     return {
       engine: 'playsvideo', mode: 'remux', proxy: !!media.headers,
       videoAction: 'copy', audioAction: 'copy', reasons: [`${media.container.toUpperCase()} 交给现有 playsvideo 重封装`],

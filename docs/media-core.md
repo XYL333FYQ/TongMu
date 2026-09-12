@@ -20,7 +20,7 @@ Browser sniffing is deliberately not a DRM bypass. MPD `ContentProtection`, Wide
 
 `MediaProbe` treats URL suffix and `Content-Type` as hints. It performs advisory HEAD, then a bounded `Range: bytes=0-65535` GET. If Range is ignored it reads at most 64 KiB and cancels the body. It recognizes HLS, MPD, ISO-BMFF/MP4, EBML/Matroska/WebM, FLV and MPEG-TS magic. Timeout is 8 seconds and process-wide probe concurrency is four.
 
-The planner chooses direct, HLS, standard MPD/DASH, FLV or the existing playsvideo pipeline. MKV/TS prefer remux with video copy. DTS/AC3/EAC3/TrueHD produce an audio-only AAC transcode plan with video copy. It never silently selects full video transcoding; the project has no server transcoder.
+The planner chooses direct, HLS, standard MPD/DASH, FLV or the existing playsvideo pipeline. It also checks the requesting browser's native HLS, MediaSource, Worker/playsvideo and HEVC capabilities and returns an explicit unsupported reason rather than allowing a predictable black screen. MKV/TS prefer remux with video copy. DTS/AC3/EAC3/TrueHD produce an audio-only AAC transcode plan with video copy. It never silently selects full video transcoding; the project has no server transcoder.
 
 Codec, dimensions and track metadata are available when a specialized resolver supplies them (currently Bilibili and mounted/server sources). Generic direct URLs only receive container-level bounded probing because the server does not bundle ffprobe. The existing browser playsvideo/mediabunny path performs deeper demuxing when playback needs it.
 

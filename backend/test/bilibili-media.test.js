@@ -407,6 +407,10 @@ test('playback planner fixture matrix covers direct containers and streaming eng
     assert.equal(plan.engine, fixture.engine, fixture.name);
     assert.equal(plan.mode, fixture.mode, fixture.name);
   }
+  assert.equal(planPlayback({ ...base, container: 'dash', transport: 'dash' }, { mediaSource: false }).engine, 'blocked');
+  assert.equal(planPlayback({ ...base, container: 'hls', transport: 'hls' }, { nativeHls: false, mediaSource: false }).engine, 'blocked');
+  assert.equal(planPlayback({ ...base, container: 'mkv', audioCodec: 'dts' }, { playsvideo: false }).engine, 'blocked');
+  assert.equal(planPlayback({ ...base, container: 'mp4', videoCodec: 'hevc' }, { hevc: false }).engine, 'blocked');
 });
 
 test('encrypted media handles hide credentials, reject tampering and enforce user scope', () => {
