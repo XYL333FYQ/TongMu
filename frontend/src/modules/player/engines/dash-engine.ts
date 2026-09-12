@@ -6,16 +6,15 @@
  * dash.js 可识别的 DASH 源，由 dash.js 接管 MSE 生命周期与 seek 逻辑。
  *
  * 准入与失败策略：
- * - 进入本引擎的源必然 format='dash' 且带 audioUrl（engine-selector 的准入
- *   条件是 format==='dash' || audioUrl，而 audioUrl 仅由 B站 DASH 解析产生，
- *   产出时 format 恒为 'dash'——历史上"非 DASH 源 + audioUrl 走
- *   direct + audio-sync 双元素降级"的分支经源追溯确认为死代码，已移除）；
- * - DASH 源缺 audioUrl：m4s 无法直连播放，直接抛错；
+ * - 标准 MPD 只有 sourceUrl，直接由 dash.js 加载 manifest；
+ * - B站 DASH 带独立 video/audio m4s，继续由 DashPlayer 动态构造 MPD；
  * - dash.js 加载失败：直接抛错（自研 MSE 引擎已移除，无回退目标），
  *   由调用方提示用户。
  */
 import type { PlayerEngine, PlayerSource, EngineAttachResult } from '../types'
 import { DashPlayer } from './dash'
+import dashjs from 'dashjs'
+import { resetVideoElement, waitForMetadata } from '../utils'
 
 export const dashEngine: PlayerEngine = {
   type: 'dash',
@@ -26,10 +25,25 @@ export const dashEngine: PlayerEngine = {
   ): Promise<EngineAttachResult> {
     const audioUrl = source.audioUrl || ''
 
-    // DASH 源的 sourceUrl 是 m4s 片段，不能直接作为 video.src 播放，
-    // 双轨合并必须有 audioUrl
+    // 标准 MPD：直接交给 dash.js。B站 DASH 则仍走下方双 m4s 包装路径。
     if (!audioUrl) {
-      throw new Error('DASH 源缺少 audioUrl，无法播放')
+      resetVideoElement(video)
+      const player = dashjs.MediaPlayer().create()
+      try {
+        player.updateSettings({
+          streaming: { buffer: { bufferTimeAtTopQuality: 30 } },
+        })
+        player.initialize(video, source.url, false)
+        await waitForMetadata(video)
+        return {
+          cleanup: () => {
+            player.reset()
+          },
+        }
+      } catch (err) {
+        player.reset()
+        throw new Error('dash.js 加载 MPD 失败', { cause: err })
+      }
     }
 
     const dashPlayer = new DashPlayer({

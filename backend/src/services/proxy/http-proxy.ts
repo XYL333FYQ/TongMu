@@ -249,6 +249,17 @@ export async function proxyHttpUpstream(
       return;
     }
 
+    // A Range request answered with a full 200 response is not partial content.
+    // Stop before relaying an entire movie or advertising fake seek support.
+    if (rangeHeader && upstream.status === 200 && !upstream.headers.get('content-range')) {
+      await upstream.body?.cancel();
+      res.status(502).json({
+        success: false,
+        message: '上游忽略 Range 请求，已停止整文件中转',
+      });
+      return;
+    }
+
     // 转发上游状态码：Range 请求上游返回 206 时必须转发 206，
     // 否则前端 fetch 看到 200 会误判为完整响应（而非部分内容），
     // 影响后续 Content-Range / Content-Length 解析与缓存语义。
@@ -272,11 +283,11 @@ export async function proxyHttpUpstream(
       const value = upstream.headers.get(name);
       if (value) res.setHeader(name, value);
     }
-    // 确保浏览器知道支持 Range 请求：代理透传 Range 头到上游，
-    // 上游返回 206 时代理也转发 206，因此始终支持分段请求。
-    // 若上游未返回 Accept-Ranges（部分服务器不默认返回），
-    // 浏览器不会发起 Range 请求，导致整文件下载而非流式播放。
-    if (!res.getHeader('accept-ranges')) {
+    // Only advertise byte ranges after the upstream proves partial-response semantics.
+    if (
+      !res.getHeader('accept-ranges') &&
+      (upstream.status === 206 || !!upstream.headers.get('content-range'))
+    ) {
       res.setHeader('Accept-Ranges', 'bytes');
     }
     // 视频/媒体流代理：提示反向代理不要缓冲整个响应体。

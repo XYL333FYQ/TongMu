@@ -16,6 +16,7 @@ import mediaProxyRouter, { imageProxyRouter } from './proxy';
 import bilibiliAuthRouter from './bilibili-auth';
 import resolveRouter from './resolve';
 import ftpRouter from './ftp';
+import mediaRouter from './media';
 
 const router = Router();
 
@@ -26,6 +27,7 @@ router.use(imageProxyRouter);
 router.use(authenticateToken);
 router.use(bilibiliAuthRouter);
 router.use(resolveRouter);
+router.use(mediaRouter);
 router.use(mediaProxyRouter);
 router.use(ftpRouter);
 

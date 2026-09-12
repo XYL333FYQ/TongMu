@@ -77,7 +77,7 @@ import {
   resolveServerFile,
   buildServerFileProxyUrl,
 } from '@/modules/server-files/serverFilesApi'
-import { detectMediaFormat, type MediaFormat } from '@/lib/mediaFormat'
+import type { MediaFormat } from '@/lib/mediaFormat'
 import {
   fetchAllMounts,
   type UnionMount,
@@ -86,6 +86,7 @@ import {
 import { useAuthStore } from '@/store/authStore'
 import { useSystemSettingsStore } from '@/store/systemSettingsStore'
 import { cn } from '@/lib/utils'
+import { resolveMediaInput, type ResolvedMedia } from '@/modules/media/mediaApi'
 
 type SourceType =
   | 'bilibili'
@@ -105,7 +106,7 @@ const ALL_SOURCE_OPTIONS: {
   rootOnly?: boolean
 }[] = [
   { value: 'bilibili', label: '哔哩哔哩' },
-  { value: 'mp4', label: '视频直链' },
+  { value: 'mp4', label: '统一媒体 / 网页 URL' },
   { value: 'webdav', label: 'WebDAV' },
   { value: 'ftp', label: 'FTP' },
   { value: 'openlist', label: 'OpenList' },
@@ -155,7 +156,8 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
     (state) => state.setPendingPreviewPlay
   )
   const roomId = useRoomStore((state) => state.roomId)
-  const [sourceType, setSourceType] = useState<SourceType>('bilibili')
+  // ZViewer 2.0 默认就是统一入口；专用来源面板仍保留给高级配置与质量切换。
+  const [sourceType, setSourceType] = useState<SourceType>('mp4')
   const [url, setUrl] = useState('')
   const [loading, setLoading] = useState(false)
   const [qualityLoading, setQualityLoading] = useState(false)
@@ -168,14 +170,13 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
   // B站 源保持启用：开关本就不显示（解析出的 MP4/DASH 必定原生可播），
   // 且保留原生失败时的 playsvideo 管线回退保险；其余源跟随面板开关。
   const addMovie = useCallback(
-    (
-      _roomId: string,
-      payload: Omit<Parameters<typeof addMovieStore>[1], 'playsvideoEnabled'>
-    ) =>
+    (_roomId: string, payload: Parameters<typeof addMovieStore>[1]) =>
       addMovieStore(_roomId, {
         ...payload,
         playsvideoEnabled:
-          payload.source === 'bilibili' ? true : playsvideoEnabled,
+          payload.source === 'bilibili'
+            ? true
+            : (payload.playsvideoEnabled ?? playsvideoEnabled),
       }),
     [addMovieStore, playsvideoEnabled]
   )
@@ -184,6 +185,9 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
   )
   // B站 解析进度：在推送面板也展示后台解析过程
   const [resolveProgress, setResolveProgress] = useState<string>('')
+  const [mediaDiagnostics, setMediaDiagnostics] =
+    useState<ResolvedMedia | null>(null)
+  const [mediaResolveError, setMediaResolveError] = useState('')
 
   // WebDAV / FTP / OpenList 表单状态
   const [webdav, setWebdav] = useState<{
@@ -796,6 +800,8 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
     setFtp({ serverUrl: '', path: '', port: 21, username: '', password: '' })
     setOpenlist({ serverUrl: '', path: '' })
     setServerFilePath('')
+    setMediaDiagnostics(null)
+    setMediaResolveError('')
   }
 
   // 仅 bilibili 需要 handleResolve：解析后显示清晰度选择器，再点"添加"
@@ -1001,6 +1007,22 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           url: movieUrl,
           title,
           source: 'bilibili',
+          sourceInput: url.trim(),
+          mediaDescriptor: {
+            resolver: 'bilibili',
+            input: url.trim(),
+            sourceType: 'bilibili',
+            format: resolvedMovie.format,
+            requestedQuality: resolvedMovie.requestedQn,
+            actualQuality: resolvedMovie.currentQn,
+            qualityLabel: resolvedMovie.qualityLabel,
+            videoCodec: resolvedMovie.videoCodec,
+            audioCodec: resolvedMovie.audioCodec,
+            bitrate: resolvedMovie.videoBandwidth,
+            loggedIn: resolvedMovie.loggedIn,
+            vip: resolvedMovie.vipStatus === 1,
+            fallbackReason: resolvedMovie.fallbackReason,
+          },
           audioUrl: resolvedMovie.audioUrl,
           format: resolvedMovie.format,
           videoCodec: resolvedMovie.videoCodec,
@@ -1019,18 +1041,30 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           message.warning('请输入视频地址')
           return
         }
-        const movieUrl = url.trim()
-        const title = extractTitleFromUrl(movieUrl)
-        // 自动检测媒体格式：m3u8 -> hls，mp4/mkv/webm -> 对应格式
-        // 后端存储 format 字段，播放时据此选择 HLS/Direct 引擎
-        const detectedFormat = detectMediaFormat(movieUrl)
+        setMediaResolveError('')
+        setResolveProgress('正在识别来源、探测真实格式并规划播放路径...')
+        const resolved = await resolveMediaInput(url.trim(), true, roomId)
+        setMediaDiagnostics(resolved)
+        const media = resolved.descriptor
+        const movieUrl = media.finalUrl
+        const title = media.title || extractTitleFromUrl(media.originalUrl)
         await addMovie(roomId, {
           url: movieUrl,
           title,
-          source: 'mp4',
-          format: detectedFormat !== 'unknown' ? detectedFormat : undefined,
+          source: media.sourceType,
+          sourceInput: media.input,
+          mediaDescriptor: {
+            ...media,
+            playbackPlan: resolved.plan,
+          },
+          format: media.container,
+          audioUrl: media.audioUrl,
+          videoCodec: media.videoCodec,
+          audioCodec: media.audioCodec,
+          duration: media.duration,
+          playsvideoEnabled:
+            resolved.plan.engine === 'playsvideo' || playsvideoEnabled,
         })
-        resetForm()
         message.success('影片已添加')
       } else if (sourceType === 'webdav' || sourceType === 'openlist') {
         // WebDAV 与 OpenList 共用同一套协议逻辑，仅 API 前缀与直链获取不同
@@ -1227,7 +1261,9 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
       }
     } catch (err) {
       console.error('[MoviePushPanel] add movie error:', err)
-      message.error(err instanceof Error ? err.message : '添加影片失败')
+      const errorMessage = err instanceof Error ? err.message : '添加影片失败'
+      if (sourceType === 'mp4') setMediaResolveError(errorMessage)
+      message.error(errorMessage)
     } finally {
       setLoading(false)
       setResolveProgress('')
@@ -1332,7 +1368,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           placeholder={
             sourceType === 'bilibili'
               ? '视频 Url 或 bv 号'
-              : 'MP4/WebM 等视频直链'
+              : '影片网页、MP4/MKV、M3U8、MPD、FLV 或无后缀媒体 URL'
           }
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -1847,6 +1883,120 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
             >
               <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
               <Text className="text-xs">{resolveProgress}</Text>
+            </div>
+          )}
+
+          {sourceType === 'mp4' && mediaDiagnostics && (
+            <div className="rounded-[var(--md-sys-shape-corner)] bg-[var(--md-sys-color-surface-container-high)] px-3 py-2 text-[11px] leading-relaxed">
+              <Text className="block text-xs font-medium">
+                Playback Diagnostics
+              </Text>
+              <Text type="secondary" className="block break-all">
+                Input: {mediaDiagnostics.descriptor.input}
+              </Text>
+              <Text type="secondary" className="block break-all">
+                Gateway: {mediaDiagnostics.descriptor.finalUrl}
+              </Text>
+              <Text type="secondary" className="block break-all">
+                Resolver: {mediaDiagnostics.descriptor.resolver} · Source:{' '}
+                {mediaDiagnostics.descriptor.sourceType} · Detected:{' '}
+                {mediaDiagnostics.descriptor.container.toUpperCase()} · MIME:{' '}
+                {mediaDiagnostics.descriptor.contentType || 'unknown'}
+              </Text>
+              <Text type="secondary" className="block">
+                Range:{' '}
+                {mediaDiagnostics.descriptor.rangeSupported ? 'yes' : 'no'} ·
+                Engine: {mediaDiagnostics.plan.engine} · Mode:{' '}
+                {mediaDiagnostics.plan.mode} · Proxy:{' '}
+                {mediaDiagnostics.plan.proxy ? 'signed handle' : 'no'}
+              </Text>
+              <Text type="secondary" className="block">
+                Video: {mediaDiagnostics.descriptor.videoCodec || 'unknown'} ·
+                Audio: {mediaDiagnostics.descriptor.audioCodec || 'unknown'} ·
+                Resolution:{' '}
+                {mediaDiagnostics.descriptor.width &&
+                mediaDiagnostics.descriptor.height
+                  ? `${mediaDiagnostics.descriptor.width}×${mediaDiagnostics.descriptor.height}`
+                  : 'unknown'}{' '}
+                · Duration:{' '}
+                {mediaDiagnostics.descriptor.duration
+                  ? `${Math.round(mediaDiagnostics.descriptor.duration)}s`
+                  : 'unknown'}
+              </Text>
+              <Text type="secondary" className="block">
+                Video action: {mediaDiagnostics.plan.videoAction} · Audio
+                action: {mediaDiagnostics.plan.audioAction} · DRM:{' '}
+                {mediaDiagnostics.descriptor.drm.protected
+                  ? mediaDiagnostics.descriptor.drm.systems?.join(', ') || 'yes'
+                  : 'no'}
+              </Text>
+              {mediaDiagnostics.descriptor.fallbackReason && (
+                <Text className="block text-[var(--md-sys-color-error)]">
+                  Fallback: {mediaDiagnostics.descriptor.fallbackReason}
+                </Text>
+              )}
+              {mediaDiagnostics.descriptor.probe.warnings.map((warning) => (
+                <Text key={warning} type="secondary" className="block">
+                  Probe: {warning}
+                </Text>
+              ))}
+              {mediaDiagnostics.plan.reasons.map((reason) => (
+                <Text key={reason} type="secondary" className="block">
+                  Plan: {reason}
+                </Text>
+              ))}
+            </div>
+          )}
+
+          {sourceType === 'mp4' && mediaResolveError && (
+            <div className="rounded-[var(--md-sys-shape-corner)] bg-[var(--md-sys-color-error-container)] px-3 py-2 text-[11px] leading-relaxed text-[var(--md-sys-color-on-error-container)]">
+              <Text className="block text-xs font-medium">
+                Playback Diagnostics
+              </Text>
+              <Text className="block break-all">
+                Error: {mediaResolveError}
+              </Text>
+            </div>
+          )}
+
+          {sourceType === 'bilibili' && resolvedMovie && (
+            <div className="rounded-[var(--md-sys-shape-corner)] bg-[var(--md-sys-color-surface-container-high)] px-3 py-2 text-[11px] leading-relaxed">
+              <Text className="block text-xs font-medium">
+                Playback Diagnostics
+              </Text>
+              <Text type="secondary" className="block">
+                Requested: {resolvedMovie.requestedQn ?? 'auto'} · Actual:{' '}
+                {resolvedMovie.qualityLabel ||
+                  resolvedMovie.currentQn ||
+                  'unknown'}{' '}
+                · Format: {resolvedMovie.format.toUpperCase()} · Login:{' '}
+                {resolvedMovie.loggedIn ? 'yes' : 'no'} · VIP:{' '}
+                {resolvedMovie.vipStatus === 1 ? 'yes' : 'no'}
+              </Text>
+              <Text type="secondary" className="block">
+                Video: {resolvedMovie.videoCodec || 'unknown'} · Audio:{' '}
+                {resolvedMovie.audioCodec || 'unknown'} · Bandwidth:{' '}
+                {resolvedMovie.videoBandwidth
+                  ? `${Math.round(resolvedMovie.videoBandwidth / 1000)} kbps`
+                  : 'unknown'}
+              </Text>
+              <Text type="secondary" className="block">
+                Resolution:{' '}
+                {resolvedMovie.acceptQuality?.find(
+                  (quality) => quality.id === resolvedMovie.currentQn
+                )?.resolution || 'unknown'}{' '}
+                · Engine:{' '}
+                {resolvedMovie.format === 'dash' ? 'DASH' : 'Direct MP4'} ·
+                Duration:{' '}
+                {resolvedMovie.duration
+                  ? `${Math.round(resolvedMovie.duration)}s`
+                  : 'unknown'}
+              </Text>
+              {resolvedMovie.fallbackReason && (
+                <Text className="block text-[var(--md-sys-color-error)]">
+                  Fallback: {resolvedMovie.fallbackReason}
+                </Text>
+              )}
             </div>
           )}
 

@@ -31,6 +31,7 @@ import {
 } from '@/modules/sync-playback/suppression'
 import { type MediaFormat } from '@/lib/mediaFormat'
 import {
+  isMediaCoreMovie,
   resolveMovieSource,
   resolveBilibiliOnline,
   getEffectivePreferMp4,
@@ -659,6 +660,8 @@ export function useWatchTogether({
       setWatchTogether,
       broadcastState,
       fetchBlobsForBufferModeLocal,
+      roomId,
+      suppressEventsRef,
     ]
   )
 
@@ -907,7 +910,11 @@ export function useWatchTogether({
       // - 其他源：直接使用影片记录字段
       let resolved: ResolvedMovieSource
       try {
-        if (sourceType === 'bilibili' && !(isRecovery && recovery?.sourceUrl)) {
+        if (
+          sourceType === 'bilibili' &&
+          !isMediaCoreMovie(movie) &&
+          !(isRecovery && recovery?.sourceUrl)
+        ) {
           resolved = await resolveOnline()
         } else if (sourceType === 'anime') {
           // ani-subs 番剧源：每次播放都通过 sourceMeta 重新解析
@@ -915,6 +922,7 @@ export function useWatchTogether({
           try {
             resolved = await resolveMovieSource({
               movie,
+              roomId,
               sourceType,
               recovery: null, // anime 源不复用 recovery URL（短期有效）
             })
@@ -924,6 +932,7 @@ export function useWatchTogether({
         } else {
           resolved = await resolveMovieSource({
             movie,
+            roomId,
             sourceType,
             recovery: isRecovery ? recovery : null,
           })
@@ -1136,6 +1145,7 @@ export function useWatchTogether({
     suppressEventsRef,
     fetchBlobsForBufferModeLocal,
     retryToken,
+    roomId,
   ])
 
   // currentMovieId 被清空（删除当前播放影片等场景）时，立即暂停视频并清理媒体资源，

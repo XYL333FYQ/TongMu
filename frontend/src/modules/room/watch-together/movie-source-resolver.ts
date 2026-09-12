@@ -23,6 +23,7 @@ import {
   buildAniSubsProxyUrl,
   needsAniSubsProxy,
 } from '@/modules/anisubs'
+import { resolveMediaInput, type ResolvedMedia } from '@/modules/media/mediaApi'
 
 /** 房主刷新恢复时由后端返回的最近一次播放状态（源相关子集） */
 export interface RecoverySourceInfo {
@@ -80,12 +81,80 @@ export interface ResolvedMovieSource {
 
 export interface ResolveMovieSourceOptions {
   movie: Movie
+  /** 新媒体核心重新签发 room-scoped handle 时使用。 */
+  roomId?: string
   /** 归一化后的源类型（movie.sourceType 中 'mp4' 已映射为 'url'） */
   sourceType: string
   /** 恢复信息；仅当 currentMovieId 与影片匹配时由调用方传入 */
   recovery?: RecoverySourceInfo | null
   /** B站 在线解析进度回调 */
   onProgress?: (step: string, message: string) => void
+}
+
+const mediaCoreResolveCache = new Map<
+  number,
+  { resolved: ResolvedMedia; expiresAt: number }
+>()
+
+export function isMediaCoreMovie(movie: Movie): boolean {
+  return (
+    typeof movie.sourceInput === 'string' &&
+    movie.sourceInput.length > 0 &&
+    typeof movie.mediaDescriptor?.resolver === 'string'
+  )
+}
+
+async function resolveMediaCoreMovie(
+  movie: Movie,
+  roomId?: string
+): Promise<ResolvedMovieSource> {
+  const stored = movie.mediaDescriptor ?? {}
+  const storedExpiry = Number(stored.expiresAt ?? 0)
+  const storedPlan = stored.playbackPlan as { engine?: string } | undefined
+  if (storedExpiry > Date.now() + 60_000) {
+    return {
+      sourceUrl: movie.url,
+      audioUrl: movie.audioUrl,
+      format: movie.format,
+      videoCodec: movie.videoCodec,
+      audioCodec: movie.audioCodec,
+      duration: movie.duration || 0,
+      reusedRecoveryUrl: false,
+      playsvideoEnabled:
+        storedPlan?.engine === 'playsvideo' ||
+        movie.playsvideoEnabled !== false,
+    }
+  }
+
+  const cached = mediaCoreResolveCache.get(movie.id)
+  if (cached && cached.expiresAt > Date.now() + 60_000) {
+    return mapMediaCoreResult(cached.resolved, movie)
+  }
+  const resolved = await resolveMediaInput(movie.sourceInput!, true, roomId)
+  mediaCoreResolveCache.set(movie.id, {
+    resolved,
+    expiresAt: resolved.descriptor.expiresAt ?? Date.now() + 5 * 60_000,
+  })
+  return mapMediaCoreResult(resolved, movie)
+}
+
+function mapMediaCoreResult(
+  resolved: ResolvedMedia,
+  movie: Movie
+): ResolvedMovieSource {
+  const { descriptor, plan } = resolved
+  return {
+    sourceUrl: descriptor.finalUrl,
+    audioUrl: descriptor.audioUrl,
+    format: descriptor.container,
+    videoCodec: descriptor.videoCodec,
+    audioCodec: descriptor.audioCodec,
+    duration: descriptor.duration ?? movie.duration ?? 0,
+    reusedRecoveryUrl: false,
+    mkvFastPath: plan.engine === 'direct' && descriptor.container === 'mkv',
+    playsvideoEnabled:
+      plan.engine === 'playsvideo' || movie.playsvideoEnabled !== false,
+  }
 }
 
 /**
@@ -371,10 +440,15 @@ function computeMkvFastPath(
  */
 export async function resolveMovieSource({
   movie,
+  roomId,
   sourceType,
   recovery,
   onProgress,
 }: ResolveMovieSourceOptions): Promise<ResolvedMovieSource> {
+  // 新媒体核心创建的影片必须先走 descriptor/handle 路径。尤其是通过统一
+  // 入口识别出的 B站 项目，其 movie.url 是句柄，绝不能交给旧 BV 解析器。
+  if (isMediaCoreMovie(movie)) return resolveMediaCoreMovie(movie, roomId)
+
   if (sourceType === 'bilibili') {
     // 恢复场景且旧 URL 可用：直接复用，跳过在线解析
     if (recovery?.sourceUrl) {

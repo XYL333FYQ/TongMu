@@ -1,5 +1,6 @@
 import { Agent, fetch, type RequestInit, type Response } from 'undici';
 import { lookup as dnsLookup } from 'node:dns';
+import { promises as dns } from 'node:dns';
 import { BlockList, isIP } from 'node:net';
 
 export type ProxyTargetPolicy = 'public-only' | 'trusted-private';
@@ -75,6 +76,31 @@ function assertLiteralHostIsPublic(url: URL): void {
   if (isIP(hostname) && !isPublicIp(hostname)) {
     throw new ProxyTargetError('代理目标不是公网地址');
   }
+}
+
+/** Browser automation cannot use the Undici dispatcher, so validate every navigation/request first. */
+export async function assertPublicUrl(rawUrl: string): Promise<URL> {
+  const parsed = validateProxyUrl(rawUrl);
+  assertLiteralHostIsPublic(parsed);
+  const hostname = normalizeHostname(parsed.hostname);
+  if (!isIP(hostname)) {
+    await resolvePublicAddresses(hostname);
+  }
+  return parsed;
+}
+
+/** Resolve once and return only addresses that are safe to connect to directly. */
+export async function resolvePublicAddresses(hostname: string): Promise<Array<{ address: string; family: number }>> {
+  const normalized = normalizeHostname(hostname);
+  if (isIP(normalized)) {
+    if (!isPublicIp(normalized)) throw new ProxyTargetError('目标 DNS 解析到非公网地址');
+    return [{ address: normalized, family: isIP(normalized) }];
+  }
+  const addresses = await dns.lookup(normalized, { all: true, verbatim: true });
+  if (!addresses.length || addresses.some((entry) => !isPublicIp(entry.address))) {
+    throw new ProxyTargetError('目标 DNS 解析到非公网地址');
+  }
+  return addresses;
 }
 
 const publicDispatcher = new Agent({
