@@ -561,11 +561,10 @@ export function useWatchTogether({
           // 用户主动触发重载（切清晰度/播放模式）：绕过解析缓存取新地址
           forceRefresh: true,
         }
-        const resolved = await resolveBilibiliOnline(
-          movie,
-          undefined,
-          { ...resolvedOptions, roomId }
-        )
+        const resolved = await resolveBilibiliOnline(movie, undefined, {
+          ...resolvedOptions,
+          roomId,
+        })
         // 解析期间若已开始新的加载（切影片等），放弃本次结果
         if (loadSeqRef.current !== seq) return
 
