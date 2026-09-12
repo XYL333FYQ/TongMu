@@ -13,6 +13,7 @@
     "dev:frontend": "npm run dev -w frontend",
     "build": "npm run build -ws",
     "lint": "npm run lint -ws",
+    "test:e2e": "playwright test",
     "start": "node scripts/start.js",
     "build:exe": "node scripts/build-exe.js",
     "build:backend-exe": "node scripts/build-exe.js",

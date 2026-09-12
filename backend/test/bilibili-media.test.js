@@ -1,17 +1,60 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const http = require('node:http');
+const express = require('express');
 
 const { checkUrlReachable } = require('../dist/services/bilibili/cdn');
 const {
   getQualityFallbackCandidates,
+  MP4_MAX_QN,
+  narrowAcceptQualityForMp4,
+  selectBestAvailableQuality,
 } = require('../dist/services/bilibili/resolver');
 const {
   fetchWithProxyPolicy,
+  assertPublicUrl,
   isPublicIp,
   sanitizeProxyHeaders,
   validateProxyUrl,
 } = require('../dist/services/proxy/safe-fetch');
+const { proxyHttpUpstream } = require('../dist/services/proxy/http-proxy');
+const {
+  containerFromContentType,
+  containerFromUrl,
+  probeMediaUrl,
+  sniffMediaMagic,
+} = require('../dist/services/media/probe');
+const { planPlayback } = require('../dist/services/media/planner');
+const { issueMediaHandle, resolveMediaHandle } = require('../dist/services/media/handles');
+const { discoverCandidatesFromHtml } = require('../dist/services/media/resolvers/generic-web');
+const { rewriteManifest, shouldRewriteManifest, toPublicDescriptor } = require('../dist/routes/stream/media');
+const { createBrowserSafeProxy } = require('../dist/services/media/resolvers/browser-safe-proxy');
+
+async function listen(server) {
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return server.address().port;
+}
+
+function request(port, path, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const req = http.get({ hostname: '127.0.0.1', port, path, headers }, (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
+    });
+    req.on('error', reject);
+  });
+}
+
+function connectRequest(port, authority) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ hostname: '127.0.0.1', port, method: 'CONNECT', path: authority });
+    req.on('connect', (res, socket) => { socket.destroy(); resolve(res.statusCode); });
+    req.on('response', (res) => { res.resume(); resolve(res.statusCode); });
+    req.on('error', reject);
+    req.end();
+  });
+}
 
 test('CDN probe accepts a successful HEAD without downloading a body', async () => {
   const calls = [];
@@ -52,6 +95,13 @@ test('quality fallback preserves the highest eligible quality below the request'
     [80, 74, 64],
   );
   assert.deepEqual(getQualityFallbackCandidates(80, false, false), [32, 16]);
+  assert.equal(selectBestAvailableQuality(120, [{ id: 16 }, { id: 80 }, { id: 64 }]), 80);
+  assert.equal(selectBestAvailableQuality(74, [{ id: 80 }, { id: 64 }, { id: 32 }]), 64);
+  assert.equal(MP4_MAX_QN, 64);
+  assert.deepEqual(
+    narrowAcceptQualityForMp4([{ id: 80, label: '1080P' }, { id: 64, label: '720P' }]),
+    [{ id: 64, label: '720P' }],
+  );
 });
 
 test('public proxy policy rejects loopback, metadata, private and special IPs', async () => {
@@ -88,6 +138,33 @@ test('DNS names resolving to loopback are rejected at connection lookup', async 
     fetchWithProxyPolicy('http://localtest.me/', {}, 'public-only'),
     /DNS 解析到非公网地址/,
   );
+});
+
+test('every redirect target is revalidated against private and metadata ranges', async () => {
+  for (const location of ['http://localhost/private', 'http://169.254.169.254/latest/meta-data/']) {
+    const redirector = http.createServer((_req, res) => {
+      res.writeHead(302, { Location: location });
+      res.end();
+    });
+    const port = await listen(redirector);
+    await assert.rejects(
+      fetchWithProxyPolicy(`http://127.0.0.1:${port}/start`, {}, 'trusted-private', ['127.0.0.1']),
+      /公网地址/,
+    );
+    await new Promise((resolve) => redirector.close(resolve));
+  }
+  await assert.rejects(assertPublicUrl('http://localtest.me/browser'), /非公网地址/);
+});
+
+test('browser safe proxy blocks private HTTP and HTTPS CONNECT targets at the socket boundary', async (t) => {
+  const proxy = await createBrowserSafeProxy();
+  t.after(() => proxy.close());
+  const port = Number(new URL(proxy.url).port);
+  const plain = await request(port, 'http://127.0.0.1/private');
+  assert.equal(plain.status, 403);
+  assert.match(plain.body.toString(), /公网|DNS/);
+  assert.equal(await connectRequest(port, '169.254.169.254:443'), 403);
+  assert.equal(await connectRequest(port, '[::1]:443'), 403);
 });
 
 test('proxy URL validation rejects non-http schemes and embedded credentials', () => {
@@ -152,4 +229,274 @@ test('trusted private proxy remains usable and strips credentials on cross-origi
   assert.equal(receivedHeaders['x-emby-token'], undefined);
   assert.equal(receivedHeaders.range, 'bytes=0-1');
   await response.body.cancel();
+});
+
+test('media proxy preserves valid 206 range semantics', async (t) => {
+  const upstream = http.createServer((req, res) => {
+    assert.equal(req.headers.range, 'bytes=2-3');
+    res.writeHead(206, {
+      'Content-Type': 'video/mp4',
+      'Content-Range': 'bytes 2-3/10',
+      'Content-Length': '2',
+      'Accept-Ranges': 'bytes',
+    });
+    res.end('23');
+  });
+  const upstreamPort = await listen(upstream);
+  t.after(() => upstream.close());
+  const app = express();
+  app.get('/proxy', (req, res) => proxyHttpUpstream(req, res, {
+    url: `http://127.0.0.1:${upstreamPort}/video`,
+    targetPolicy: 'trusted-private',
+    trustedPrivateHosts: ['127.0.0.1'],
+    logTag: 'range-test',
+    errorMessage: 'failed',
+  }));
+  const gateway = http.createServer(app);
+  const gatewayPort = await listen(gateway);
+  t.after(() => gateway.close());
+  const response = await request(gatewayPort, '/proxy', { Range: 'bytes=2-3' });
+  assert.equal(response.status, 206);
+  assert.equal(response.headers['content-range'], 'bytes 2-3/10');
+  assert.equal(response.headers['content-length'], '2');
+  assert.equal(response.body.toString(), '23');
+});
+
+test('media proxy stops when an upstream ignores Range instead of relaying the whole file', async (t) => {
+  const upstream = http.createServer((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': '1000000' });
+    res.end(Buffer.alloc(1000000));
+  });
+  const upstreamPort = await listen(upstream);
+  t.after(() => upstream.close());
+  const app = express();
+  app.get('/proxy', (req, res) => proxyHttpUpstream(req, res, {
+    url: `http://127.0.0.1:${upstreamPort}/video`,
+    targetPolicy: 'trusted-private',
+    trustedPrivateHosts: ['127.0.0.1'],
+    logTag: 'range-test',
+    errorMessage: 'failed',
+  }));
+  const gateway = http.createServer(app);
+  const gatewayPort = await listen(gateway);
+  t.after(() => gateway.close());
+  const response = await request(gatewayPort, '/proxy', { Range: 'bytes=100-200' });
+  assert.equal(response.status, 502);
+  assert.equal(response.headers['accept-ranges'], undefined);
+  assert.match(response.body.toString(), /忽略 Range/);
+});
+
+test('media magic fixtures identify manifests and common direct containers', () => {
+  const mp4 = Buffer.concat([Buffer.alloc(4), Buffer.from('ftypisom')]);
+  const mkv = Buffer.from([0x1a, 0x45, 0xdf, 0xa3, ...Buffer.from('matroska')]);
+  const webm = Buffer.from([0x1a, 0x45, 0xdf, 0xa3, ...Buffer.from('webm')]);
+  const ts = Buffer.alloc(377); ts[0] = ts[188] = ts[376] = 0x47;
+  assert.equal(sniffMediaMagic(mp4).container, 'mp4');
+  assert.equal(sniffMediaMagic(mkv).container, 'mkv');
+  assert.equal(sniffMediaMagic(webm).container, 'webm');
+  assert.equal(sniffMediaMagic(Buffer.from('FLV\x01')).container, 'flv');
+  assert.equal(sniffMediaMagic(ts).container, 'ts');
+  assert.equal(sniffMediaMagic(Buffer.from('#EXTM3U\n#EXT-X-VERSION:3')).container, 'hls');
+  const drm = sniffMediaMagic(Buffer.from('<MPD><ContentProtection schemeIdUri="urn:uuid:edef8ba9"/></MPD>'));
+  assert.equal(drm.container, 'dash');
+  assert.deepEqual(drm.drm, ['Widevine', 'CENC']);
+  assert.equal(containerFromContentType('video/x-matroska'), 'mkv');
+  assert.equal(containerFromUrl('https://cdn.example/path/movie.mpd?sig=abc'), 'dash');
+});
+
+test('extensionless probe uses Range GET after HEAD 403 and preserves anti-hotlink headers', async (t) => {
+  const body = Buffer.concat([Buffer.alloc(4), Buffer.from('ftypisom')]);
+  const upstream = http.createServer((req, res) => {
+    if (req.method === 'HEAD') { res.writeHead(403); res.end(); return; }
+    assert.equal(req.headers.range, 'bytes=0-65535');
+    assert.equal(req.headers.referer, 'https://page.example/movie');
+    assert.equal(req.headers.origin, 'https://page.example');
+    assert.equal(req.headers.cookie, 'session=required');
+    res.writeHead(206, {
+      'Content-Type': 'application/octet-stream',
+      'Content-Range': `bytes 0-${body.length - 1}/9000`,
+    });
+    res.end(body);
+  });
+  const port = await listen(upstream); t.after(() => upstream.close());
+  const descriptor = await probeMediaUrl(`http://127.0.0.1:${port}/play?id=123&sig=abc`, {
+    targetPolicy: 'trusted-private', trustedPrivateHosts: ['127.0.0.1'],
+    headers: { Referer: 'https://page.example/movie', Origin: 'https://page.example', Cookie: 'session=required' },
+  });
+  assert.equal(descriptor.container, 'mp4');
+  assert.equal(descriptor.rangeSupported, true);
+  assert.equal(descriptor.contentLength, 9000);
+  assert.match(descriptor.probe.warnings.join(' '), /HEAD returned 403/);
+});
+
+test('probe follows multiple safe redirects and preserves a signed query string', async (t) => {
+  const body = Buffer.concat([Buffer.alloc(4), Buffer.from('ftypisom')]);
+  const upstream = http.createServer((req, res) => {
+    if (req.url === '/start?signature=keep-me') {
+      res.writeHead(302, { Location: '/middle?signature=keep-me' }); res.end(); return;
+    }
+    if (req.url === '/middle?signature=keep-me') {
+      res.writeHead(307, { Location: '/asset?signature=keep-me' }); res.end(); return;
+    }
+    assert.equal(req.url, '/asset?signature=keep-me');
+    if (req.method === 'HEAD') { res.writeHead(405); res.end(); return; }
+    res.writeHead(206, {
+      'Content-Type': 'application/octet-stream',
+      'Content-Range': `bytes 0-${body.length - 1}/12345`,
+    });
+    res.end(body);
+  });
+  const port = await listen(upstream); t.after(() => upstream.close());
+  const descriptor = await probeMediaUrl(`http://127.0.0.1:${port}/start?signature=keep-me`, {
+    targetPolicy: 'trusted-private', trustedPrivateHosts: ['127.0.0.1'],
+  });
+  assert.equal(descriptor.container, 'mp4');
+  assert.match(descriptor.finalUrl, /\/asset\?signature=keep-me$/);
+  assert.equal(descriptor.contentLength, 12345);
+});
+
+test('probe caps a no-Range response and reports that seek is unsupported', async (t) => {
+  const body = Buffer.concat([Buffer.alloc(4), Buffer.from('ftypisom'), Buffer.alloc(100000)]);
+  const upstream = http.createServer((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/octet-stream' });
+    res.end(body);
+  });
+  const port = await listen(upstream); t.after(() => upstream.close());
+  const descriptor = await probeMediaUrl(`http://127.0.0.1:${port}/extensionless`, {
+    targetPolicy: 'trusted-private', trustedPrivateHosts: ['127.0.0.1'],
+  });
+  assert.equal(descriptor.container, 'mp4');
+  assert.equal(descriptor.rangeSupported, false);
+  assert.equal(descriptor.probe.bytesRead, 65536);
+  assert.match(descriptor.probe.warnings.join(' '), /忽略 Range/);
+});
+
+test('playback planner prefers remux and audio-only transcode over full video transcode', () => {
+  const base = {
+    sourceType: 'fixture', resolver: 'test', input: 'fixture', originalUrl: 'https://example/media',
+    finalUrl: 'https://example/media', transport: 'direct', contentType: 'video/x-matroska',
+    rangeSupported: true, drm: { protected: false }, probe: { method: 'resolver', bytesRead: 0, warnings: [] },
+  };
+  const remux = planPlayback({ ...base, container: 'mkv', videoCodec: 'h264', audioCodec: 'aac' });
+  assert.equal(remux.mode, 'remux'); assert.equal(remux.videoAction, 'copy');
+  const audioOnly = planPlayback({ ...base, container: 'mkv', videoCodec: 'h264', audioCodec: 'dts' });
+  assert.equal(audioOnly.mode, 'audio-transcode'); assert.equal(audioOnly.videoAction, 'copy');
+  assert.equal(audioOnly.audioAction, 'transcode-aac');
+  const drm = planPlayback({ ...base, container: 'dash', transport: 'dash', drm: { protected: true, systems: ['Widevine'] } });
+  assert.equal(drm.engine, 'blocked');
+});
+
+test('playback planner fixture matrix covers direct containers and streaming engines', () => {
+  const base = {
+    sourceType: 'fixture', resolver: 'test', input: 'fixture', originalUrl: 'https://example/media',
+    finalUrl: 'https://example/media', transport: 'direct', contentType: 'application/octet-stream',
+    rangeSupported: true, drm: { protected: false }, probe: { method: 'resolver', bytesRead: 0, warnings: [] },
+  };
+  for (const fixture of [
+    { name: 'MP4 H264/AAC', container: 'mp4', videoCodec: 'h264', audioCodec: 'aac', engine: 'direct', mode: 'direct' },
+    { name: 'MP4 HEVC', container: 'mp4', videoCodec: 'hevc', audioCodec: 'aac', engine: 'direct', mode: 'direct' },
+    { name: 'WebM', container: 'webm', videoCodec: 'vp9', audioCodec: 'opus', engine: 'direct', mode: 'direct' },
+    { name: 'MKV H264/AAC', container: 'mkv', videoCodec: 'h264', audioCodec: 'aac', engine: 'playsvideo', mode: 'remux' },
+    { name: 'MKV H264/DTS', container: 'mkv', videoCodec: 'h264', audioCodec: 'dts', engine: 'playsvideo', mode: 'audio-transcode' },
+    { name: 'TS', container: 'ts', videoCodec: 'h264', audioCodec: 'aac', engine: 'playsvideo', mode: 'remux' },
+    { name: 'FLV', container: 'flv', transport: 'flv', engine: 'flv', mode: 'manifest' },
+    { name: 'HLS', container: 'hls', transport: 'hls', engine: 'hls', mode: 'manifest' },
+    { name: 'DASH', container: 'dash', transport: 'dash', engine: 'dash', mode: 'manifest' },
+  ]) {
+    const plan = planPlayback({ ...base, ...fixture });
+    assert.equal(plan.engine, fixture.engine, fixture.name);
+    assert.equal(plan.mode, fixture.mode, fixture.name);
+  }
+});
+
+test('encrypted media handles hide credentials, reject tampering and enforce user scope', () => {
+  const issued = issueMediaHandle({
+    url: 'https://cdn.example/video?token=super-secret',
+    scope: 'user:7', headers: { Cookie: 'session=secret' },
+  });
+  assert.equal(issued.url.includes('super-secret'), false);
+  assert.equal(issued.url.includes('session=secret'), false);
+  assert.equal(resolveMediaHandle(issued.id, '8'), undefined);
+  assert.equal(resolveMediaHandle(`${issued.id.slice(0, -1)}x`, '7'), undefined);
+  assert.equal(resolveMediaHandle(issued.id, '7').url, 'https://cdn.example/video?token=super-secret');
+
+  const room = issueMediaHandle({ url: 'https://cdn.example/room.mp4', scope: 'room:abc' });
+  assert.equal(resolveMediaHandle(room.id, '8').scope, 'room:abc');
+});
+
+test('public media descriptor strips upstream headers and signed candidate URLs', () => {
+  const descriptor = {
+    sourceType: 'web-page', resolver: 'generic-web', input: 'https://watch.example/movie',
+    originalUrl: 'https://watch.example/movie', finalUrl: 'https://cdn.example/video?token=secret',
+    transport: 'direct', container: 'mp4', contentType: 'video/mp4',
+    headers: { Cookie: 'session=secret' },
+    candidates: [{ url: 'https://cdn.example/video?token=secret', score: 100, reason: 'main' }],
+    drm: { protected: false }, probe: { method: 'resolver', bytesRead: 0, warnings: [] },
+  };
+  const safe = toPublicDescriptor(descriptor, '/api/stream/media/opaque');
+  assert.equal(safe.finalUrl, '/api/stream/media/opaque');
+  assert.equal('headers' in safe, false);
+  assert.equal('candidates' in safe, false);
+  assert.equal(JSON.stringify(safe).includes('session=secret'), false);
+  assert.equal(JSON.stringify(safe).includes('token=secret'), false);
+});
+
+test('generic page extraction combines video tags, JSON-LD and player config while penalizing ads', () => {
+  const html = `
+    <html><head><title>Feature Film</title>
+      <script type="application/ld+json">{"@type":"VideoObject","contentUrl":"https://cdn.example/main-1080.mp4?sig=1"}</script>
+    </head><body>
+      <video><source src="/stream/master.m3u8"></video>
+      <script>window.player={file:"https:\\/\\/cdn.example\\/backup.mpd?token=2"};</script>
+      <video src="https://ads.example/preroll-ad.mp4"></video>
+    </body></html>`;
+  const result = discoverCandidatesFromHtml(html, 'https://watch.example/movie/1');
+  assert.equal(result.title, 'Feature Film');
+  assert.equal(result.candidates[0].url, 'https://watch.example/stream/master.m3u8');
+  assert.ok(result.candidates.some((candidate) => candidate.url.includes('main-1080.mp4')));
+  assert.ok(result.candidates.some((candidate) => candidate.url.includes('backup.mpd')));
+  assert.ok(result.candidates.at(-1).url.includes('preroll-ad.mp4'));
+});
+
+test('media gateway rewrites HLS resources and preserves DASH segment templates', () => {
+  const resource = {
+    url: 'https://cdn.example/path/master.m3u8', scope: 'room:abc',
+    headers: { Referer: 'https://watch.example/' }, expiresAt: Date.now() + 60_000,
+  };
+  const hls = rewriteManifest(
+    '#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="key.bin"\nsegment-1.ts',
+    'application/vnd.apple.mpegurl', resource, { id: 'unused' },
+  );
+  assert.equal(hls.includes('segment-1.ts'), false);
+  assert.equal(hls.includes('key.bin'), false);
+  assert.match(hls, /\/api\/stream\/media\//);
+
+  const extensionlessMaster = rewriteManifest(
+    '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000\nvariant?id=720\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",URI="audio?id=1"',
+    'application/vnd.apple.mpegurl', resource, { id: 'unused' },
+  );
+  const childIds = [...extensionlessMaster.matchAll(/\/api\/stream\/media\/([^?"\n]+)/g)].map((match) => match[1]);
+  assert.equal(childIds.length, 2);
+  assert.equal(resolveMediaHandle(childIds[0], '7')?.rewriteManifest, true);
+  assert.equal(resolveMediaHandle(childIds[1], '7')?.rewriteManifest, true);
+
+  const dash = rewriteManifest(
+    '<MPD><Period><AdaptationSet><Representation><SegmentTemplate initialization="init-$RepresentationID$.m4s" media="chunk-$Number$.m4s"/></Representation></AdaptationSet></Period></MPD>',
+    'application/dash+xml', { ...resource, url: 'https://cdn.example/path/manifest.mpd' }, { id: 'opaque-token' },
+  );
+  assert.match(dash, /opaque-token\/asset/);
+  assert.match(dash, /\$RepresentationID\$/);
+  assert.match(dash, /\$Number\$/);
+});
+
+test('manifest rewrite detection distinguishes MPD from Bilibili dual m4s DASH', () => {
+  const base = {
+    sourceType: 'fixture', resolver: 'test', input: 'fixture', originalUrl: 'https://example/media',
+    finalUrl: 'https://example/media', transport: 'dash', container: 'dash',
+    rangeSupported: true, drm: { protected: false }, probe: { method: 'resolver', bytesRead: 0, warnings: [] },
+  };
+  assert.equal(shouldRewriteManifest({ ...base, contentType: 'video/mp4' }), false);
+  assert.equal(shouldRewriteManifest({
+    ...base, contentType: 'application/octet-stream', probe: { ...base.probe, magic: 'MPD XML' },
+  }), true);
 });

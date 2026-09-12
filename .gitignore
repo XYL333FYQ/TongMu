@@ -51,6 +51,10 @@ apply-update.bat
 # ---- 本地测试产物 ----
 bili_test.json
 test-dev.sqlite
+.playwright-cli/
+.e2e-runtime/
+test-results/
+playwright-report/
 
 # ---- 编辑器与 IDE ----
 .vscode/
