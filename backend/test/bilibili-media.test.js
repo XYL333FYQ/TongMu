@@ -25,7 +25,13 @@ const {
   sniffMediaMagic,
 } = require('../dist/services/media/probe');
 const { planPlayback } = require('../dist/services/media/planner');
-const { issueMediaHandle, resolveMediaHandle } = require('../dist/services/media/handles');
+const {
+  issueMediaHandle,
+  issueRoomMediaGrant,
+  resolveMediaHandle,
+  resolveRoomMediaGrant,
+} = require('../dist/services/media/handles');
+const { authorizeRoomMediaGrant } = require('../dist/services/media/room-access');
 const { discoverCandidatesFromHtml } = require('../dist/services/media/resolvers/generic-web');
 const { rewriteManifest, shouldRewriteManifest, toPublicDescriptor } = require('../dist/routes/stream/media');
 const { createBrowserSafeProxy } = require('../dist/services/media/resolvers/browser-safe-proxy');
@@ -425,7 +431,33 @@ test('encrypted media handles hide credentials, reject tampering and enforce use
   assert.equal(resolveMediaHandle(issued.id, '7').url, 'https://cdn.example/video?token=super-secret');
 
   const room = issueMediaHandle({ url: 'https://cdn.example/room.mp4', scope: 'room:abc' });
-  assert.equal(resolveMediaHandle(room.id, '8').scope, 'room:abc');
+  assert.equal(resolveMediaHandle(room.id, '8'), undefined);
+});
+
+test('room media handles require a live socket capability and never trust userId=0', async () => {
+  const roomHandle = issueMediaHandle({ url: 'https://cdn.example/movie', scope: 'room:alpha' });
+  const ownerGrantToken = issueRoomMediaGrant('alpha', 'owner-socket');
+  const viewerGrantToken = issueRoomMediaGrant('alpha', 'viewer-socket');
+  const otherRoomGrantToken = issueRoomMediaGrant('beta', 'other-socket');
+  const active = new Set(['alpha:owner-socket', 'alpha:viewer-socket', 'beta:other-socket']);
+  const check = async (roomId, socketId) => active.has(`${roomId}:${socketId}`);
+
+  const ownerGrant = await authorizeRoomMediaGrant(ownerGrantToken, 'alpha', check);
+  const viewerGrant = await authorizeRoomMediaGrant(viewerGrantToken, 'alpha', check);
+  const otherGrant = await authorizeRoomMediaGrant(otherRoomGrantToken, 'alpha', check);
+  assert.ok(resolveMediaHandle(roomHandle.id, '7', ownerGrant));
+  assert.ok(resolveMediaHandle(roomHandle.id, '8', viewerGrant));
+  assert.equal(resolveMediaHandle(roomHandle.id, '9'), undefined, 'non-member cannot use a stolen handle');
+  assert.equal(resolveMediaHandle(roomHandle.id, '0'), undefined, 'guest userId does not grant room access');
+  assert.equal(otherGrant, undefined, 'membership in another room is not sufficient');
+
+  active.delete('alpha:viewer-socket');
+  assert.equal(
+    await authorizeRoomMediaGrant(viewerGrantToken, 'alpha', check),
+    undefined,
+    'kick/leave revokes new requests immediately',
+  );
+  assert.equal(resolveRoomMediaGrant(`${ownerGrantToken.slice(0, -1)}x`), undefined);
 });
 
 test('public media descriptor strips upstream headers and signed candidate URLs', () => {
@@ -481,8 +513,9 @@ test('media gateway rewrites HLS resources and preserves DASH segment templates'
   );
   const childIds = [...extensionlessMaster.matchAll(/\/api\/stream\/media\/([^?"\n]+)/g)].map((match) => match[1]);
   assert.equal(childIds.length, 2);
-  assert.equal(resolveMediaHandle(childIds[0], '7')?.rewriteManifest, true);
-  assert.equal(resolveMediaHandle(childIds[1], '7')?.rewriteManifest, true);
+  const roomGrant = resolveRoomMediaGrant(issueRoomMediaGrant('abc', 'fixture-socket'));
+  assert.equal(resolveMediaHandle(childIds[0], '7', roomGrant)?.rewriteManifest, true);
+  assert.equal(resolveMediaHandle(childIds[1], '7', roomGrant)?.rewriteManifest, true);
 
   const dash = rewriteManifest(
     '<MPD><Period><AdaptationSet><Representation><SegmentTemplate initialization="init-$RepresentationID$.m4s" media="chunk-$Number$.m4s"/></Representation></AdaptationSet></Period></MPD>',

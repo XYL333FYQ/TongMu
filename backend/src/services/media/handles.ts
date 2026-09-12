@@ -4,6 +4,7 @@ import path from 'node:path';
 import { CONFIG_DIR } from '../paths';
 
 const DEFAULT_TTL_MS = 12 * 60 * 60 * 1000;
+const ROOM_GRANT_TTL_MS = 12 * 60 * 60 * 1000;
 const SECRETS_FILE = path.join(CONFIG_DIR, 'jwt-secrets.json');
 
 export interface MediaHandleResource {
@@ -12,6 +13,13 @@ export interface MediaHandleResource {
   headers?: Record<string, string>;
   contentType?: string;
   rewriteManifest?: boolean;
+  expiresAt: number;
+}
+
+export interface RoomMediaGrant {
+  kind: 'room-media-grant';
+  roomId: string;
+  socketId: string;
   expiresAt: number;
 }
 
@@ -38,14 +46,14 @@ function loadKey(): Buffer {
 
 const key = loadKey();
 
-function seal(resource: MediaHandleResource): string {
+function seal(resource: object): string {
   const iv = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', key, iv);
   const encrypted = Buffer.concat([cipher.update(JSON.stringify(resource), 'utf8'), cipher.final()]);
   return [iv, cipher.getAuthTag(), encrypted].map((part) => part.toString('base64url')).join('.');
 }
 
-function open(token: string): MediaHandleResource | undefined {
+function open(token: string): unknown {
   try {
     const [ivRaw, tagRaw, encryptedRaw, extra] = token.split('.');
     if (!ivRaw || !tagRaw || !encryptedRaw || extra) return undefined;
@@ -55,9 +63,7 @@ function open(token: string): MediaHandleResource | undefined {
       decipher.update(Buffer.from(encryptedRaw, 'base64url')),
       decipher.final(),
     ]).toString('utf8');
-    const value = JSON.parse(plain) as MediaHandleResource;
-    if (!value.url || !value.scope || !Number.isFinite(value.expiresAt)) return undefined;
-    return value;
+    return JSON.parse(plain) as unknown;
   } catch { return undefined; }
 }
 
@@ -73,9 +79,45 @@ export function issueMediaHandle(
   return { id, expiresAt: value.expiresAt, url: `/api/stream/media/${id}` };
 }
 
-export function resolveMediaHandle(token: string, viewerId: string): MediaHandleResource | undefined {
-  const resource = open(token);
-  if (!resource || resource.expiresAt <= Date.now()) return undefined;
-  if (resource.scope.startsWith('user:') && resource.scope !== `user:${viewerId}`) return undefined;
-  return resource;
+export function resolveMediaHandle(
+  token: string,
+  viewerId: string,
+  roomGrant?: RoomMediaGrant,
+): MediaHandleResource | undefined {
+  const resource = open(token) as Partial<MediaHandleResource> | undefined;
+  if (!resource?.url || !resource.scope || !Number.isFinite(resource.expiresAt)) return undefined;
+  if ((resource.expiresAt as number) <= Date.now()) return undefined;
+  if (resource.scope.startsWith('user:')) {
+    if (resource.scope !== `user:${viewerId}`) return undefined;
+  } else if (resource.scope.startsWith('room:')) {
+    const roomId = resource.scope.slice('room:'.length);
+    if (!roomGrant || roomGrant.roomId !== roomId) return undefined;
+  } else return undefined;
+  return resource as MediaHandleResource;
+}
+
+/**
+ * Signed bearer capability delivered only after a socket has joined a room.
+ * The gateway additionally checks that socketId still has an active Session,
+ * so disconnect/kick revokes access immediately instead of waiting for TTL.
+ */
+export function issueRoomMediaGrant(roomId: string, socketId: string): string {
+  return seal({
+    kind: 'room-media-grant',
+    roomId,
+    socketId,
+    expiresAt: Date.now() + ROOM_GRANT_TTL_MS,
+  } satisfies RoomMediaGrant);
+}
+
+export function resolveRoomMediaGrant(token: string): RoomMediaGrant | undefined {
+  const grant = open(token) as Partial<RoomMediaGrant> | undefined;
+  if (
+    grant?.kind !== 'room-media-grant' ||
+    typeof grant.roomId !== 'string' ||
+    typeof grant.socketId !== 'string' ||
+    !Number.isFinite(grant.expiresAt) ||
+    grant.expiresAt! <= Date.now()
+  ) return undefined;
+  return grant as RoomMediaGrant;
 }

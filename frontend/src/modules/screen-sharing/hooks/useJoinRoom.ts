@@ -11,6 +11,7 @@ import type {
   RoomModeChangedPayload,
   RequestJoinResponse,
 } from '../types'
+import { storeRoomMediaGrant } from '@/modules/media/roomMediaGrant'
 
 interface UseJoinRoomOptions {
   socket: Socket | null
@@ -125,6 +126,7 @@ export function useJoinRoom(options: UseJoinRoomOptions): UseJoinRoomResult {
         { roomId: targetRoomId, password },
         (response: RequestJoinResponse) => {
           if (response.success) {
+            storeRoomMediaGrant(targetRoomId, response.data?.mediaGrant)
             // 房主身份恢复：后端检测到当前用户是房间 owner，已自动恢复房主身份。
             // 写入 sessionStorage 标记并刷新页面，让 RoomPage 重新以房主身份渲染。
             if (response.data?.isHost) {
@@ -237,6 +239,7 @@ export function useJoinRoom(options: UseJoinRoomOptions): UseJoinRoomResult {
     if (!socket) return
 
     const handleJoinApproved = (data: JoinApprovedPayload) => {
+      storeRoomMediaGrant(data.roomId, data.mediaGrant)
       if (data.name) {
         callbacksRef.current.onRoomNameUpdated?.({
           roomId: data.roomId,

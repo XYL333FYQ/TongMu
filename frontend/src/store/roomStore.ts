@@ -8,6 +8,7 @@ import type { BilibiliVideoPage } from '@/modules/bilibili/types'
 import type { MediaFormat } from '@/lib/mediaFormat'
 import type { WatchTogetherState } from '@/modules/sync-playback/types'
 import type { AniSubsEpisode } from '@/modules/anisubs/types'
+import { getRoomMediaGrant } from '@/modules/media/roomMediaGrant'
 
 /**
  * ani-subs 番剧源元数据。
@@ -528,7 +529,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
   // 失败时抛出错误，调用方负责提示用户且不更新本地 state。
   fetchMovies: async (roomId) => {
     const res = await apiFetch(
-      `/api/rooms/${encodeURIComponent(roomId)}/movies`
+      `/api/rooms/${encodeURIComponent(roomId)}/movies?roomGrant=${encodeURIComponent(getRoomMediaGrant(roomId))}`
     )
     const data = await parseResponse<{
       success: boolean

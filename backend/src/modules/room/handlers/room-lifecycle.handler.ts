@@ -118,11 +118,11 @@ export class RoomLifecycleHandler implements SocketEventHandler {
           await roomRepo.update({ roomId }, { lastAccessedAt: new Date() });
 
           // 创建 sharer session（房主注册）
-          await roomSessionService.registerHost(socket, roomId, userId);
+          const hostSession = await roomSessionService.registerHost(socket, roomId, userId);
 
           return safeAck(callback, {
             success: true,
-            data: { roomId, mode: room.mode },
+            data: { roomId, mode: room.mode, mediaGrant: hostSession?.mediaGrant },
           });
         } catch (err) {
           console.error('[create-room] error:', err);

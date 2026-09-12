@@ -27,6 +27,7 @@ import { roomStateService } from '../../room/room-state.service';
 import { movieBroadcasterService } from '../../movie';
 import type { ViewerJoinedPayload } from '../../shared';
 import { viewerListService } from '../viewer-list.service';
+import { createRoomMediaGrant } from '../../../services/media/room-access';
 
 /** request-join 事件 payload */
 interface RequestJoinPayload {
@@ -128,6 +129,7 @@ export class ViewerJoinHandler implements SocketEventHandler {
                   mode: hostResult.mode as RoomMode,
                   shareMethod: hostResult.shareMethod as 'webrtc' | 'stream-push',
                   streamKey: hostResult.streamKey,
+                  mediaGrant: hostResult.mediaGrant,
                   isHost: true,
                 },
               });
@@ -174,6 +176,7 @@ export class ViewerJoinHandler implements SocketEventHandler {
           // 免审批：直接加入房间
           if (room.requireApproval === false) {
             await roomSessionService.admitViewer(socket, payload.roomId, currentUserId);
+            const mediaGrant = createRoomMediaGrant(payload.roomId, socket.id);
 
             // 推送房间信息给新观众
             io.to(socket.id).emit('join-approved', {
@@ -181,6 +184,7 @@ export class ViewerJoinHandler implements SocketEventHandler {
               mode: room.mode,
               shareMethod: room.shareMethod,
               name: room.name,
+              mediaGrant,
             });
 
             // 推送影片列表与当前播放影片
@@ -220,6 +224,7 @@ export class ViewerJoinHandler implements SocketEventHandler {
                 mode: room.mode,
                 shareMethod: room.shareMethod,
                 streamKey: room.streamKey,
+                mediaGrant,
               },
             });
           }
@@ -234,6 +239,7 @@ export class ViewerJoinHandler implements SocketEventHandler {
             if (approvedList.includes(viewerUserId)) {
               // 已批准用户直接加入，无需再次审批
               await roomSessionService.admitViewer(socket, payload.roomId, currentUserId);
+              const mediaGrant = createRoomMediaGrant(payload.roomId, socket.id);
 
               io.to(socket.id).emit('join-approved', {
                 roomId: payload.roomId,
@@ -241,6 +247,7 @@ export class ViewerJoinHandler implements SocketEventHandler {
                 shareMethod: room.shareMethod,
                 streamKey: room.streamKey,
                 name: room.name,
+                mediaGrant,
               });
 
               io.to(socket.id).emit('movie-list', {
@@ -277,6 +284,7 @@ export class ViewerJoinHandler implements SocketEventHandler {
                   mode: room.mode,
                   shareMethod: room.shareMethod,
                   streamKey: room.streamKey,
+                  mediaGrant,
                 },
               });
             }

@@ -22,6 +22,7 @@ import type { P2PStateSnapshot } from '@/modules/screen-sharing/components/Webrt
 import type { MediaFormat } from '@/lib/mediaFormat'
 
 import type { RoomMode } from '@/store/roomStore'
+import { storeRoomMediaGrant } from '@/modules/media/roomMediaGrant'
 
 // sessionStorage key：标记当前用户是哪个房间的房主。
 // 房主创建房间时写入，RoomPage 据此判断身份并走 register-host 流程。
@@ -230,6 +231,7 @@ function RoomPage() {
             name?: string | null
             streamKey?: string | null
             requireApproval?: boolean
+            mediaGrant?: string
             playback?: {
               currentTime: number
               isPlaying: boolean
@@ -272,6 +274,7 @@ function RoomPage() {
           }
           // AckResponse 标准格式：业务数据在 data 字段内
           const data = response.data
+          storeRoomMediaGrant(roomId, data?.mediaGrant)
           // 使用后端返回的房间真实模式，避免 store 默认值 screen-share 导致 UI 错误。
           // 模式不再写入 URL，由后端房间状态唯一确定。
           if (data?.mode) {

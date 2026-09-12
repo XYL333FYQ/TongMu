@@ -1,5 +1,6 @@
 import { apiFetch, safeJson } from '@/lib/api'
 import type { MediaFormat } from '@/lib/mediaFormat'
+import { getRoomMediaGrant } from './roomMediaGrant'
 
 export interface MediaDescriptor {
   title?: string
@@ -67,6 +68,7 @@ export async function resolveMediaInput(
     body: JSON.stringify({
       input,
       roomId,
+      roomGrant: roomId ? getRoomMediaGrant(roomId) : undefined,
       browserSniff,
       capabilities: {
         nativeHls: video.canPlayType('application/vnd.apple.mpegurl') !== '',

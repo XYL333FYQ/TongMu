@@ -8,6 +8,8 @@ import { proxyHttpUpstream } from '../../services/proxy/http-proxy';
 import { fetchWithProxyPolicy } from '../../services/proxy/safe-fetch';
 import rateLimit from 'express-rate-limit';
 import type { MediaDescriptor } from '../../services/media/types';
+import { authenticateToken, extractAccessToken, verifyAccessToken } from '../../middleware/auth';
+import { authorizeRoomMediaGrant } from '../../services/media/room-access';
 
 const router = Router();
 const MAX_MANIFEST_BYTES = 4 * 1024 * 1024;
@@ -55,35 +57,36 @@ function appendAccessToken(url: string, token?: string): string {
   return `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
 }
 
-function dashAssetUrl(id: string, path: string, token?: string): string {
+function dashAssetUrl(id: string, path: string, token?: string, roomGrant?: string): string {
   const encodedPath = encodeURIComponent(path).replace(/%24/gi, '$');
   const auth = token ? `&amp;token=${encodeURIComponent(token)}` : '';
-  return `/api/stream/media/${encodeURIComponent(id)}/asset?path=${encodedPath}${auth}`;
+  const roomAuth = roomGrant ? `&amp;roomGrant=${encodeURIComponent(roomGrant)}` : '';
+  return `/api/stream/media/${encodeURIComponent(id)}/asset?path=${encodedPath}${auth}${roomAuth}`;
 }
 
 export function rewriteManifest(
   body: string, contentType: string, resource: MediaHandleResource,
-  handle: { id: string; token?: string },
+  handle: { id: string; token?: string; roomGrant?: string },
 ): string {
   if (/mpegurl|m3u8/i.test(contentType) || body.trimStart().startsWith('#EXTM3U')) {
     let nextUriIsPlaylist = false;
     return body.split(/\r?\n/).map((line) => {
       if (line && !line.startsWith('#')) {
-        const rewritten = appendAccessToken(handleFor(resource, line.trim(), nextUriIsPlaylist || undefined), handle.token);
+        const rewritten = appendRoomGrant(appendAccessToken(handleFor(resource, line.trim(), nextUriIsPlaylist || undefined), handle.token), handle.roomGrant);
         nextUriIsPlaylist = false;
         return rewritten;
       }
       if (/^#EXT-X-STREAM-INF:/i.test(line)) nextUriIsPlaylist = true;
       const attributeIsPlaylist = /^#EXT-X-(?:MEDIA|I-FRAME-STREAM-INF):/i.test(line);
       return line.replace(/URI="([^"]+)"/g, (_all, value: string) => {
-        return `URI="${appendAccessToken(handleFor(resource, value, attributeIsPlaylist || undefined), handle.token)}"`;
+        return `URI="${appendRoomGrant(appendAccessToken(handleFor(resource, value, attributeIsPlaylist || undefined), handle.token), handle.roomGrant)}"`;
       });
     }).join('\n');
   }
   return body
     .replace(/(<BaseURL[^>]*>)([^<$]+)(<\/BaseURL>)/gi, (_all, open: string, value: string, close: string) => `${open}${appendAccessToken(handleFor(resource, value.trim()), handle.token).replace(/&/g, '&amp;')}${close}`)
     .replace(/\b(media|initialization|sourceURL)="([^"]+)"/gi, (_all, name: string, value: string) => {
-      return `${name}="${dashAssetUrl(handle.id, value, handle.token)}"`;
+      return `${name}="${dashAssetUrl(handle.id, value, handle.token, handle.roomGrant)}"`;
     });
 }
 
@@ -102,12 +105,37 @@ async function readManifest(response: Awaited<ReturnType<typeof fetchWithProxyPo
   return Buffer.concat(chunks, total).toString('utf8');
 }
 
-router.post('/media/resolve', mediaResolveLimiter, async (req: AuthenticatedRequest, res) => {
+function appendRoomGrant(url: string, roomGrant?: string): string {
+  if (!roomGrant) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}roomGrant=${encodeURIComponent(roomGrant)}`;
+}
+
+function roomGrantToken(req: AuthenticatedRequest): string | undefined {
+  const value = req.query.roomGrant ?? req.body?.roomGrant;
+  return typeof value === 'string' && value ? value : undefined;
+}
+
+function optionalViewerId(req: AuthenticatedRequest): string {
+  const token = extractAccessToken(req);
+  if (!token) return '';
+  try { return String(verifyAccessToken(token).userId); } catch { return ''; }
+}
+
+async function authorizedResource(req: AuthenticatedRequest): Promise<MediaHandleResource | undefined> {
+  const grant = await authorizeRoomMediaGrant(roomGrantToken(req));
+  return resolveMediaHandle(String(req.params.id), optionalViewerId(req), grant);
+}
+
+router.post('/media/resolve', authenticateToken, mediaResolveLimiter, async (req: AuthenticatedRequest, res) => {
   const input = typeof req.body?.input === 'string' ? req.body.input.trim() : '';
   if (!input || input.length > 4096) { res.status(400).json({ success: false, message: '请输入有效媒体 URL 或 BV 号' }); return; }
   const ownerId = userIdOf(req);
   const roomId = typeof req.body?.roomId === 'string' && req.body.roomId.trim()
     ? req.body.roomId.trim().slice(0, 128) : undefined;
+  if (roomId && !(await authorizeRoomMediaGrant(roomGrantToken(req), roomId))) {
+    res.status(403).json({ success: false, message: '当前客户端没有房间媒体访问权限' });
+    return;
+  }
   const scope = roomId ? `room:${roomId}` : `user:${ownerId}`;
   try {
     const cookie = (await getUserCookie(req.user?.userId)) || undefined;
@@ -149,7 +177,7 @@ router.post('/media/resolve', mediaResolveLimiter, async (req: AuthenticatedRequ
 
 router.get('/media/:id/asset', async (req: AuthenticatedRequest, res) => {
   const id = String(req.params.id);
-  const resource = resolveMediaHandle(id, userIdOf(req));
+  const resource = await authorizedResource(req);
   const relativePath = typeof req.query.path === 'string' ? req.query.path : '';
   if (!resource || !relativePath) { res.status(403).end(); return; }
   let target: URL;
@@ -163,7 +191,7 @@ router.get('/media/:id/asset', async (req: AuthenticatedRequest, res) => {
 });
 
 router.get('/media/:id', async (req: AuthenticatedRequest, res) => {
-  const resource = resolveMediaHandle(String(req.params.id), userIdOf(req));
+  const resource = await authorizedResource(req);
   if (!resource) { res.status(403).json({ success: false, message: '媒体凭证无效或已过期' }); return; }
   if (!resource.rewriteManifest) {
     await proxyHttpUpstream(req, res, {
@@ -181,6 +209,7 @@ router.get('/media/:id', async (req: AuthenticatedRequest, res) => {
     res.send(rewriteManifest(body, contentType, resource, {
       id: String(req.params.id),
       token: typeof req.query.token === 'string' ? req.query.token : undefined,
+      roomGrant: roomGrantToken(req),
     }));
   } catch (error) {
     res.status(502).json({ success: false, message: error instanceof Error ? error.message : 'manifest 代理失败' });

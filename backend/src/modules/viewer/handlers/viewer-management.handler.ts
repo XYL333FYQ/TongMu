@@ -26,6 +26,7 @@ import { roomStateService } from '../../room/room-state.service';
 import type { ViewerJoinedPayload } from '../../shared';
 import { viewerListService } from '../viewer-list.service';
 import { viewerService } from '../viewer.service';
+import { createRoomMediaGrant } from '../../../services/media/room-access';
 
 /** approve-join / reject-join 事件 payload */
 interface ViewerSocketPayload {
@@ -87,6 +88,7 @@ export class ViewerManagementHandler implements SocketEventHandler {
             sharer.roomId,
             viewerSocket.data.userId ?? null,
           );
+          const mediaGrant = createRoomMediaGrant(sharer.roomId, payload.viewerSocketId);
 
           // 推送房间信息给新观众
           io.to(payload.viewerSocketId).emit('join-approved', {
@@ -95,6 +97,7 @@ export class ViewerManagementHandler implements SocketEventHandler {
             shareMethod: room?.shareMethod ?? 'webrtc',
             streamKey: room?.streamKey ?? null,
             name: room?.name ?? null,
+            mediaGrant,
           });
 
           // 推送影片列表与当前播放影片

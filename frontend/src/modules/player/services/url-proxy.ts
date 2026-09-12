@@ -165,15 +165,17 @@ export function appendAuthToken(url: string): string {
   try {
     const u = new URL(url, window.location.origin)
     if (!u.pathname.startsWith('/api/')) return url
-    if (u.searchParams.has('token')) return url
+    if (u.searchParams.has('token')) return appendRoomMediaGrant(url)
     hasQuery = !!u.search
   } catch {
     // 非法 URL，原样返回
     return url
   }
   const token = getStoredToken()
-  if (!token) return url
-  return `${url}${hasQuery ? '&' : '?'}token=${encodeURIComponent(token)}`
+  const withToken = token
+    ? `${url}${hasQuery ? '&' : '?'}token=${encodeURIComponent(token)}`
+    : url
+  return appendRoomMediaGrant(withToken)
 }
 
 /**
@@ -304,3 +306,4 @@ export function resolveProxyUrl(
   // 其他跨域 URL：直连源站，服务器零流量
   return url
 }
+import { appendRoomMediaGrant } from '@/modules/media/roomMediaGrant'

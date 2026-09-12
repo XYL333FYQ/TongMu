@@ -29,6 +29,7 @@ import { movieService } from './movie.service';
 import { movieBroadcasterService } from './movie-broadcaster.service';
 import { isInternalOpenListServer } from '../../services/openlist-errors';
 import type { MovieDto } from '../shared';
+import { authorizeRoomMediaGrant } from '../../services/media/room-access';
 
 /**
  * 校验请求方是否有权限操作房间影片（root 或房间 owner）。
@@ -62,6 +63,15 @@ export function createMovieRouter(io: SocketIOServer): Router {
     async (req: AuthenticatedRequest, res: Response) => {
       try {
         const roomId = req.params.roomId as string;
+        const rawGrant = req.query.roomGrant;
+        const grant = await authorizeRoomMediaGrant(
+          typeof rawGrant === 'string' ? rawGrant : undefined,
+          roomId,
+        );
+        if (!grant) {
+          res.status(403).json({ success: false, message: '当前客户端未加入该房间' });
+          return;
+        }
         const movies = await movieService.listMovies(roomId);
         res.json({ success: true, movies });
       } catch (err) {

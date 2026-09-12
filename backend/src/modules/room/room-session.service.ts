@@ -16,6 +16,7 @@ import { roomPermissionService } from './room-permission.service';
 import { Room } from '../../entities/Room';
 import { roomStateService } from './room-state.service';
 import { playbackMemoryService } from '../playback-memory';
+import { createRoomMediaGrant } from '../../services/media/room-access';
 
 /**
  * 房间 Session 服务。
@@ -40,6 +41,7 @@ export class RoomSessionService {
     name: string | null;
     streamKey: string | null;
     requireApproval: boolean;
+    mediaGrant: string;
     playback?: ReturnType<typeof roomStateService.getPlayback>;
   } | null> {
     const roomRepo = AppDataSource.getRepository(Room);
@@ -100,6 +102,7 @@ export class RoomSessionService {
       name: room.name,
       streamKey: room.streamKey,
       requireApproval: room.requireApproval,
+      mediaGrant: createRoomMediaGrant(roomId, socket.id),
       playback: advancedPlayback ?? roomStateService.getPlayback(roomId),
     };
   }

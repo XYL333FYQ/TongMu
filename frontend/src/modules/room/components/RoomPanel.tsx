@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/Input'
 import { useRoomStore, type RoomMode } from '@/store/roomStore'
 import { useSocket } from '@/hooks/useSocket'
 import { message } from '@/components/ui/message'
+import { storeRoomMediaGrant } from '@/modules/media/roomMediaGrant'
 
 interface RoomPanelProps {
   onModeSelected?: (mode: RoomMode) => void
@@ -48,12 +49,13 @@ export function RoomPanel({ onModeSelected }: RoomPanelProps) {
       },
       (response: {
         success: boolean
-        data?: { roomId: string; mode?: RoomMode }
+        data?: { roomId: string; mode?: RoomMode; mediaGrant?: string }
         message?: string
       }) => {
         setCreating(false)
         const roomId = response.data?.roomId
         if (response.success && roomId) {
+          storeRoomMediaGrant(roomId, response.data?.mediaGrant)
           // 若之前有一个保持中的房间（主动离开但未退出），创建新房间意味着
           // 真正放弃旧房间：旧房间房主此时 emit host-leave 进入宽限期。
           // 必须在 resetRoomStore() 清掉 activeRoomId 之前读取。

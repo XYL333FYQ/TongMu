@@ -23,11 +23,15 @@ const router = Router();
 // 免认证端点（img 标签无法携带认证头）
 router.use(imageProxyRouter);
 
+// Media GET endpoints accept a room capability so long-running native media
+// requests do not depend on a short-lived access JWT. The router applies
+// normal JWT authentication itself to resolve/user-scoped operations.
+router.use(mediaRouter);
+
 // 其余端点均需登录态
 router.use(authenticateToken);
 router.use(bilibiliAuthRouter);
 router.use(resolveRouter);
-router.use(mediaRouter);
 router.use(mediaProxyRouter);
 router.use(ftpRouter);
 
