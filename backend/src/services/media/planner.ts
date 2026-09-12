@@ -62,6 +62,12 @@ export function planPlayback(
     };
   }
   if (audioCodec && AUDIO_TRANSCODE_CODECS.has(audioCodec)) {
+    if (media.rangeSupported === false) {
+      return {
+        engine: 'blocked', mode: 'unsupported', proxy: false,
+        videoAction: 'none', audioAction: 'none', reasons: ['源站不支持 Range，无法安全执行随机读取与音频转码'],
+      };
+    }
     if (capabilities.playsvideo === false) {
       return {
         engine: 'blocked', mode: 'unsupported', proxy: false,
@@ -74,7 +80,13 @@ export function planPlayback(
       reasons: [`${audioCodec.toUpperCase()} 音频浏览器不兼容；保留视频，仅转 AAC`],
     };
   }
-  if (['mkv', 'ts'].includes(media.container)) {
+  if (['mkv', 'ts', 'avi', 'wmv'].includes(media.container)) {
+    if (media.rangeSupported === false) {
+      return {
+        engine: 'blocked', mode: 'unsupported', proxy: false,
+        videoAction: 'none', audioAction: 'none', reasons: ['源站不支持 Range，playsvideo 无法随机读取并重封装'],
+      };
+    }
     if (capabilities.playsvideo === false) {
       return {
         engine: 'blocked', mode: 'unsupported', proxy: false,
@@ -89,6 +101,8 @@ export function planPlayback(
   return {
     engine: 'direct', mode: 'direct', proxy: !!media.headers,
     videoAction: 'direct', audioAction: media.audioUrl ? 'direct' : 'direct',
-    reasons: ['浏览器原生 Direct Play'],
+    reasons: media.rangeSupported === false
+      ? ['浏览器原生顺序播放；源站不支持 seek']
+      : ['浏览器原生 Direct Play'],
   };
 }

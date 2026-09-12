@@ -251,7 +251,8 @@ export async function proxyHttpUpstream(
 
     // A Range request answered with a full 200 response is not partial content.
     // Stop before relaying an entire movie or advertising fake seek support.
-    if (rangeHeader && upstream.status === 200 && !upstream.headers.get('content-range')) {
+    const isSequentialStart = /^bytes=0-\s*$/i.test(rangeHeader ?? '');
+    if (rangeHeader && !isSequentialStart && upstream.status === 200 && !upstream.headers.get('content-range')) {
       await upstream.body?.cancel();
       res.status(502).json({
         success: false,

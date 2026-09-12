@@ -26,6 +26,8 @@ export function containerFromContentType(contentType?: string | null): MediaCont
   if (value.includes('mpegurl')) return 'hls';
   if (value.includes('dash+xml')) return 'dash';
   if (value.includes('matroska')) return 'mkv';
+  if (value.includes('x-msvideo') || value.includes('video/avi')) return 'avi';
+  if (value.includes('x-ms-wmv') || value.includes('x-ms-asf')) return 'wmv';
   if (value.includes('webm')) return 'webm';
   if (value.includes('mp4')) return 'mp4';
   if (value.includes('quicktime')) return 'mov';
@@ -41,6 +43,8 @@ export function containerFromUrl(url: string): MediaContainer {
   if (/\.(mp4|m4v)$/.test(pathname)) return 'mp4';
   if (/\.webm$/.test(pathname)) return 'webm';
   if (/\.mkv$/.test(pathname)) return 'mkv';
+  if (/\.avi$/.test(pathname)) return 'avi';
+  if (/\.wmv$/.test(pathname)) return 'wmv';
   if (/\.mov$/.test(pathname)) return 'mov';
   if (/\.flv$/.test(pathname)) return 'flv';
   if (/\.(ts|m2ts)$/.test(pathname)) return 'ts';
@@ -50,7 +54,21 @@ export function containerFromUrl(url: string): MediaContainer {
 export function sniffMediaMagic(bytes: Uint8Array): { container: MediaContainer; magic?: string; drm?: string[] } {
   const ascii = Buffer.from(bytes).toString('utf8');
   const trimmed = ascii.replace(/^\uFEFF/, '').trimStart();
-  if (trimmed.startsWith('#EXTM3U')) return { container: 'hls', magic: 'EXTM3U' };
+  if (/^(?:<!doctype\s+html|<html|<head|<body)\b/i.test(trimmed)) {
+    return { container: 'unknown', magic: 'HTML' };
+  }
+  if (trimmed.startsWith('#EXTM3U')) {
+    const drmSystems = new Set<string>();
+    const keyLines = trimmed.match(/^#EXT-X-(?:SESSION-)?KEY:.*$/gim) ?? [];
+    for (const line of keyLines) {
+      if (/METHOD=SAMPLE-AES/i.test(line) || /KEYFORMAT="?(?!identity)[^",]+/i.test(line)) {
+        if (/fairplay|com\.apple\.streamingkeydelivery/i.test(line)) drmSystems.add('FairPlay');
+        else if (/widevine/i.test(line)) drmSystems.add('Widevine');
+        else drmSystems.add('HLS SAMPLE-AES');
+      }
+    }
+    return { container: 'hls', magic: 'EXTM3U', drm: [...drmSystems] };
+  }
   if (/<MPD(?:\s|>)/i.test(trimmed.slice(0, 8192))) {
     const systems = new Set<string>();
     if (/widevine|edef8ba9/i.test(ascii)) systems.add('Widevine');
@@ -64,6 +82,15 @@ export function sniffMediaMagic(bytes: Uint8Array): { container: MediaContainer;
   }
   if (bytes.length >= 4 && bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) {
     return { container: /webm/i.test(ascii) ? 'webm' : 'mkv', magic: 'EBML' };
+  }
+  if (
+    bytes.length >= 12 &&
+    Buffer.from(bytes.slice(0, 4)).toString('ascii') === 'RIFF' &&
+    Buffer.from(bytes.slice(8, 12)).toString('ascii') === 'AVI '
+  ) return { container: 'avi', magic: 'RIFF AVI' };
+  const asfGuid = [0x30, 0x26, 0xb2, 0x75, 0x8e, 0x66, 0xcf, 0x11, 0xa6, 0xd9, 0x00, 0xaa, 0x00, 0x62, 0xce, 0x6c];
+  if (bytes.length >= asfGuid.length && asfGuid.every((value, index) => bytes[index] === value)) {
+    return { container: 'wmv', magic: 'ASF Header GUID' };
   }
   if (bytes.length >= 3 && bytes[0] === 0x46 && bytes[1] === 0x4c && bytes[2] === 0x56) {
     return { container: 'flv', magic: 'FLV' };
@@ -105,6 +132,7 @@ export interface ProbeOptions {
   sourceType?: string;
   resolver?: string;
   timeoutMs?: number;
+  headTimeoutMs?: number;
   targetPolicy?: ProxyTargetPolicy;
   trustedPrivateHosts?: string[];
 }
@@ -112,16 +140,23 @@ export interface ProbeOptions {
 /** HEAD is advisory; a bounded Range GET supplies the actual format evidence. */
 export async function probeMediaUrl(input: string, options: ProbeOptions = {}): Promise<MediaDescriptor> {
   return withProbeSlot(async () => {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
     const warnings: string[] = [];
     let head: Awaited<ReturnType<typeof fetchWithProxyPolicy>> | undefined;
     try {
       try {
-        head = await fetchWithProxyPolicy(input, {
-          method: 'HEAD', headers: options.headers, signal: controller.signal,
-        }, options.targetPolicy ?? 'public-only', options.trustedPrivateHosts);
-        if (!head.ok) warnings.push(`HEAD returned ${head.status}`);
+        const headController = new AbortController();
+        const headTimeout = setTimeout(
+          () => headController.abort(),
+          options.headTimeoutMs ?? Math.min(2_500, options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+        );
+        try {
+          head = await fetchWithProxyPolicy(input, {
+            method: 'HEAD', headers: options.headers, signal: headController.signal,
+          }, options.targetPolicy ?? 'public-only', options.trustedPrivateHosts);
+          if (!head.ok) warnings.push(`HEAD returned ${head.status}`);
+        } finally {
+          clearTimeout(headTimeout);
+        }
       } catch (error) {
         warnings.push(`HEAD failed: ${error instanceof Error ? error.message : String(error)}`);
       } finally {
@@ -129,8 +164,10 @@ export async function probeMediaUrl(input: string, options: ProbeOptions = {}): 
       }
 
       const getHeaders = { ...options.headers, Range: `bytes=0-${MAX_PROBE_BYTES - 1}` };
+      const getController = new AbortController();
+      const getTimeout = setTimeout(() => getController.abort(), options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
       const response = await fetchWithProxyPolicy(input, {
-        method: 'GET', headers: getHeaders, signal: controller.signal,
+        method: 'GET', headers: getHeaders, signal: getController.signal,
       }, options.targetPolicy ?? 'public-only', options.trustedPrivateHosts);
       if (!response.ok) {
         await response.body?.cancel();
@@ -138,11 +175,13 @@ export async function probeMediaUrl(input: string, options: ProbeOptions = {}): 
       }
       if (response.status === 200) warnings.push('上游忽略 Range；探测器已在读取上限处中止');
       const bytes = await readAtMost(response, MAX_PROBE_BYTES);
+      clearTimeout(getTimeout);
       const magic = sniffMediaMagic(bytes);
       const contentType = response.headers.get('content-type') ?? head?.headers.get('content-type') ?? undefined;
       const headerContainer = containerFromContentType(contentType);
       const urlContainer = containerFromUrl(response.url || input);
-      const container = magic.container !== 'unknown'
+      const explicitHtml = magic.magic === 'HTML' || /(?:text\/html|application\/xhtml\+xml)/i.test(contentType ?? '');
+      const container = explicitHtml ? 'unknown' : magic.container !== 'unknown'
         ? magic.container
         : headerContainer !== 'unknown' ? headerContainer : urlContainer;
       const contentLengthRaw = response.headers.get('content-range')?.match(/\/(\d+)$/)?.[1]
@@ -160,16 +199,17 @@ export async function probeMediaUrl(input: string, options: ProbeOptions = {}): 
         contentLength: Number.isFinite(contentLength) ? contentLength : undefined,
         rangeSupported, contentDisposition: response.headers.get('content-disposition') ?? undefined,
         drm: { protected: drmSystems.length > 0, systems: drmSystems.length ? drmSystems : undefined,
-          reason: drmSystems.length ? 'manifest contains ContentProtection' : undefined },
+          reason: drmSystems.length ? 'manifest contains unsupported DRM encryption' : undefined },
         headers: options.headers,
         probe: { method: 'range-get', bytesRead: bytes.length, magic: magic.magic, warnings },
       };
-    } finally {
-      clearTimeout(timeout);
-    }
+    } finally { /* each request owns an independent abort budget */ }
   });
 }
 
 export function isHtmlDescriptor(descriptor: MediaDescriptor): boolean {
-  return descriptor.contentType?.toLowerCase().includes('text/html') === true && descriptor.container === 'unknown';
+  return (
+    descriptor.container === 'unknown' &&
+    (/(?:text\/html|application\/xhtml\+xml)/i.test(descriptor.contentType ?? '') || descriptor.probe.magic === 'HTML')
+  );
 }

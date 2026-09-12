@@ -3,7 +3,7 @@ const test = require('node:test');
 const http = require('node:http');
 const express = require('express');
 
-const { checkUrlReachable } = require('../dist/services/bilibili/cdn');
+const { checkUrlReachable, getBilibiliMediaHeaders } = require('../dist/services/bilibili/cdn');
 const {
   getQualityFallbackCandidates,
   MP4_MAX_QN,
@@ -14,6 +14,7 @@ const {
   fetchWithProxyPolicy,
   assertPublicUrl,
   isPublicIp,
+  resolvePublicAddresses,
   sanitizeProxyHeaders,
   validateProxyUrl,
 } = require('../dist/services/proxy/safe-fetch');
@@ -35,6 +36,11 @@ const { authorizeRoomMediaGrant } = require('../dist/services/media/room-access'
 const { discoverCandidatesFromHtml } = require('../dist/services/media/resolvers/generic-web');
 const { rewriteManifest, shouldRewriteManifest, toPublicDescriptor } = require('../dist/routes/stream/media');
 const { createBrowserSafeProxy } = require('../dist/services/media/resolvers/browser-safe-proxy');
+const {
+  headersForJsonCandidate,
+  readBoundedJsonBody,
+  safeForwardHeaders,
+} = require('../dist/services/media/resolvers/browser');
 
 async function listen(server) {
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -91,6 +97,22 @@ test('CDN probe falls back from HEAD 403 to a two-byte Range GET', async () => {
   assert.equal(calls[1].headers.Range, 'bytes=0-1');
 });
 
+test('CDN probe uses a fresh signal after HEAD times out', async () => {
+  const methods = [];
+  const fakeFetch = async (_url, init) => {
+    methods.push(init.method);
+    if (init.method === 'HEAD') {
+      return new Promise((_resolve, reject) => {
+        init.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+      });
+    }
+    assert.equal(init.signal.aborted, false);
+    return new Response(new Uint8Array([0, 1]), { status: 206 });
+  };
+  assert.equal(await checkUrlReachable('https://cdn.example/video', fakeFetch, 10), true);
+  assert.deepEqual(methods, ['HEAD', 'GET']);
+});
+
 test('quality fallback preserves the highest eligible quality below the request', () => {
   assert.deepEqual(
     getQualityFallbackCandidates(120, true, true).slice(0, 3),
@@ -141,7 +163,7 @@ test('trusted private policy only permits configured hosts', async () => {
 
 test('DNS names resolving to loopback are rejected at connection lookup', async () => {
   await assert.rejects(
-    fetchWithProxyPolicy('http://localtest.me/', {}, 'public-only'),
+    resolvePublicAddresses('fixture.invalid', async () => [{ address: '127.0.0.1', family: 4 }]),
     /DNS 解析到非公网地址/,
   );
 });
@@ -159,7 +181,10 @@ test('every redirect target is revalidated against private and metadata ranges',
     );
     await new Promise((resolve) => redirector.close(resolve));
   }
-  await assert.rejects(assertPublicUrl('http://localtest.me/browser'), /非公网地址/);
+  await assert.rejects(
+    assertPublicUrl('http://fixture.invalid/browser', async () => [{ address: '127.0.0.1', family: 4 }]),
+    /非公网地址/,
+  );
 });
 
 test('browser safe proxy blocks private HTTP and HTTPS CONNECT targets at the socket boundary', async (t) => {
@@ -292,22 +317,93 @@ test('media proxy stops when an upstream ignores Range instead of relaying the w
   assert.match(response.body.toString(), /忽略 Range/);
 });
 
+test('media proxy permits only bytes=0- to degrade to honest sequential streaming', async (t) => {
+  const upstream = http.createServer((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': '12' });
+    res.end('sequential12');
+  });
+  const upstreamPort = await listen(upstream);
+  t.after(() => upstream.close());
+  const app = express();
+  app.get('/proxy', (req, res) => proxyHttpUpstream(req, res, {
+    url: `http://127.0.0.1:${upstreamPort}/video`,
+    targetPolicy: 'trusted-private',
+    trustedPrivateHosts: ['127.0.0.1'],
+    logTag: 'sequential-test',
+    errorMessage: 'failed',
+  }));
+  const gateway = http.createServer(app);
+  const gatewayPort = await listen(gateway);
+  t.after(() => gateway.close());
+  const response = await request(gatewayPort, '/proxy', { Range: 'bytes=0-' });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers['accept-ranges'], undefined, 'gateway must not invent seek support');
+  assert.equal(response.headers['content-range'], undefined);
+  assert.equal(response.body.toString(), 'sequential12');
+});
+
 test('media magic fixtures identify manifests and common direct containers', () => {
   const mp4 = Buffer.concat([Buffer.alloc(4), Buffer.from('ftypisom')]);
   const mkv = Buffer.from([0x1a, 0x45, 0xdf, 0xa3, ...Buffer.from('matroska')]);
   const webm = Buffer.from([0x1a, 0x45, 0xdf, 0xa3, ...Buffer.from('webm')]);
   const ts = Buffer.alloc(377); ts[0] = ts[188] = ts[376] = 0x47;
+  const avi = Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('AVI ')]);
+  const wmv = Buffer.from([0x30, 0x26, 0xb2, 0x75, 0x8e, 0x66, 0xcf, 0x11, 0xa6, 0xd9, 0x00, 0xaa, 0x00, 0x62, 0xce, 0x6c]);
   assert.equal(sniffMediaMagic(mp4).container, 'mp4');
   assert.equal(sniffMediaMagic(mkv).container, 'mkv');
   assert.equal(sniffMediaMagic(webm).container, 'webm');
   assert.equal(sniffMediaMagic(Buffer.from('FLV\x01')).container, 'flv');
   assert.equal(sniffMediaMagic(ts).container, 'ts');
+  assert.equal(sniffMediaMagic(avi).container, 'avi');
+  assert.equal(sniffMediaMagic(wmv).container, 'wmv');
   assert.equal(sniffMediaMagic(Buffer.from('#EXTM3U\n#EXT-X-VERSION:3')).container, 'hls');
   const drm = sniffMediaMagic(Buffer.from('<MPD><ContentProtection schemeIdUri="urn:uuid:edef8ba9"/></MPD>'));
   assert.equal(drm.container, 'dash');
   assert.deepEqual(drm.drm, ['Widevine', 'CENC']);
+  assert.deepEqual(
+    sniffMediaMagic(Buffer.from('#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="key.bin"')).drm,
+    [],
+  );
+  assert.deepEqual(
+    sniffMediaMagic(Buffer.from('#EXTM3U\n#EXT-X-KEY:METHOD=SAMPLE-AES,KEYFORMAT="com.apple.streamingkeydelivery"')).drm,
+    ['FairPlay'],
+  );
   assert.equal(containerFromContentType('video/x-matroska'), 'mkv');
+  assert.equal(containerFromContentType('video/x-msvideo'), 'avi');
+  assert.equal(containerFromContentType('video/x-ms-wmv'), 'wmv');
   assert.equal(containerFromUrl('https://cdn.example/path/movie.mpd?sig=abc'), 'dash');
+});
+
+test('a hanging HEAD still performs a fresh successful Range probe', async (t) => {
+  const body = Buffer.concat([Buffer.alloc(4), Buffer.from('ftypisom')]);
+  const methods = [];
+  const upstream = http.createServer((req, res) => {
+    methods.push(req.method);
+    if (req.method === 'HEAD') return;
+    res.writeHead(206, { 'Content-Type': 'application/octet-stream', 'Content-Range': `bytes 0-${body.length - 1}/99` });
+    res.end(body);
+  });
+  const port = await listen(upstream); t.after(() => { upstream.closeAllConnections(); upstream.close(); });
+  const descriptor = await probeMediaUrl(`http://127.0.0.1:${port}/slow`, {
+    targetPolicy: 'trusted-private', trustedPrivateHosts: ['127.0.0.1'], headTimeoutMs: 20, timeoutMs: 500,
+  });
+  assert.equal(descriptor.container, 'mp4');
+  assert.deepEqual(methods, ['HEAD', 'GET']);
+});
+
+test('HTML evidence overrides misleading media suffixes', async (t) => {
+  const upstream = http.createServer((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end('<!doctype html><html><title>Cloudflare challenge</title></html>');
+  });
+  const port = await listen(upstream); t.after(() => upstream.close());
+  for (const suffix of ['fake.mp4', 'fake.m3u8', 'fake.mpd']) {
+    const descriptor = await probeMediaUrl(`http://127.0.0.1:${port}/${suffix}`, {
+      targetPolicy: 'trusted-private', trustedPrivateHosts: ['127.0.0.1'],
+    });
+    assert.equal(descriptor.container, 'unknown', suffix);
+    assert.equal(descriptor.probe.magic, 'HTML', suffix);
+  }
 });
 
 test('extensionless probe uses Range GET after HEAD 403 and preserves anti-hotlink headers', async (t) => {
@@ -416,6 +512,14 @@ test('playback planner fixture matrix covers direct containers and streaming eng
   assert.equal(planPlayback({ ...base, container: 'dash', transport: 'dash' }, { mediaSource: false }).engine, 'blocked');
   assert.equal(planPlayback({ ...base, container: 'hls', transport: 'hls' }, { nativeHls: false, mediaSource: false }).engine, 'blocked');
   assert.equal(planPlayback({ ...base, container: 'mkv', audioCodec: 'dts' }, { playsvideo: false }).engine, 'blocked');
+  assert.match(
+    planPlayback({ ...base, container: 'mkv', rangeSupported: false }).reasons.join(' '),
+    /不支持 Range/,
+  );
+  assert.match(
+    planPlayback({ ...base, container: 'mp4', rangeSupported: false }).reasons.join(' '),
+    /不支持 seek/,
+  );
   assert.equal(planPlayback({ ...base, container: 'mp4', videoCodec: 'hevc' }, { hevc: false }).engine, 'blocked');
 });
 
@@ -432,6 +536,43 @@ test('encrypted media handles hide credentials, reject tampering and enforce use
 
   const room = issueMediaHandle({ url: 'https://cdn.example/room.mp4', scope: 'room:abc' });
   assert.equal(resolveMediaHandle(room.id, '8'), undefined);
+});
+
+test('Bilibili media policy survives encrypted handles and reaches both CDN tracks', async (t) => {
+  const seen = [];
+  const upstream = http.createServer((req, res) => {
+    seen.push(req.headers);
+    res.writeHead(200, { 'Content-Type': req.url.includes('audio') ? 'audio/mp4' : 'video/mp4' });
+    res.end('track');
+  });
+  const upstreamPort = await listen(upstream);
+  t.after(() => upstream.close());
+  const policy = getBilibiliMediaHeaders();
+  const video = issueMediaHandle({ url: `http://127.0.0.1:${upstreamPort}/video`, scope: 'user:7', headers: policy });
+  const audio = issueMediaHandle({ url: `http://127.0.0.1:${upstreamPort}/audio`, scope: 'user:7', headers: policy });
+  const app = express();
+  for (const [path, handle] of [['/video', video], ['/audio', audio]]) {
+    app.get(path, (req, res) => proxyHttpUpstream(req, res, {
+      url: resolveMediaHandle(handle.id, '7').url,
+      targetPolicy: 'trusted-private',
+      trustedPrivateHosts: ['127.0.0.1'],
+      headers: { extra: resolveMediaHandle(handle.id, '7').headers },
+      logTag: 'bilibili-policy-test',
+      errorMessage: 'failed',
+    }));
+  }
+  const gateway = http.createServer(app);
+  const gatewayPort = await listen(gateway);
+  t.after(() => gateway.close());
+  assert.equal((await request(gatewayPort, '/video')).status, 200);
+  assert.equal((await request(gatewayPort, '/audio')).status, 200);
+  assert.equal(seen.length, 2);
+  for (const headers of seen) {
+    assert.equal(headers.referer, 'https://www.bilibili.com/');
+    assert.equal(headers.origin, 'https://www.bilibili.com');
+    assert.equal(headers['user-agent'], policy['User-Agent']);
+    assert.equal(headers.cookie, undefined);
+  }
 });
 
 test('room media handles require a live socket capability and never trust userId=0', async () => {
@@ -494,6 +635,54 @@ test('generic page extraction combines video tags, JSON-LD and player config whi
   assert.ok(result.candidates.at(-1).url.includes('preroll-ad.mp4'));
 });
 
+test('browser resolver uses complete request headers and reselects cookies for JSON-discovered URLs', async () => {
+  const captured = safeForwardHeaders({
+    referer: 'https://watch.example/movie',
+    origin: 'https://watch.example',
+    'user-agent': 'fixture-browser',
+    cookie: 'page_session=secret',
+    authorization: 'Bearer api-secret',
+  });
+  assert.equal(captured.Cookie, 'page_session=secret', 'actual media requests retain their browser Cookie');
+  assert.equal('Authorization' in captured, false);
+
+  let cookieLookupUrl = '';
+  const discovered = await headersForJsonCandidate(
+    'https://cdn.example/protected/video.mp4',
+    {
+      referer: 'https://watch.example/movie',
+      origin: 'https://api.example',
+      'user-agent': 'fixture-browser',
+      cookie: 'api_session=must-not-leak',
+      authorization: 'Bearer api-secret',
+    },
+    {
+      async cookies(url) {
+        cookieLookupUrl = url;
+        return [{ name: 'cdn_session', value: 'allowed' }];
+      },
+    },
+  );
+  assert.equal(cookieLookupUrl, 'https://cdn.example/protected/video.mp4');
+  assert.equal(discovered.Cookie, 'cdn_session=allowed');
+  assert.equal(JSON.stringify(discovered).includes('api_session'), false);
+  assert.equal(JSON.stringify(discovered).includes('api-secret'), false);
+  assert.equal(discovered.Origin, undefined, 'API request Origin is not copied to another destination');
+});
+
+test('browser resolver never buffers JSON when Content-Length is absent or above the cap', async () => {
+  let bodyCalls = 0;
+  const response = (headers) => ({
+    headers: () => headers,
+    body: async () => { bodyCalls += 1; return Buffer.from('{}'); },
+  });
+  assert.equal(await readBoundedJsonBody(response({ 'content-type': 'application/json' })), undefined);
+  assert.equal(await readBoundedJsonBody(response({ 'content-length': String(1024 * 1024 + 1) })), undefined);
+  assert.equal(bodyCalls, 0);
+  assert.deepEqual(await readBoundedJsonBody(response({ 'content-length': '2' })), {});
+  assert.equal(bodyCalls, 1);
+});
+
 test('media gateway rewrites HLS resources and preserves DASH segment templates', () => {
   const resource = {
     url: 'https://cdn.example/path/master.m3u8', scope: 'room:abc',
@@ -517,13 +706,46 @@ test('media gateway rewrites HLS resources and preserves DASH segment templates'
   assert.equal(resolveMediaHandle(childIds[0], '7', roomGrant)?.rewriteManifest, true);
   assert.equal(resolveMediaHandle(childIds[1], '7', roomGrant)?.rewriteManifest, true);
 
+  const dashResource = {
+    ...resource,
+    url: 'https://cdn.example/root/manifest.mpd',
+    headers: { Cookie: 'session=same-origin', Referer: 'https://watch.example/' },
+    credentialOrigins: ['https://cdn.example'],
+  };
   const dash = rewriteManifest(
-    '<MPD><Period><AdaptationSet><Representation><SegmentTemplate initialization="init-$RepresentationID$.m4s" media="chunk-$Number$.m4s"/></Representation></AdaptationSet></Period></MPD>',
-    'application/dash+xml', { ...resource, url: 'https://cdn.example/path/manifest.mpd' }, { id: 'opaque-token' },
+    '<MPD><BaseURL>../media/</BaseURL><Period><BaseURL>period/</BaseURL><AdaptationSet><BaseURL>video/</BaseURL><SegmentTemplate initialization="init-$RepresentationID$.m4s" media="chunk-$Number$.m4s"/><Representation id="v1"><BaseURL>1080/</BaseURL></Representation></AdaptationSet></Period></MPD>',
+    'application/dash+xml', dashResource, { id: 'opaque-token', token: 'viewer-token', roomGrant: issueRoomMediaGrant('abc', 'dash-socket') },
   );
-  assert.match(dash, /opaque-token\/asset/);
+  assert.equal(dash.includes('<BaseURL>'), false, 'all inherited BaseURL nodes are materialized');
   assert.match(dash, /\$RepresentationID\$/);
   assert.match(dash, /\$Number\$/);
+  assert.match(dash, /token=viewer-token/);
+  assert.match(dash, /roomGrant=/);
+
+  const mediaAttribute = dash.match(/media="([^"]+)"/)[1].replaceAll('&amp;', '&');
+  const mediaUrl = new URL(mediaAttribute, 'https://gateway.example');
+  const dashChildId = mediaUrl.pathname.split('/').at(-2);
+  const dashGrant = resolveRoomMediaGrant(mediaUrl.searchParams.get('roomGrant'));
+  const dashChild = resolveMediaHandle(dashChildId, '7', dashGrant);
+  assert.equal(dashChild.url, 'https://cdn.example/media/period/video/1080/');
+  assert.equal(dashChild.headers.Cookie, 'session=same-origin');
+  assert.equal(
+    new URL(mediaUrl.searchParams.get('path').replace('$Number$', '3'), dashChild.url).toString(),
+    'https://cdn.example/media/period/video/1080/chunk-3.m4s',
+  );
+
+  const redirectedDash = rewriteManifest(
+    '<MPD><Period><AdaptationSet><Representation><SegmentTemplate media="chunk-$Number$.m4s"/></Representation></AdaptationSet></Period></MPD>',
+    'application/dash+xml', {
+      ...dashResource,
+      url: 'https://redirected.example/final/manifest.mpd',
+      headers: { Referer: 'https://watch.example/' },
+    }, { id: 'unused' },
+  );
+  const redirectedId = redirectedDash.match(/\/api\/stream\/media\/([^/]+)\/asset/)[1];
+  const redirectedChild = resolveMediaHandle(redirectedId, '7', roomGrant);
+  assert.equal(redirectedChild.url, 'https://redirected.example/final/manifest.mpd');
+  assert.equal(redirectedChild.headers.Cookie, undefined, 'redirected origin cannot regain the source cookie');
 });
 
 test('manifest rewrite detection distinguishes MPD from Bilibili dual m4s DASH', () => {

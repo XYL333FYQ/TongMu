@@ -17,11 +17,58 @@ function discoverJsonUrls(value: unknown, add: (url: string) => void, depth = 0)
   if (typeof value === 'object') Object.values(value as Record<string, unknown>).forEach((item) => discoverJsonUrls(item, add, depth + 1));
 }
 
-function safeForwardHeaders(input: Record<string, string>): Record<string, string> {
+export function safeForwardHeaders(input: Record<string, string>): Record<string, string> {
   const result: Record<string, string> = {};
   for (const name of ['referer', 'origin', 'user-agent', 'cookie']) {
     if (input[name]) result[name === 'user-agent' ? 'User-Agent' : name[0].toUpperCase() + name.slice(1)] = input[name];
   }
+  return result;
+}
+
+export function boundedJsonContentLength(headers: Record<string, string>): number | undefined {
+  const raw = headers['content-length'];
+  if (raw === undefined || !/^\d+$/.test(raw.trim())) return undefined;
+  const length = Number(raw);
+  return Number.isSafeInteger(length) && length >= 0 && length <= MAX_JSON_BYTES ? length : undefined;
+}
+
+interface BrowserBodyResponse {
+  headers(): Record<string, string>;
+  body(): Promise<Buffer>;
+}
+
+export async function readBoundedJsonBody(response: BrowserBodyResponse): Promise<unknown | undefined> {
+  if (boundedJsonContentLength(response.headers()) === undefined) return undefined;
+  const body = await response.body();
+  if (body.length > MAX_JSON_BYTES) return undefined;
+  try { return JSON.parse(body.toString('utf8')); } catch { return undefined; }
+}
+
+interface BrowserCookie {
+  name: string;
+  value: string;
+}
+
+interface BrowserCookieContext {
+  cookies(url: string): Promise<BrowserCookie[]>;
+}
+
+/**
+ * A URL discovered inside an API JSON response is a new browser destination.
+ * Ask Chromium which cookies match that exact URL instead of copying the API
+ * request Cookie header (which could belong to another domain or path).
+ */
+export async function headersForJsonCandidate(
+  candidateUrl: string,
+  apiRequestHeaders: Record<string, string>,
+  browserContext: BrowserCookieContext,
+): Promise<Record<string, string>> {
+  const source = safeForwardHeaders(apiRequestHeaders);
+  const result: Record<string, string> = {};
+  if (source['User-Agent']) result['User-Agent'] = source['User-Agent'];
+  if (source.Referer) result.Referer = source.Referer;
+  const cookies = await browserContext.cookies(candidateUrl);
+  if (cookies.length) result.Cookie = cookies.map(({ name, value }) => `${name}=${value}`).join('; ');
   return result;
 }
 
@@ -77,28 +124,42 @@ export class BrowserResolver implements SourceResolver {
         catch { await route.abort('blockedbyclient'); }
       });
       page.on('response', (response: any) => {
-        const url = response.url();
-        const contentType = response.headers()['content-type'] ?? '';
-        const requestHeaders = safeForwardHeaders(response.request().headers());
-        const add = (candidateUrl: string, baseScore: number, reason: string) => {
-          if (/\.(?:m4s|ts)(?:[?#]|$)/i.test(candidateUrl)) return;
-          const score = scoreMediaCandidate(candidateUrl, baseScore);
-          const existing = candidates.get(candidateUrl);
-          if (!existing || score > existing.score) candidates.set(candidateUrl, { url: candidateUrl, score, reason, contentType });
-          candidateHeaders.set(candidateUrl, requestHeaders);
-        };
-        if (MEDIA_URL_HINT.test(url) || MEDIA_TYPE_HINT.test(contentType)) {
-          add(url, /mpegurl|dash\+xml|\.m3u8|\.mpd/i.test(`${contentType} ${url}`) ? 120 : /^video\//i.test(contentType) ? 100 : 70, 'browser network response');
-        }
-        if (/application\/json/i.test(contentType)) {
-          const length = Number(response.headers()['content-length'] || 0);
-          if (length > MAX_JSON_BYTES) return;
-          const task = response.body().then((body: Buffer) => {
-            if (body.length > MAX_JSON_BYTES) return;
-            try { discoverJsonUrls(JSON.parse(body.toString('utf8')), (mediaUrl) => add(mediaUrl, 85, 'browser playback API')); } catch { /* non-JSON body */ }
-          }).catch(() => undefined).finally(() => pendingResponses.delete(task));
-          pendingResponses.add(task);
-        }
+        const task = (async () => {
+          const url = response.url();
+          const responseHeaders = response.headers() as Record<string, string>;
+          const contentType = responseHeaders['content-type'] ?? '';
+          // headers() can omit Cookie and other browser-managed request headers.
+          const allRequestHeaders = await response.request().allHeaders() as Record<string, string>;
+          const requestHeaders = safeForwardHeaders(allRequestHeaders);
+          const add = (
+            candidateUrl: string,
+            baseScore: number,
+            reason: string,
+            headers: Record<string, string>,
+          ) => {
+            if (/\.(?:m4s|ts)(?:[?#]|$)/i.test(candidateUrl)) return;
+            const score = scoreMediaCandidate(candidateUrl, baseScore);
+            const existing = candidates.get(candidateUrl);
+            if (!existing || score > existing.score) candidates.set(candidateUrl, { url: candidateUrl, score, reason, contentType });
+            candidateHeaders.set(candidateUrl, headers);
+          };
+          if (MEDIA_URL_HINT.test(url) || MEDIA_TYPE_HINT.test(contentType)) {
+            add(url, /mpegurl|dash\+xml|\.m3u8|\.mpd/i.test(`${contentType} ${url}`) ? 120 : /^video\//i.test(contentType) ? 100 : 70, 'browser network response', requestHeaders);
+          }
+          if (!/application\/json/i.test(contentType)) return;
+
+          // Playwright's body() buffers the whole response. Never call it when
+          // Content-Length is absent, invalid or above the hard cap.
+          const parsed = await readBoundedJsonBody(response);
+          if (parsed === undefined) return;
+          const discovered: string[] = [];
+          discoverJsonUrls(parsed, (mediaUrl) => discovered.push(mediaUrl));
+          for (const mediaUrl of discovered) {
+            const headers = await headersForJsonCandidate(mediaUrl, allRequestHeaders, pageContext);
+            add(mediaUrl, 85, 'browser playback API', headers);
+          }
+        })().catch(() => undefined).finally(() => pendingResponses.delete(task));
+        pendingResponses.add(task);
       });
       await page.goto(input, { waitUntil: 'domcontentloaded', timeout: 20_000 });
       await page.waitForTimeout(5_000);
