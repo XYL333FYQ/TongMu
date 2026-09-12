@@ -44,6 +44,7 @@
 - [权限模型](#权限模型)
 - [视频源](#视频源)
 - [ZViewerCLI 本地代理](#zviewercli-本地代理)
+- [ZViewer 2.0 媒体核心](#zviewer-20-媒体核心)
 - [常见问题](#常见问题)
 
 ---
@@ -67,7 +68,7 @@
 | 来源 | 说明 |
 |---|---|
 | **Bilibili** | 解析 BV 号或视频链接，支持清晰度切换、大会员凭证 |
-| **MP4 直链** | 直接播放可访问的 MP4 视频地址 |
+| **统一媒体 / 网页 URL** | 自动探测 MP4/MKV/WebM/TS/FLV/HLS/MPD、无后缀直链，以及静态/JavaScript 影片页面 |
 | **WebDAV** | 挂载 WebDAV 服务器，浏览并播放其中的视频文件 |
 | **FTP** | 挂载 FTP 服务器，浏览并播放其中的视频文件 |
 | **OpenList** | 挂载 OpenList 服务，浏览并播放其中的视频文件 |
@@ -388,6 +389,11 @@ ZViewer/
 | `JWT_REFRESH_EXPIRES_IN` | Refresh Token 有效期 | `7d` |
 | `RTMP_PORT` | RTMP 推流端口 | `3334` |
 | `HTTP_FLV_PORT` | HTTP-FLV 拉流端口（内部使用） | `3335` |
+| `MEDIA_BROWSER_RESOLVER` | 启用 Playwright JavaScript 页面嗅探 | `false` |
+| `MEDIA_BROWSER_MAX_CONCURRENCY` | 同时运行的 Chromium 页面数 | `1` |
+| `PLAYWRIGHT_EXECUTABLE_PATH` | 使用系统 Chromium 时的可执行文件路径 | — |
+| `MEDIA_HANDLE_SECRET` | 加密媒体句柄的部署密钥；缺省自动写入 config | — |
+| `TYPEORM_MIGRATIONS` | 运行渐进式数据库 migrations | `false` |
 
 ### 前端构建
 
@@ -419,9 +425,15 @@ ZViewer/
 
 解析 BV 号或视频链接，支持清晰度切换、大会员专享内容。可在管理后台配置 Bilibili 登录凭证以获取大会员清晰度。支持 ZViewerCLI 本地代理以使用本地 Cookie 获取高画质地址。
 
+### ZViewer 2.0 媒体核心
+
+“统一媒体 / 网页 URL”入口不再只看文件后缀：后端会用受限 HEAD/Range 与 magic bytes 识别真实容器，并依次尝试直链、普通网页和可选的 Playwright 浏览器解析。解析得到统一 MediaDescriptor，再由 Playback Planner 选择 Direct、HLS、DASH、FLV 或现有 playsvideo 重封装/仅音频转码路径。播放地址使用房间范围、可过期、加密防篡改的 media handle，源站 Cookie 与防盗链头不会暴露给前端。
+
+详细架构、部署要求、已知限制和验收清单见 [`docs/media-core.md`](docs/media-core.md)。
+
 ### 直链与挂载
 
-- **MP4 直链**：直接输入可访问的 MP4 视频地址播放。
+- **统一媒体 / 网页 URL**：可输入影片页面、MP4/MKV/WebM/TS/FLV、M3U8、MPD 和无后缀媒体地址。
 - **WebDAV / FTP / OpenList**：在挂载点管理中保存连接配置，浏览目录并播放视频文件。
 
 ---
