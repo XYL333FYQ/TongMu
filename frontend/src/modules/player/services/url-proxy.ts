@@ -17,6 +17,9 @@
  * 策略变更只改本文件。
  */
 
+import { getApiUrl } from '@/lib/api'
+import { appendRoomMediaGrant } from '@/modules/media/roomMediaGrant'
+
 /**
  * B站媒体 CDN 域名白名单（host 精确或子域后缀匹配）。
  * 与后端 services/bilibili/cdn.ts 的 HTTPS_CAPABLE_BILIBILI_DOMAINS 保持一致。
@@ -85,6 +88,18 @@ export function isLocalUrl(url: string): boolean {
     const u = new URL(url, window.location.origin)
     if (u.protocol === 'blob:' || u.protocol === 'data:') return true
     return u.origin === window.location.origin
+  } catch {
+    return false
+  }
+}
+
+export function isConfiguredApiUrl(url: string): boolean {
+  try {
+    const candidate = new URL(url, window.location.origin)
+    const api = new URL(getApiUrl(), window.location.origin)
+    return (
+      candidate.origin === api.origin && candidate.pathname.startsWith('/api/')
+    )
   } catch {
     return false
   }
@@ -226,7 +241,7 @@ export function resolveProxyUrl(
   // 本站 URL / blob / data 协议：永不代理。
   // /api/ 路径需附加 token：HTTP 环境下无 auth cookie，
   // 媒体标签无法设置 Authorization header，必须通过查询参数认证。
-  if (isLocalUrl(url)) return appendAuthToken(url)
+  if (isLocalUrl(url) || isConfiguredApiUrl(url)) return appendAuthToken(url)
 
   // 相对路径（/api/webdav/...）：自动走本站后端，同样附加 token
   if (isRelativeUrl(url)) return appendAuthToken(url)
@@ -306,4 +321,3 @@ export function resolveProxyUrl(
   // 其他跨域 URL：直连源站，服务器零流量
   return url
 }
-import { appendRoomMediaGrant } from '@/modules/media/roomMediaGrant'

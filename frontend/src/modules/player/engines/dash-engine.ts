@@ -15,6 +15,7 @@ import type { PlayerEngine, PlayerSource, EngineAttachResult } from '../types'
 import { DashPlayer } from './dash'
 import dashjs from 'dashjs'
 import { resetVideoElement, waitForMetadata } from '../utils'
+import { resolveProxyUrl } from '../services/url-proxy'
 
 export const dashEngine: PlayerEngine = {
   type: 'dash',
@@ -33,7 +34,11 @@ export const dashEngine: PlayerEngine = {
         player.updateSettings({
           streaming: { buffer: { bufferTimeAtTopQuality: 30 } },
         })
-        player.initialize(video, source.url, false)
+        player.initialize(
+          video,
+          resolveProxyUrl(source.url, source.headers, source.format),
+          false
+        )
         await waitForMetadata(video)
         return {
           cleanup: () => {

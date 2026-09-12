@@ -403,7 +403,9 @@ export function useWatchTogether({
       suppressEventsRef.current = true
       void applySourceToVideo(video, newState)
         .then(() => {
-          video.currentTime = 0
+          // DASH attach 在 metadata 就绪时媒体分片可能仍在下载。即使目标
+          // 同为 0，再次赋值也会被 dash.js 视为 seek 并中止首个分片。
+          if (video.currentTime > 0) video.currentTime = 0
           if (video.paused) {
             void safePlay(video)
           }
@@ -1035,7 +1037,7 @@ export function useWatchTogether({
           }
           message.info(`已恢复到 ${formatDuration(recoveryTime)}（已暂停）`)
         } else {
-          video.currentTime = 0
+          if (video.currentTime > 0) video.currentTime = 0
           // 用户在管线运行期间（MKV 的 playsvideo attach 可达 5-10s）按了
           // 暂停时，不得强制起播，否则出现「已暂停但仍有声音输出」。
           // 仅当用户没有暂停意图、且视频未在播放时才补 play。
@@ -1363,7 +1365,7 @@ export function useWatchTogether({
       suppressEventsRef.current = true
       void applySourceToVideo(video, newState)
         .then(() => {
-          video.currentTime = 0
+          if (video.currentTime > 0) video.currentTime = 0
           if (video.paused) {
             void safePlay(video)
           }

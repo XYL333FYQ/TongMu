@@ -14,6 +14,7 @@ import { resetVideoElement, waitForMetadata } from '../utils'
 import {
   resolveProxyUrl,
   isLocalUrl,
+  isConfiguredApiUrl,
   isRelativeUrl,
   buildProxyUrl,
 } from '../services/url-proxy'
@@ -43,6 +44,7 @@ function createProxyLoader() {
       const shouldProxy =
         originalUrl &&
         !isLocalUrl(originalUrl) &&
+        !isConfiguredApiUrl(originalUrl) &&
         !isRelativeUrl(originalUrl) &&
         !originalUrl.includes('/api/stream/proxy?url=')
 

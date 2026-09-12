@@ -39,7 +39,6 @@ export function resetVideoElement(video: HTMLVideoElement): void {
     // ignore
   }
   video.removeAttribute('src')
-  video.src = ''
   video.load()
 }
 
