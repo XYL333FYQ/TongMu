@@ -11,6 +11,8 @@ export interface MediaHandleResource {
   url: string;
   scope: string;
   headers?: Record<string, string>;
+  /** Origins allowed to receive Cookie/Authorization/token-like headers. */
+  credentialOrigins?: string[];
   contentType?: string;
   rewriteManifest?: boolean;
   expiresAt: number;
