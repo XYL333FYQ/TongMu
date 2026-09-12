@@ -734,6 +734,25 @@ test('media gateway rewrites HLS resources and preserves DASH segment templates'
     'https://cdn.example/media/period/video/1080/chunk-3.m4s',
   );
 
+  const segmentListDash = rewriteManifest(
+    '<MPD><BaseURL>../media/</BaseURL><Period><AdaptationSet><BaseURL>audio/</BaseURL><SegmentList><Initialization sourceURL="init.m4a"/><SegmentURL media="seg-1.m4s"/></SegmentList><Representation id="a1"><BaseURL>en/</BaseURL></Representation></AdaptationSet></Period></MPD>',
+    'application/dash+xml', dashResource, { id: 'unused' },
+  );
+  const listUrls = [...segmentListDash.matchAll(/(?:sourceURL|media)="([^"]+)"/g)]
+    .map((match) => match[1].replaceAll('&amp;', '&'));
+  assert.equal(listUrls.length, 2);
+  const listResources = listUrls.map((url) => {
+    const parsed = new URL(url, 'https://gateway.example');
+    return resolveMediaHandle(parsed.pathname.split('/').at(-1), '7', roomGrant);
+  });
+  assert.deepEqual(
+    listResources.map((child) => child.url),
+    [
+      'https://cdn.example/media/audio/en/init.m4a',
+      'https://cdn.example/media/audio/en/seg-1.m4s',
+    ],
+  );
+
   const redirectedDash = rewriteManifest(
     '<MPD><Period><AdaptationSet><Representation><SegmentTemplate media="chunk-$Number$.m4s"/></Representation></AdaptationSet></Period></MPD>',
     'application/dash+xml', {

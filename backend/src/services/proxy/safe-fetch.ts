@@ -131,6 +131,13 @@ const FORBIDDEN_REQUEST_HEADERS = new Set([
   'proxy-connection', 'keep-alive', 'te', 'trailer', 'upgrade', 'x-real-ip',
 ]);
 
+function isExplicitE2eFixture(url: URL): boolean {
+  if (process.env.NODE_ENV !== 'test') return false;
+  const configured = process.env.MEDIA_E2E_FIXTURE_ORIGIN?.trim();
+  if (!configured) return false;
+  try { return url.origin === new URL(configured).origin; } catch { return false; }
+}
+
 export function sanitizeProxyHeaders(input?: Record<string, string>): Record<string, string> {
   const output: Record<string, string> = {};
   for (const [name, value] of Object.entries(input ?? {})) {
@@ -173,8 +180,9 @@ export async function fetchWithProxyPolicy(
 
   for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
     const privateHostAllowed =
-      policy === 'trusted-private' &&
-      trustedHosts.has(normalizeHostname(current.hostname).toLowerCase());
+      isExplicitE2eFixture(current) ||
+      (policy === 'trusted-private' &&
+        trustedHosts.has(normalizeHostname(current.hostname).toLowerCase()));
     if (!privateHostAllowed) assertLiteralHostIsPublic(current);
     let response: Response;
     try {
@@ -201,8 +209,9 @@ export async function fetchWithProxyPolicy(
     if (!location) return response;
     const next = validateProxyUrl(new URL(location, current).toString());
     const nextPrivateHostAllowed =
-      policy === 'trusted-private' &&
-      trustedHosts.has(normalizeHostname(next.hostname).toLowerCase());
+      isExplicitE2eFixture(next) ||
+      (policy === 'trusted-private' &&
+        trustedHosts.has(normalizeHostname(next.hostname).toLowerCase()));
     if (!nextPrivateHostAllowed) assertLiteralHostIsPublic(next);
     if (next.origin !== current.origin) headers = stripCrossOriginCredentials(headers);
     await response.body?.cancel();
