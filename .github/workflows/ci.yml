@@ -36,13 +36,15 @@ jobs:
       - name: Frontend build
         run: npm run build -w frontend
 
-      - name: Install Chromium for E2E
-        run: npx playwright install --with-deps chromium
+      - name: Install Chrome for E2E media coverage
+        run: npx playwright install --with-deps chrome
 
       - name: Prepare safe E2E environment
         run: cp .env.example .env
 
       - name: E2E tests
+        env:
+          PLAYWRIGHT_CHANNEL: chrome
         run: npm run test:e2e -- --reporter=line
 
       - name: Validate recommended Compose
