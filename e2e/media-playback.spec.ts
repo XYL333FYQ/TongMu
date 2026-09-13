@@ -2,6 +2,136 @@ import { expect, test, type Page } from "@playwright/test";
 
 const FIXTURE_ORIGIN = "http://127.0.0.1:3456";
 
+function safeRequestUrl(rawUrl: string): string {
+  try {
+    const url = new URL(rawUrl);
+    const path = url.pathname.startsWith('/api/stream/media/')
+      ? '/api/stream/media/<redacted>'
+      : url.pathname;
+    const queryKeys = [...url.searchParams.keys()].sort();
+    return `${url.origin}${path}${queryKeys.length ? `?keys=${queryKeys.join(',')}` : ''}`;
+  } catch {
+    return '<invalid-url>';
+  }
+}
+
+function redactLogText(value: string): string {
+  return value
+    .replace(/https?:\/\/[^\s"'`]+/gi, (rawUrl) => {
+      const trimmed = rawUrl.replace(/[),.;]+$/g, '');
+      return safeRequestUrl(trimmed);
+    })
+    .replace(/\b[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '<jwt-redacted>')
+    .replace(/Bearer\s+[^\s,;]+/gi, 'Bearer <redacted>');
+}
+
+function isMediaRequest(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    return url.origin === FIXTURE_ORIGIN || url.pathname.includes('/api/stream/media/');
+  } catch {
+    return false;
+  }
+}
+
+function installMediaDiagnostics(page: Page, title: string): void {
+  page.on('request', (request) => {
+    if (!isMediaRequest(request.url())) return;
+    console.log('[e2e request]', JSON.stringify({
+      test: title,
+      method: request.method(),
+      url: safeRequestUrl(request.url()),
+      resourceType: request.resourceType(),
+    }));
+  });
+  page.on('response', (response) => {
+    if (!isMediaRequest(response.url())) return;
+    console.log('[e2e response]', JSON.stringify({
+      test: title,
+      status: response.status(),
+      url: safeRequestUrl(response.url()),
+      contentType: response.headers()['content-type'] ?? '',
+    }));
+  });
+  page.on('requestfailed', (request) => {
+    if (!isMediaRequest(request.url())) return;
+    console.log('[e2e requestfailed]', JSON.stringify({
+      test: title,
+      url: safeRequestUrl(request.url()),
+      failure: request.failure()?.errorText ?? 'unknown',
+    }));
+  });
+  page.on('pageerror', (error) => {
+    console.log('[e2e pageerror]', JSON.stringify({
+      test: title,
+      message: redactLogText(error.message),
+    }));
+  });
+  page.on('console', (message) => {
+    const messageText = message.text();
+    if (!/hls|dash|media|mse|sourcebuffer|codec|error|failed/i.test(messageText)) return;
+    console.log('[e2e console]', JSON.stringify({
+      test: title,
+      type: message.type(),
+      text: redactLogText(messageText),
+    }));
+  });
+}
+
+async function logMediaDiagnostics(page: Page, label: string): Promise<void> {
+  try {
+    const capability = await page.evaluate(() => {
+      const mimeTypes = [
+        'video/mp4; codecs="avc1.42001e"',
+        'video/mp4; codecs="avc1.42001e,mp4a.40.2"',
+        'audio/mp4; codecs="mp4a.40.2"',
+        'video/iso.segment; codecs="avc1.42001e"',
+      ];
+      const mediaSource = typeof MediaSource === 'undefined' ? undefined : MediaSource;
+      return {
+        userAgent: navigator.userAgent,
+        platform: navigator.platform,
+        hardwareConcurrency: navigator.hardwareConcurrency,
+        deviceMemory: (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? null,
+        mediaSourceType: typeof MediaSource,
+        mediaSourceIsTypeSupported: mediaSource
+          ? Object.fromEntries(mimeTypes.map((mime) => [mime, mediaSource.isTypeSupported(mime)]))
+          : null,
+        videoCanPlay: Object.fromEntries(mimeTypes.map((mime) => [mime, document.createElement('video').canPlayType(mime)])),
+      };
+    });
+    const video = await page.locator('video').first().evaluate((element: HTMLVideoElement) => ({
+      currentSrc: element.currentSrc,
+      src: element.src,
+      dataset: { ...element.dataset },
+      readyState: element.readyState,
+      networkState: element.networkState,
+      paused: element.paused,
+      currentTime: element.currentTime,
+      buffered: Array.from({ length: element.buffered.length }, (_, index) => [
+        element.buffered.start(index),
+        element.buffered.end(index),
+      ]),
+      error: element.error ? { code: element.error.code, message: element.error.message } : null,
+    }));
+    const fixtureDiagnostics = await (await page.request.get(`${FIXTURE_ORIGIN}/diagnostics`)).json();
+    const fixtureStats = await (await page.request.get(`${FIXTURE_ORIGIN}/stats`)).json();
+    const safeVideo = {
+      ...video,
+      currentSrc: safeRequestUrl(video.currentSrc),
+      src: safeRequestUrl(video.src),
+      dataset: {
+        ...video.dataset,
+        mediaSource: video.dataset.mediaSource ? safeRequestUrl(video.dataset.mediaSource) : undefined,
+      },
+      error: video.error ? { ...video.error, message: redactLogText(video.error.message) } : null,
+    };
+    console.log('[e2e media diagnostics]', JSON.stringify({ label, capability, video: safeVideo, fixtureDiagnostics, fixtureStats }));
+  } catch (error) {
+    console.log('[e2e media diagnostics unavailable]', JSON.stringify({ label, error: redactLogText(String(error)) }));
+  }
+}
+
 async function loginAndCreateRoom(page: Page): Promise<void> {
   await page.goto("/login");
   await page.getByPlaceholder("请输入用户名").fill("root");
@@ -126,7 +256,12 @@ async function addAndPlay(
   const title = decodeURIComponent(new URL(url).pathname.split('/').pop()!);
   await page.getByText(title, { exact: true }).last().locator('../..').getByRole('button', { name: '播放', exact: true }).click();
   const video = page.locator("video").first();
-  await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.dataset.mediaSource), { timeout: 90000 }).toBe(url);
+  try {
+    await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.dataset.mediaSource), { timeout: 90000 }).toBe(url);
+  } catch (error) {
+    await logMediaDiagnostics(page, `attach failed: ${url}`);
+    throw error;
+  }
   await expect
     .poll(() =>
       video.evaluate((element: HTMLVideoElement) => element.readyState),
@@ -262,6 +397,10 @@ test.beforeAll(async ({ browser }) => {
   const page = await browser.newPage();
   await configureGeneratedMedia(page);
   await page.close();
+});
+
+test.beforeEach(async ({ page }, testInfo) => {
+  installMediaDiagnostics(page, testInfo.title);
 });
 
 test("real MP4 and extensionless sources load, play, and seek directly without gateway bytes", async ({

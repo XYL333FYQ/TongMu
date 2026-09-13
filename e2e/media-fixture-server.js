@@ -126,6 +126,24 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify(requests));
     return;
   }
+  if (req.url === '/diagnostics') {
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify(assets ? {
+      configured: true,
+      hlsAdvertisedVideoCodec: 'avc1.42001e',
+      hlsAdvertisedAudioCodec: 'mp4a.40.2',
+      actualMuxedVideoCodec: readAvcCodec(assets.muxedParts.init),
+      actualDashVideoCodec: assets.videoCodec,
+      muxedBytes: assets.muxed.length,
+      muxedInitBytes: assets.muxedParts.init.length,
+      muxedFragmentBytes: assets.muxedParts.fragment.length,
+      videoInitBytes: assets.video.init.length,
+      videoFragmentBytes: assets.video.fragment.length,
+      audioInitBytes: assets.audio.init.length,
+      audioFragmentBytes: assets.audio.fragment.length,
+    } : { configured: false }));
+    return;
+  }
   if (!assets) { res.writeHead(503); res.end('fixture not configured'); return; }
   const path = new URL(req.url, `http://127.0.0.1:${PORT}`).pathname;
   requests.push({ path, method: req.method, range: req.headers.range || '' });
