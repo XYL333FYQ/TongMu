@@ -21,7 +21,7 @@ function redactLogText(value: string): string {
       const trimmed = rawUrl.replace(/[),.;]+$/g, '');
       return safeRequestUrl(trimmed);
     })
-    .replace(/\b[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '<jwt-redacted>')
+    .replace(/\b(?=[A-Za-z0-9_-]{8,}\.)[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '<jwt-redacted>')
     .replace(/Bearer\s+[^\s,;]+/gi, 'Bearer <redacted>');
 }
 
@@ -80,12 +80,20 @@ function installMediaDiagnostics(page: Page, title: string): void {
 
 async function logMediaDiagnostics(page: Page, label: string): Promise<void> {
   try {
-    const capability = await page.evaluate(() => {
+    const fixtureDiagnostics = await (await page.request.get(`${FIXTURE_ORIGIN}/diagnostics`)).json();
+    const actualVideoCodecs = [fixtureDiagnostics.actualMuxedVideoCodec, fixtureDiagnostics.actualDashVideoCodec]
+      .filter((codec): codec is string => typeof codec === 'string' && codec.length > 0);
+    const capability = await page.evaluate((videoCodecs) => {
       const mimeTypes = [
         'video/mp4; codecs="avc1.42001e"',
         'video/mp4; codecs="avc1.42001e,mp4a.40.2"',
         'audio/mp4; codecs="mp4a.40.2"',
         'video/iso.segment; codecs="avc1.42001e"',
+        ...new Set(videoCodecs.flatMap((codec) => [
+          `video/mp4; codecs="${codec}"`,
+          `video/mp4; codecs="${codec},mp4a.40.2"`,
+          `video/iso.segment; codecs="${codec}"`,
+        ])),
       ];
       const mediaSource = typeof MediaSource === 'undefined' ? undefined : MediaSource;
       return {
@@ -99,7 +107,7 @@ async function logMediaDiagnostics(page: Page, label: string): Promise<void> {
           : null,
         videoCanPlay: Object.fromEntries(mimeTypes.map((mime) => [mime, document.createElement('video').canPlayType(mime)])),
       };
-    });
+    }, actualVideoCodecs);
     const video = await page.locator('video').first().evaluate((element: HTMLVideoElement) => ({
       currentSrc: element.currentSrc,
       src: element.src,
@@ -114,7 +122,6 @@ async function logMediaDiagnostics(page: Page, label: string): Promise<void> {
       ]),
       error: element.error ? { code: element.error.code, message: element.error.message } : null,
     }));
-    const fixtureDiagnostics = await (await page.request.get(`${FIXTURE_ORIGIN}/diagnostics`)).json();
     const fixtureStats = await (await page.request.get(`${FIXTURE_ORIGIN}/stats`)).json();
     const safeVideo = {
       ...video,

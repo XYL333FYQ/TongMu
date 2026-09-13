@@ -111,6 +111,7 @@ const server = http.createServer(async (req, res) => {
         video,
         audio,
         videoCodec: readAvcCodec(video.init),
+        muxedVideoCodec: readAvcCodec(muxedParts.init),
         muxedParts,
         encryptedHls: encrypted(muxedParts.fragment),
       };
@@ -130,7 +131,7 @@ const server = http.createServer(async (req, res) => {
     res.setHeader('Content-Type', 'application/json');
     res.end(JSON.stringify(assets ? {
       configured: true,
-      hlsAdvertisedVideoCodec: 'avc1.42001e',
+      hlsAdvertisedVideoCodec: assets.muxedVideoCodec,
       hlsAdvertisedAudioCodec: 'mp4a.40.2',
       actualMuxedVideoCodec: readAvcCodec(assets.muxedParts.init),
       actualDashVideoCodec: assets.videoCodec,
@@ -150,7 +151,7 @@ const server = http.createServer(async (req, res) => {
 
   if (path === '/normal.mp4' || path === '/extensionless') return sendBuffer(req, res, assets.muxed, 'video/mp4');
   if (path === '/hls/master.m3u8') return sendText(req, res,
-    '#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-STREAM-INF:BANDWIDTH=500000,CODECS="avc1.42001e,mp4a.40.2"\nvariant\n',
+    `#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-STREAM-INF:BANDWIDTH=500000,CODECS="${assets.muxedVideoCodec},mp4a.40.2"\nvariant\n`,
     'application/vnd.apple.mpegurl');
   if (path === '/hls/variant') return sendText(req, res,
     '#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-MAP:URI="init.mp4"\n#EXT-X-KEY:METHOD=AES-128,URI="key",IV=0x00000000000000000000000000000000\n#EXTINF:3.0,\nsegment\n#EXT-X-ENDLIST\n',
