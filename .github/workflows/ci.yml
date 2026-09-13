@@ -39,6 +39,14 @@ jobs:
       - name: Install Chrome for E2E media coverage
         run: npx playwright install --with-deps chrome
 
+      - name: Prepare FFmpeg for portable media fixtures
+        run: |
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends ffmpeg
+          fi
+          ffmpeg -version | head -n 1
+
       - name: Prepare safe E2E environment
         run: cp .env.example .env
 

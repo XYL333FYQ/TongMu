@@ -1,4 +1,5 @@
 const http = require('node:http');
+const { spawn } = require('node:child_process');
 const { createCipheriv } = require('node:crypto');
 
 const PORT = 3456;
@@ -6,6 +7,76 @@ const key = Buffer.from('zviewer-e2e-key!');
 const iv = Buffer.alloc(16);
 const requests = [];
 let assets;
+
+function isIsoBmff(buffer) {
+  return buffer.length >= 8 && buffer.toString('ascii', 4, 8) === 'ftyp';
+}
+
+function isWebm(buffer) {
+  return buffer.length >= 4 && buffer.readUInt32BE(0) === 0x1a45dfa3;
+}
+
+function transcodeWebmToFragmentedMp4(buffer, kind) {
+  return new Promise((resolve, reject) => {
+    const args = [
+      '-hide_banner',
+      '-loglevel', 'error',
+      '-f', 'webm',
+      '-i', 'pipe:0',
+    ];
+    if (kind === 'audio') {
+      args.push('-vn', '-c:a', 'aac', '-b:a', '96k');
+    } else {
+      args.push(
+        '-an',
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-tune', 'zerolatency',
+        '-pix_fmt', 'yuv420p',
+        '-profile:v', 'baseline',
+        '-level', '3.0',
+      );
+      if (kind === 'muxed') args.splice(args.indexOf('-an'), 1, '-c:a', 'aac', '-b:a', '96k');
+    }
+    args.push(
+      '-movflags', '+frag_keyframe+empty_moov+default_base_moof',
+      '-f', 'mp4',
+      'pipe:1',
+    );
+
+    let child;
+    try {
+      child = spawn('ffmpeg', args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    } catch (error) {
+      reject(new Error(`FFmpeg could not start for ${kind} fixture: ${error}`));
+      return;
+    }
+    const output = [];
+    const errors = [];
+    child.stdout.on('data', (chunk) => output.push(chunk));
+    child.stderr.on('data', (chunk) => errors.push(chunk));
+    child.on('error', (error) => reject(new Error(`FFmpeg is required for WebM ${kind} fixture: ${error.message}`)));
+    child.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(`FFmpeg failed for ${kind} fixture (exit ${code}): ${Buffer.concat(errors).toString('utf8').trim()}`));
+        return;
+      }
+      const result = Buffer.concat(output);
+      if (!isIsoBmff(result)) {
+        reject(new Error(`FFmpeg produced a non-MP4 ${kind} fixture`));
+        return;
+      }
+      resolve(result);
+    });
+    child.stdin.end(buffer);
+  });
+}
+
+async function normalizeToFragmentedMp4(buffer, kind) {
+  if (isIsoBmff(buffer)) return buffer;
+  if (isWebm(buffer)) return transcodeWebmToFragmentedMp4(buffer, kind);
+  throw new Error(`Unsupported ${kind} fixture container; expected MP4 or WebM`);
+}
 
 function splitFragmentedMp4(buffer) {
   const boxes = [];
@@ -102,9 +173,9 @@ const server = http.createServer(async (req, res) => {
   if (req.url === '/configure' && req.method === 'POST') {
     try {
       const body = await readJson(req);
-      const muxed = Buffer.from(body.muxed, 'base64');
-      const video = splitFragmentedMp4(Buffer.from(body.video, 'base64'));
-      const audio = splitFragmentedMp4(Buffer.from(body.audio, 'base64'));
+      const muxed = await normalizeToFragmentedMp4(Buffer.from(body.muxed, 'base64'), 'muxed');
+      const video = splitFragmentedMp4(await normalizeToFragmentedMp4(Buffer.from(body.video, 'base64'), 'video'));
+      const audio = splitFragmentedMp4(await normalizeToFragmentedMp4(Buffer.from(body.audio, 'base64'), 'audio'));
       const muxedParts = splitFragmentedMp4(muxed);
       assets = {
         muxed,
