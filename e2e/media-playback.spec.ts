@@ -78,6 +78,40 @@ function installMediaDiagnostics(page: Page, title: string): void {
   });
 }
 
+async function installMseDiagnostics(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    if (typeof MediaSource !== 'undefined') {
+      const addSourceBuffer = MediaSource.prototype.addSourceBuffer;
+      MediaSource.prototype.addSourceBuffer = function (mimeType: string): SourceBuffer {
+        try {
+          const sourceBuffer = addSourceBuffer.call(this, mimeType);
+          sourceBuffer.addEventListener('error', () => {
+            console.log('[e2e mse sourcebuffer error]', JSON.stringify({ mimeType }));
+          });
+          return sourceBuffer;
+        } catch (error) {
+          console.log('[e2e mse addSourceBuffer failed]', JSON.stringify({
+            mimeType,
+            error: String(error),
+          }));
+          throw error;
+        }
+      };
+    }
+    if (typeof SourceBuffer !== 'undefined') {
+      const appendBuffer = SourceBuffer.prototype.appendBuffer;
+      SourceBuffer.prototype.appendBuffer = function (data: ArrayBuffer | ArrayBufferView): void {
+        try {
+          return appendBuffer.call(this, data);
+        } catch (error) {
+          console.log('[e2e mse appendBuffer failed]', JSON.stringify({ error: String(error) }));
+          throw error;
+        }
+      };
+    }
+  });
+}
+
 async function logMediaDiagnostics(page: Page, label: string): Promise<void> {
   try {
     const fixtureDiagnostics = await (await page.request.get(`${FIXTURE_ORIGIN}/diagnostics`)).json();
@@ -407,6 +441,7 @@ test.beforeAll(async ({ browser }) => {
 });
 
 test.beforeEach(async ({ page }, testInfo) => {
+  await installMseDiagnostics(page);
   installMediaDiagnostics(page, testInfo.title);
 });
 
