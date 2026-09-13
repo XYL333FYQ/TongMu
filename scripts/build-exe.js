@@ -46,7 +46,7 @@ function copyDirSync(src, dest) {
 
 function main() {
   console.log('========================================');
-  console.log('  ZViewer 后端 exe 构建');
+  console.log('  TongMu 后端 exe 构建');
   console.log('========================================');
 
   // 确保输出目录存在

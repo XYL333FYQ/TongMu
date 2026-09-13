@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ZViewer 一键启动脚本
+# TongMu 一键启动脚本
 # 命令：start | backend | stop | restart | status | logs | build | help
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -102,7 +102,7 @@ cmd_start() {
   set_ports
 
   echo "========================================"
-  echo "  ZViewer 启动"
+  echo "  TongMu 启动"
   echo "  端口: $BACKEND_PORT"
   if [[ "$HTTPS_MODE" -eq 1 ]]; then
     echo "  模式: HTTPS（自签/可信证书）"
@@ -358,7 +358,7 @@ do_menu() {
   while true; do
     clear 2>/dev/null || true
     echo "========================================"
-    echo "  ZViewer 生产服务管理"
+    echo "  TongMu 生产服务管理"
     echo "========================================"
     echo ""
     echo "  1) 启动服务"

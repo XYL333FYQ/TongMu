@@ -127,7 +127,7 @@ router.get('/resolve-bilibili', async (req: AuthenticatedRequest, res) => {
   // 注意：仅影响服务器端解析，不影响 CLI 代理的 DASH 模式（CLI 走独立路由 /api/cli/resolve）
   const settings = await getSystemSettings();
   const dashDisabled = settings.dashDisabled;
-  const preferMp4 = dashDisabled || preferMp4Param;
+  const preferMp4 = preferMp4Param;
   const forceDash = !dashDisabled && forceDashParam;
 
   // page 参数：指定播放分集（P），从 1 开始

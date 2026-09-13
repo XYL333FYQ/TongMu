@@ -1,16 +1,16 @@
 /**
- * playsvideo 内嵌字幕 → ZViewer 字幕管线的桥接层。
+ * playsvideo 内嵌字幕 → TongMu 字幕管线的桥接层。
  *
  * ## 为什么需要这一层
  *
  * playsvideo 提取内嵌字幕后，产物是**本机原生 `<track>` 元素 + blob URL**，
- * 而 ZViewer 的同步观影模型要求字幕以 `ParsedCue[]` 形式由房主经 socket
+ * 而 TongMu 的同步观影模型要求字幕以 `ParsedCue[]` 形式由房主经 socket
  * 全量广播给观众（`subtitle-update`）。blob URL 无法跨客户端传递，两者
  * 数据形态不兼容，因此需要一个转换层。
  *
  * 本模块做三件事：
  * 1. 从 playsvideo 挂载的 `<track>` 取回 WebVTT 文本（fetch blob URL）
- * 2. 用 ZViewer 的 `parseSubtitle` 解析为 `ParsedCue[]`
+ * 2. 用 TongMu 的 `parseSubtitle` 解析为 `ParsedCue[]`
  * 3. 以发布/订阅把结果交给 `useSubtitles`，后续渲染与广播完全复用既有管线
  *
  * ## 关于世代
@@ -21,7 +21,7 @@
 import { parseSubtitle, type ParsedCue } from '@/lib/subtitleParser'
 import { redactMediaError } from '../services/media-redaction'
 
-/** playsvideo 提取出的一条内嵌字幕轨（已解析为 ZViewer 内部格式）。 */
+/** playsvideo 提取出的一条内嵌字幕轨（已解析为 TongMu 内部格式）。 */
 export interface PlaysVideoEmbeddedSubtitle {
   /** 轨道序号（对应 playsvideo 的 SubtitleTrackInfo.index） */
   index: number

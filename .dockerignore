@@ -3,8 +3,28 @@ node_modules/
 .git/
 .gitignore
 
+# 本机参考资料、凭证和运行时数据不得进入 Docker build context
+references/
+config/
+.env
+.env.*
+*.sqlite*
+*.db*
+
 # 运行时日志
 log/
+*.log
+
+# 测试和本地调试产物
+.e2e-runtime/
+.playwright-cli/
+test-results/
+playwright-report/
+coverage/
+output/
+tmp/
+temp/
+cache/
 
 # 文档
 *.md

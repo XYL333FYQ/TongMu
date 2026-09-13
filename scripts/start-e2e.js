@@ -29,6 +29,7 @@ const child = spawn(process.execPath, [
     MEDIA_E2E_FIXTURE_ORIGIN: 'http://127.0.0.1:3456',
     MEDIA_HANDLE_SECRET: 'e2e-only-media-handle-secret-32-bytes',
     JWT_ACCESS_EXPIRES_IN: '2s',
+    MEDIA_ROOM_GRANT_TTL_MS: '2000',
     VITE_API_URL: 'http://127.0.0.1:3333',
   },
 });

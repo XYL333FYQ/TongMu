@@ -1,5 +1,5 @@
 #!/bin/sh
-# ZViewer 一键启动脚本（单文件 exe 版，Linux）
+# TongMu 一键启动脚本（单文件 exe 版，Linux）
 # 命令：start | stop | restart | status | logs | cert | https | help | menu
 # 无参数时进入交互菜单。
 #
@@ -182,7 +182,7 @@ do_cert() {
 do_start() {
   resolve_ports
   echo "========================================"
-  echo "  ZViewer 启动"
+  echo "  TongMu 启动"
   echo "  端口: $BACKEND_PORT"
   if [ "$HTTPS_MODE" -eq 1 ]; then
     echo "  模式: HTTPS（可信/自签证书）"
@@ -277,7 +277,7 @@ do_restart() {
 
 do_status() {
   echo "========================================"
-  echo "  ZViewer 运行状态"
+  echo "  TongMu 运行状态"
   echo "========================================"
   resolve_ports
   local bp backend_running
@@ -345,7 +345,7 @@ do_menu() {
   while true; do
     clear 2>/dev/null || true
     echo "========================================"
-    echo "  ZViewer 服务管理（单文件版）"
+    echo "  TongMu 服务管理（单文件版）"
     echo "========================================"
     echo ""
     echo "  1) 启动服务"

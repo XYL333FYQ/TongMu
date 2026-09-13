@@ -458,12 +458,12 @@ export default function ProfilePage() {
             个人中心
           </Title>
           <Text type="secondary">
-            管理您的 ZViewer 账号、挂载配置与 B站 绑定
+            管理您的 TongMu 账号、挂载配置与 B站 绑定
           </Text>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
-          {/* ZViewer 账号信息 */}
+          {/* TongMu 账号信息 */}
           <div className="glass-card p-4">
             <div className="mb-3 flex items-center gap-2">
               <div
@@ -475,7 +475,7 @@ export default function ProfilePage() {
               >
                 <Shield className="h-4 w-4" />
               </div>
-              <Text className="text-sm font-medium">ZViewer 账号</Text>
+              <Text className="text-sm font-medium">TongMu 账号</Text>
             </div>
             <div className="space-y-2">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

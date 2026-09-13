@@ -1,5 +1,9 @@
 import Database from 'better-sqlite3'
-const db = new Database('f:/Code/ZViewer/ZViewer/backend/test-dev.sqlite', { readonly: true })
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
+const db = new Database(path.join(projectRoot, 'config', 'dev.sqlite'), { readonly: true })
 const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all()
 console.log('tables:', tables.map((t) => t.name).join(', '))
 for (const name of ['movie', 'server_folder', 'serverFolder', 'room', 'system_settings']) {

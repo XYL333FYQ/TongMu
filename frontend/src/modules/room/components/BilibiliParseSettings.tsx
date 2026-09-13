@@ -66,7 +66,7 @@ export function BilibiliParseSettings({
   const cliUnavailable = cliEnabled && !cliAgent.available
   const dashDisabled = useSystemSettingsStore((s) => s.dashDisabled)
   // 服务器端 DASH 禁用时，CLI 未启用的影片强制 MP4 且不可切换
-  const dashLocked = dashDisabled && !cliEnabled
+  const dashLocked = false
   const effectivePreferMp4 = dashLocked || getEffectivePreferMp4(movieId)
   const displayPreferMp4 = effectivePreferMp4
 

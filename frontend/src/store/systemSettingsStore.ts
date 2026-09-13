@@ -44,7 +44,7 @@ const DEFAULT_SETTINGS: SystemSettings = {
   registrationMode: 'approval',
   roomCreationMode: 'admin-only',
   betaFeaturesEnabled: false,
-  dashDisabled: true,
+  dashDisabled: false,
   playsvideoEnabled: true,
   cdnAccelerate: false,
   cdnProxyUrl: 'https://gh-proxy.com',

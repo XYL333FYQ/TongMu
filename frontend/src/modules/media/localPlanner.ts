@@ -1,4 +1,5 @@
-import type { ClientCapabilities, MediaDescriptor, PlaybackPlan } from './types';
+import type { MediaDescriptor, PlaybackPlan } from './mediaApi';
+export interface ClientCapabilities { nativeHls?: boolean; mediaSource?: boolean; playsvideo?: boolean; hevc?: boolean }
 
 const AUDIO_TRANSCODE_CODECS = new Set(['dts', 'dca', 'ac3', 'eac3', 'truehd']);
 
@@ -32,7 +33,7 @@ export function planPlayback(
       };
     }
     return {
-      engine: 'hls', mode: 'manifest', proxy: !!media.headers,
+      engine: 'hls', mode: 'manifest', proxy: false,
       videoAction: 'direct', audioAction: 'direct',
       reasons: [capabilities.nativeHls ? '客户端可原生播放 HLS' : '使用现有 HLS 引擎'],
     };
@@ -45,7 +46,7 @@ export function planPlayback(
       };
     }
     return {
-      engine: 'dash', mode: 'manifest', proxy: !!media.headers,
+      engine: 'dash', mode: 'manifest', proxy: false,
       videoAction: 'direct', audioAction: 'direct', reasons: ['使用现有 DASH 引擎'],
     };
   }
@@ -57,7 +58,7 @@ export function planPlayback(
       };
     }
     return {
-      engine: 'flv', mode: 'manifest', proxy: !!media.headers,
+      engine: 'flv', mode: 'manifest', proxy: false,
       videoAction: 'direct', audioAction: 'direct', reasons: ['使用现有 FLV 引擎'],
     };
   }
@@ -75,7 +76,7 @@ export function planPlayback(
       };
     }
     return {
-      engine: 'playsvideo', mode: 'audio-transcode', proxy: !!media.headers,
+      engine: 'playsvideo', mode: 'audio-transcode', proxy: false,
       videoAction: 'copy', audioAction: 'transcode-aac',
       reasons: [`${audioCodec.toUpperCase()} 音频浏览器不兼容；保留视频，仅转 AAC`],
     };
@@ -94,12 +95,12 @@ export function planPlayback(
       };
     }
     return {
-      engine: 'playsvideo', mode: 'remux', proxy: !!media.headers,
+      engine: 'playsvideo', mode: 'remux', proxy: false,
       videoAction: 'copy', audioAction: 'copy', reasons: [`${media.container.toUpperCase()} 交给现有 playsvideo 重封装`],
     };
   }
   return {
-    engine: 'direct', mode: 'direct', proxy: !!media.headers,
+    engine: 'direct', mode: 'direct', proxy: false,
     videoAction: 'direct', audioAction: media.audioUrl ? 'direct' : 'direct',
     reasons: media.rangeSupported === false
       ? ['浏览器原生顺序播放；源站不支持 seek']

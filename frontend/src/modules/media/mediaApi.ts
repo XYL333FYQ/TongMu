@@ -1,9 +1,16 @@
+import { registerMediaTransport } from './transport';
+import { planPlayback } from './localPlanner';
 import { apiFetch, getApiUrl, safeJson } from '@/lib/api'
 import type { MediaFormat } from '@/lib/mediaFormat'
 import { getRoomMediaGrant } from './roomMediaGrant'
 import type { ResolvedSource } from '@/modules/bilibili/types'
 
 export interface MediaDescriptor {
+  transportPlan?: { candidates: Array<{ mode: 'DIRECT' | 'MANIFEST_ASSISTED' | 'PARTIAL_PROXY' | 'FULL_PROXY'; url: string; audioUrl?: string }>; reason: string }
+  sourceMaximumQuality?: number
+  availableMaximumQuality?: number
+  actualCodec?: string
+  actualBandwidth?: number
   title?: string
   sourceType: string
   resolver: string
@@ -148,12 +155,19 @@ export async function resolveMediaInput(
   if (!response.ok || !data.success || !data.descriptor || !data.plan) {
     throw new Error(data.message || '媒体解析失败')
   }
-  return {
+  const result: ResolvedMedia = {
     descriptor: {
       ...data.descriptor,
       finalUrl: normalizeMediaGatewayUrl(data.descriptor.finalUrl) ?? data.descriptor.finalUrl,
       audioUrl: normalizeMediaGatewayUrl(data.descriptor.audioUrl),
     },
-    plan: data.plan,
+    plan: planPlayback(data.descriptor, browserCapabilities()),
   }
+  registerMediaTransport(result.descriptor)
+  return result
+}
+
+export function browserCapabilities() {
+  const video = document.createElement('video')
+  return { nativeHls: !!video.canPlayType('application/vnd.apple.mpegurl'), mediaSource: typeof MediaSource !== 'undefined', playsvideo: typeof Worker !== 'undefined', hevc: !!video.canPlayType('video/mp4; codecs="hvc1.1.6.L93.B0"') }
 }

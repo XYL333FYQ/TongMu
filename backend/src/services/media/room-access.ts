@@ -44,7 +44,10 @@ export async function authorizeRoomMediaGrant(
   },
 ): Promise<RoomMediaGrant | undefined> {
   if (!token) return undefined;
-  const grant = resolveRoomMediaGrant(token);
+  const grant = resolveRoomMediaGrant(token, true);
   if (!grant || (expectedRoomId && grant.roomId !== expectedRoomId)) return undefined;
-  return (await isActive(grant.roomId, grant.socketId)) ? grant : undefined;
+  if (!(await isActive(grant.roomId, grant.socketId))) return undefined;
+  // Renew only while this exact authenticated socket Session remains active.
+  // Old manifest child URLs continue working; leave/kick/restart still revokes them.
+  return { ...grant, expiresAt: Date.now() + 12 * 60 * 60 * 1000 };
 }

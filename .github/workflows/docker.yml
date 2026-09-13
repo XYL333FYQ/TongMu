@@ -1,0 +1,17 @@
+name: Build TongMu Browser Image (manual)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Build BrowserResolver image
+        run: docker build --file Dockerfile.linux-browser --tag tongmu:browser .

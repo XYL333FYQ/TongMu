@@ -75,6 +75,7 @@ export async function headersForJsonCandidate(
 /** Optional JS resolver. Disabled unless MEDIA_BROWSER_RESOLVER=true. */
 export class BrowserResolver implements SourceResolver {
   readonly name = 'browser';
+  constructor(private readonly runtime?: { playwright: any; createProxy?: typeof createBrowserSafeProxy }) {}
   canHandle(input: string): boolean {
     if (process.env.MEDIA_BROWSER_RESOLVER !== 'true') return false;
     try { return ['http:', 'https:'].includes(new URL(input).protocol); } catch { return false; }
@@ -84,7 +85,7 @@ export class BrowserResolver implements SourceResolver {
     if (!context.browserSniff) throw new ResolverNotApplicableError('浏览器嗅探未请求');
     await assertPublicUrl(input);
     let playwright: { chromium: { launch(options: { headless: boolean; executablePath?: string; proxy?: { server: string }; args?: string[] }): Promise<any> } };
-    try { playwright = require('playwright') as typeof playwright; }
+    try { playwright = this.runtime?.playwright ?? require('playwright') as typeof playwright; }
     catch { throw new Error('Browser Resolver 未安装 Playwright/Chromium'); }
     const limit = Math.max(1, Number(process.env.MEDIA_BROWSER_MAX_CONCURRENCY) || 1);
     if (activeBrowsers >= limit) throw new Error('Browser Resolver 正忙，请稍后重试');
@@ -93,7 +94,7 @@ export class BrowserResolver implements SourceResolver {
     let pageContext: any;
     let safeProxy: Awaited<ReturnType<typeof createBrowserSafeProxy>> | undefined;
     try {
-      safeProxy = await createBrowserSafeProxy();
+      safeProxy = await (this.runtime?.createProxy ?? createBrowserSafeProxy)();
       browser = await playwright.chromium.launch({
         headless: true,
         proxy: { server: safeProxy.url },
@@ -170,7 +171,7 @@ export class BrowserResolver implements SourceResolver {
           const headers = candidateHeaders.get(candidate.url);
           const descriptor = await probeMediaUrl(candidate.url, { headers, sourceType: 'browser-page', resolver: this.name });
           if (descriptor.container === 'unknown') continue;
-          return { ...descriptor, input, originalUrl: page.url(), headers, candidates: ranked };
+          return { ...descriptor, input, originalUrl: page.url(), candidates: ranked };
         } catch { /* test next candidate */ }
       }
       throw new ResolverNotApplicableError('浏览器网络中未发现可验证的主媒体');

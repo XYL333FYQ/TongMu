@@ -6,7 +6,11 @@ export class BilibiliResolver implements SourceResolver {
   readonly name = 'bilibili';
 
   canHandle(input: string): boolean {
-    return /(?:bilibili\.com|b23\.tv|^BV[0-9A-Za-z]{10}$)/i.test(input.trim());
+    if (/^(?:BV[0-9A-Za-z]{10}|av\d+)$/i.test(input.trim())) return true;
+    try {
+      const host = new URL(input.trim()).hostname.toLowerCase();
+      return ['bilibili.com', 'b23.tv', 'bili2233.cn'].some(domain => host === domain || host.endsWith(`.${domain}`));
+    } catch { return false; }
   }
 
   async resolve(input: string, context: ResolverContext): Promise<MediaDescriptor> {
@@ -23,19 +27,23 @@ export class BilibiliResolver implements SourceResolver {
       container: result.format === 'dash' ? 'dash' : 'mp4',
       contentType: result.format === 'dash' ? 'video/mp4' : 'video/mp4',
       videoCodec: result.videoCodec, audioCodec: result.audioCodec, duration: result.duration,
-      bitrate: result.videoBandwidth, requestedQuality: result.requestedQn,
-      actualQuality: result.currentQn, qualityLabel: result.qualityLabel,
+      bitrate: result.videoBandwidth, requestedQuality: context.requestedQn,
+      actualQuality: result.currentQn,
+      sourceMaximumQuality: result.acceptQuality?.length ? Math.max(...result.acceptQuality.map(q => q.id)) : undefined,
+      availableMaximumQuality: context.requestedQn === undefined ? result.currentQn : undefined,
+      actualCodec: result.videoCodec, actualBandwidth: result.videoBandwidth,
+      qualityLabel: context.requestedQn === undefined ? `${result.qualityLabel}（当前可用最高）` : result.qualityLabel,
       loggedIn: result.loggedIn, vip: result.vipStatus === 1,
       fallbackReason: result.fallbackReason, drm: { protected: false },
-      headers: getBilibiliMediaHeaders(),
+      headers: result.format === 'dash' ? getBilibiliMediaHeaders() : undefined,
       sourceMetadata: {
         bilibili: {
           cid: result.cid,
-          requestedQn: result.requestedQn,
+          requestedQn: context.requestedQn,
           actualQn: result.currentQn,
           preferMp4: context.preferMp4 === true,
           availableQualities: result.acceptQuality ?? [],
-          qualityLabel: result.qualityLabel,
+          qualityLabel: context.requestedQn === undefined ? `${result.qualityLabel}（当前可用最高）` : result.qualityLabel,
           videoCodec: result.videoCodec,
           audioCodec: result.audioCodec,
           videoBandwidth: result.videoBandwidth,

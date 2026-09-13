@@ -98,7 +98,7 @@ function Write-Title {
 }
 
 function Show-Help {
-  Write-Title 'ZViewer 一键打包发布脚本（源码发布包）'
+  Write-Title 'TongMu 一键打包发布脚本（源码发布包）'
   Write-Host '用法：' -ForegroundColor Yellow
   Write-Host '  .\release-zip.ps1               打包到项目根目录，文件名带时间戳'
   Write-Host '  .\release-zip.ps1 -OutputPath <路径>  指定输出 zip 路径'
@@ -180,7 +180,7 @@ function Invoke-Build {
 # ==================== 打包 ====================
 
 function Invoke-Release {
-  Write-Title 'ZViewer 一键打包发布（源码发布包）'
+  Write-Title 'TongMu 一键打包发布（源码发布包）'
 
   # 1. 确定输出路径
   if ($OutputPath) {
@@ -191,7 +191,7 @@ function Invoke-Release {
     }
   } else {
     $timestamp = Get-Date -Format 'yyyyMMdd-HHmm'
-    $dest = Join-Path $root "ZViewer-release-$timestamp.zip"
+    $dest = Join-Path $root "TongMu-release-$timestamp.zip"
   }
 
   Write-Host '打包配置：' -ForegroundColor Yellow
@@ -219,7 +219,7 @@ function Invoke-Release {
 
   # 3. 复制文件到临时目录
   $tempBase = Join-Path $env:TEMP "zviewer-release-$(Get-Date -Format 'yyyyMMddHHmmss')"
-  $tempDir = Join-Path $tempBase 'ZViewer'
+  $tempDir = Join-Path $tempBase 'TongMu'
   Write-Host '步骤 2/4：复制文件（含构建产物，过滤敏感/无关内容）...' -ForegroundColor Yellow
   Write-Host "  临时目录：$tempDir"
   New-Item -ItemType Directory -Path $tempDir -Force | Out-Null

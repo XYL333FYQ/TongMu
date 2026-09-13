@@ -162,7 +162,7 @@ export default function LoginPage() {
           </Fade>
           <Fade delay={120} key={`login-title-${mode}`}>
             <Title level={3} className="m-0 mt-4">
-              {isLogin ? '登录 ZViewer' : '注册账号'}
+              {isLogin ? '登录 TongMu' : '注册账号'}
             </Title>
             <Paragraph type="secondary" className="m-0 mt-2">
               {isLogin

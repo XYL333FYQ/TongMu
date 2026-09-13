@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * ZViewer 一键编译脚本。
+ * TongMu 一键编译脚本。
  *
  * 交互式选择目标平台，自动完成前后端编译、pkg 打包、原生模块复制。
  *
@@ -164,7 +164,7 @@ async function showInteractiveMenu() {
 
   console.log('');
   console.log('========================================');
-  console.log('  ZViewer 一键编译');
+  console.log('  TongMu 一键编译');
   console.log('========================================');
   console.log('');
 
@@ -527,7 +527,7 @@ function printSummary(allResults) {
 
 async function main() {
   console.log('========================================');
-  console.log('  ZViewer 一键编译工具');
+  console.log('  TongMu 一键编译工具');
   console.log('========================================');
   console.log(`  工作目录: ${ROOT}`);
   console.log(`  编译模式: ${SKIP_BUILD ? '跳过编译 (--skip-build)' : '完整编译'}`);

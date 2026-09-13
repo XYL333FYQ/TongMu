@@ -2,7 +2,7 @@
 set -e
 
 echo "========================================"
-echo "  ZViewer Docker 启动（HTTP 模式）"
+echo "  TongMu Docker 启动（HTTP 模式）"
 echo "  统一端口：后端提供 API + 前端静态文件"
 echo "========================================"
 
@@ -60,7 +60,7 @@ while true; do
     # 首次启动打印访问信息，重启时不重复打印
     echo ""
     echo "========================================"
-    echo "  ZViewer 已启动"
+    echo "  TongMu 已启动"
     echo "  访问页面 : http://localhost:$PORT"
     echo "  RTMP 推流: rtmp://localhost:$RTMP_PORT/live"
     echo "  HTTP-FLV : http://localhost:$PORT/live/ (通过后端 /live 代理)"

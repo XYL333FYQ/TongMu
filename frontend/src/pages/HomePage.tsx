@@ -89,7 +89,7 @@ function HomePage() {
           <Fade delay={80} className="inline-block">
             <img
               src="/favicon.jpg"
-              alt="ZViewer"
+              alt="TongMu"
               className="w-16 h-16 rounded-2xl mx-auto object-cover"
               style={{
                 boxShadow:
@@ -99,7 +99,7 @@ function HomePage() {
           </Fade>
           <Fade delay={120}>
             <Title level={2} className="m-0">
-              ZViewer
+              TongMu
             </Title>
             <Paragraph type="secondary" className="m-0 mt-2">
               多人同步追番、观影与远程共享平台

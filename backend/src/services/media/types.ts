@@ -53,6 +53,10 @@ export interface MediaDescriptor {
   audioBitrate?: number;
   duration?: number;
   subtitles?: Array<{ url: string; language?: string; label?: string }>;
+  sourceMaximumQuality?: number;
+  availableMaximumQuality?: number;
+  actualCodec?: string;
+  actualBandwidth?: number;
   requestedQuality?: number;
   actualQuality?: number;
   qualityLabel?: string;

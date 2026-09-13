@@ -1,7 +1,7 @@
 ﻿#!/usr/bin/env pwsh
 #Requires -Version 5.1
 
-# ZViewer 一键启动脚本（单文件 exe 版，Windows）
+# TongMu 一键启动脚本（单文件 exe 版，Windows）
 # 命令：start | backend | stop | restart | status | logs | cert | https | help | menu
 #
 # 统一端口：前后端共用同一端口（默认 3333），由后端 exe 托管 frontend/dist 静态文件，
@@ -205,7 +205,7 @@ function Invoke-Start([switch]$BackendOnly) {
     Set-Ports
 
     Write-Host "========================================"
-    Write-Host "  ZViewer 启动"
+    Write-Host "  TongMu 启动"
     Write-Host "  端口: $Port"
     if ($Https) {
       Write-Host "  模式: HTTPS（可信/自签证书）"
@@ -306,7 +306,7 @@ function Invoke-Restart {
 
 function Invoke-Status {
     Write-Host "========================================"
-    Write-Host "  ZViewer 运行状态"
+    Write-Host "  TongMu 运行状态"
     Write-Host "========================================"
 
     Set-Ports
@@ -377,7 +377,7 @@ function Show-Menu {
     while ($true) {
         Clear-Host
         Write-Host "========================================"
-        Write-Host "  ZViewer 服务管理（单文件版）"
+        Write-Host "  TongMu 服务管理（单文件版）"
         Write-Host "========================================"
         Write-Host ""
         Write-Host "  1) 启动服务"

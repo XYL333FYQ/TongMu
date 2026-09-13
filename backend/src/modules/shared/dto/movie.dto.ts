@@ -43,9 +43,9 @@ export interface MovieDto {
   cover?: string | null;
   /** 源类型 */
   source?: MovieSourceType | null;
-  /** 用户最初粘贴的页面或媒体地址，用于诊断和未来重新解析。 */
+  /** 服务器私有输入的 opaque 影片引用（media-movie:id），不是原始 URL。 */
   sourceInput?: string | null;
-  /** 解析时的 MediaDescriptor 与 PlaybackPlan（不含凭证 headers）。 */
+  /** 公开媒体事实与 TransportPlan；不含私有输入、凭证或房主 PlaybackPlan。 */
   mediaDescriptor?: Record<string, unknown> | null;
   /** DASH 音频流地址 */
   audioUrl?: string | null;

@@ -47,7 +47,7 @@ async function configureGeneratedMedia(page: Page): Promise<void> {
           context.fillRect(0, 0, canvas.width, canvas.height);
           context.fillStyle = "#fff";
           context.font = "20px sans-serif";
-          context.fillText(`ZViewer ${frame}`, 12, 50);
+          context.fillText(`TongMu ${frame}`, 12, 50);
           frame += 1;
           animation = requestAnimationFrame(draw);
         };
@@ -123,8 +123,10 @@ async function addAndPlay(
   await page.getByRole("button", { name: "添加", exact: true }).last().click();
   await expect(page.getByText(/Resolver: direct-url/).last()).toBeVisible();
   await expect(page.getByText(engine).last()).toBeVisible();
-  await page.getByRole("button", { name: "播放", exact: true }).last().click();
+  const title = decodeURIComponent(new URL(url).pathname.split('/').pop()!);
+  await page.getByText(title, { exact: true }).last().locator('../..').getByRole('button', { name: '播放', exact: true }).click();
   const video = page.locator("video").first();
+  await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.dataset.mediaSource), { timeout: 90000 }).toBe(url);
   await expect
     .poll(() =>
       video.evaluate((element: HTMLVideoElement) => element.readyState),
@@ -223,6 +225,7 @@ async function assertRoomGrantRefreshesAfterReconnect(
       mediaRequests.push(request.url());
     }
   });
+  await page.route(`${FIXTURE_ORIGIN}/**`, route => route.abort('blockedbyclient'));
   await addAndPlay(page, mediaUrl, engine);
   await expect.poll(() => mediaRequests.some((url) => url.includes("roomGrant="))).toBe(true);
   const oldGrantUrl = mediaRequests.find((url) => url.includes("roomGrant="));
@@ -261,10 +264,12 @@ test.beforeAll(async ({ browser }) => {
   await page.close();
 });
 
-test("real MP4 and extensionless sources load, play, and seek through the signed gateway", async ({
+test("real MP4 and extensionless sources load, play, and seek directly without gateway bytes", async ({
   page,
 }) => {
   await loginAndCreateRoom(page);
+  const gatewayBytes: string[] = [];
+  page.on('request', request => { if (request.method() === 'GET' && request.url().includes('/api/stream/media/')) gatewayBytes.push(request.url()); });
   await addAndPlay(page, `${FIXTURE_ORIGIN}/normal.mp4`, /Engine: direct/);
   const video = page.locator("video").first();
   await video.evaluate((element: HTMLVideoElement) => {
@@ -287,6 +292,8 @@ test("real MP4 and extensionless sources load, play, and seek through the signed
     ),
   ).toBeTruthy();
   expect(stats.some((entry) => entry.path === "/extensionless")).toBeTruthy();
+  expect(gatewayBytes).toEqual([]);
+  expect(await video.evaluate((v: HTMLVideoElement) => v.currentSrc)).toContain('/extensionless');
 });
 
 test("real HLS master, extensionless child playlist, AES key, and fMP4 segment play", async ({
@@ -298,6 +305,7 @@ test("real HLS master, extensionless child playlist, AES key, and fMP4 segment p
       mediaRequests.push(request.url());
   });
   await loginAndCreateRoom(page);
+  await page.route(`${FIXTURE_ORIGIN}/**`, route => route.abort('blockedbyclient'));
   await addAndPlay(page, `${FIXTURE_ORIGIN}/hls/master.m3u8`, /Engine: hls/);
   const stats = (await (
     await page.request.get(`${FIXTURE_ORIGIN}/stats`)
@@ -337,6 +345,7 @@ test("real DASH nested BaseURL requests video/audio init and relative segments",
       mediaRequests.push(request.url());
   });
   await loginAndCreateRoom(page);
+  await page.route(`${FIXTURE_ORIGIN}/**`, route => route.abort('blockedbyclient'));
   await addAndPlay(page, `${FIXTURE_ORIGIN}/dash/manifest.mpd`, /Engine: dash/);
   const stats = (await (
     await page.request.get(`${FIXTURE_ORIGIN}/stats`)
@@ -376,4 +385,85 @@ test("unified media panel has no horizontal overflow at a phone viewport", async
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
     390,
   );
+});
+
+for (const [asset, engine] of [['/hls/master.m3u8', /Engine: hls/], ['/dash/manifest.mpd', /Engine: dash/], ['/normal.mp4?signature=public-playback&expires=9999999999', /Engine: direct/]] as const) {
+  test(`public ${asset} plays Direct without gateway media requests`, async ({ page }) => {
+    const gateway: string[] = [];
+    page.on('request', request => { if (request.method() === 'GET' && request.url().includes('/api/stream/media/')) gateway.push(request.url()); });
+    await loginAndCreateRoom(page);
+    await addAndPlay(page, `${FIXTURE_ORIGIN}${asset}`, engine);
+    expect(gateway).toEqual([]);
+    expect(await page.locator('video').first().evaluate((v: HTMLVideoElement) => v.dataset.mediaTransport)).toBe('DIRECT');
+  });
+}
+
+test('AES key CORS failure uses PARTIAL_PROXY while segment bytes remain Direct', async ({ page }) => {
+  await loginAndCreateRoom(page);
+  await page.route(`${FIXTURE_ORIGIN}/hls/key`, route => route.abort('blockedbyclient'));
+  const segmentRequests: string[] = [];
+  page.on('request', request => { if (request.url() === `${FIXTURE_ORIGIN}/hls/segment`) segmentRequests.push(request.url()); });
+  await addAndPlay(page, `${FIXTURE_ORIGIN}/hls/master.m3u8`, /Engine: hls/);
+  expect(await page.locator('video').first().evaluate((v: HTMLVideoElement) => v.dataset.mediaTransport)).toBe('PARTIAL_PROXY');
+  expect(segmentRequests.length).toBeGreaterThan(0);
+});
+
+test('private source token stays out of media resolve and Socket movie-list; host refresh uses movie reference', async ({ page }) => {
+  const lists: string[] = [];
+  page.on('websocket', ws => ws.on('framereceived', frame => { const payload = String(frame.payload); if (payload.includes('movie-list')) lists.push(payload); }));
+  await loginAndCreateRoom(page);
+  const responsePromise = page.waitForResponse(response => response.url().includes('/api/stream/media/resolve'));
+  await page.getByPlaceholder(/影片网页、MP4\/MKV/).last().fill(`${FIXTURE_ORIGIN}/normal.mp4?token=private-source-secret`);
+  await page.getByRole('button', { name: '添加', exact: true }).last().click();
+  const response = await responsePromise;
+  const payload = await response.json();
+  expect(response.ok(), JSON.stringify(payload)).toBe(true);
+  expect(JSON.stringify(payload)).not.toContain('private-source-secret');
+  await expect.poll(() => lists.some(value => value.includes('media-movie:'))).toBe(true);
+  expect(lists.join('')).not.toContain('private-source-secret');
+  const refresh = await page.evaluate(async () => {
+    // @ts-ignore Vite serves application modules for the browser integration test.
+    const { apiFetch } = await import('/src/lib/api.ts');
+    const stored = JSON.parse(sessionStorage.getItem('zviewer-room-media-grant')!);
+    const movies = await (await apiFetch(`/api/rooms/${stored.roomId}/movies?roomGrant=${encodeURIComponent(stored.grant)}`)).json();
+    const movie = (movies.data?.movies ?? movies.movies ?? movies.data)[0];
+    const response = await apiFetch('/api/stream/media/resolve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: movie.sourceInput, roomId: stored.roomId, roomGrant: stored.grant }) });
+    return { status: response.status, body: await response.json() };
+  });
+  expect(refresh.status, JSON.stringify(refresh.body)).toBe(200);
+  expect(JSON.stringify(refresh.body)).not.toContain('private-source-secret');
+  await page.evaluate(async () => {
+    // @ts-ignore application module
+    const { useRoomStore } = await import('/src/store/roomStore.ts');
+    const store = useRoomStore.getState(); const movie = store.movies[0];
+    await store.updateMovie(store.roomId, movie.id, { mediaDescriptor: { ...movie.mediaDescriptor, expiresAt: 0 } });
+  });
+  await page.getByText('normal.mp4', { exact: true }).last().locator('../..').getByRole('button', { name: '播放', exact: true }).click();
+  await expect.poll(() => page.evaluate(async () => {
+    // @ts-ignore application module
+    const { useRoomStore } = await import('/src/store/roomStore.ts');
+    return Number(useRoomStore.getState().movies[0]?.mediaDescriptor?.expiresAt ?? 0) > Date.now();
+  })).toBe(true);
+  await expect.poll(() => page.locator('video').first().evaluate((v: HTMLVideoElement) => v.readyState)).toBeGreaterThanOrEqual(1);
+
+});
+
+test('runtime media error reattaches real MP4 through same-quality proxy and preserves position and pause', async ({ page }) => {
+  await loginAndCreateRoom(page);
+  await addAndPlay(page, `${FIXTURE_ORIGIN}/normal.mp4`, /Engine: direct/);
+  const video = page.locator('video').first();
+  const original = await video.evaluate((v: HTMLVideoElement) => {
+    v.pause(); v.currentTime = 0.8; v.playbackRate = 1.5;
+    return { width: v.videoWidth, height: v.videoHeight };
+  });
+  // Simulate the browser's runtime network error event after initial playback;
+  // both the initial video and replacement gateway stream are real media.
+  await video.evaluate((v: HTMLVideoElement) => v.dispatchEvent(new Event('error')));
+  await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.dataset.mediaTransport)).toBe('FULL_PROXY');
+  const restored = await video.evaluate((v: HTMLVideoElement) => ({ time: v.currentTime, paused: v.paused, rate: v.playbackRate, width: v.videoWidth, height: v.videoHeight, url: v.currentSrc }));
+  expect(restored.time).toBeGreaterThan(0.6);
+  expect(restored.paused).toBe(true);
+  expect(restored.rate).toBe(1.5);
+  expect(restored.width).toBe(original.width); expect(restored.height).toBe(original.height);
+  expect(restored.url).toContain('/api/stream/media/');
 });

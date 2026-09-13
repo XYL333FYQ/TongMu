@@ -95,7 +95,7 @@ export class GenericWebResolver implements SourceResolver {
     return {
       ...selected.descriptor, title: discovered.title || selected.descriptor.title,
       input, originalUrl: pageUrl, resolver: this.name, sourceType: 'web-page',
-      headers, candidates: ranked,
+      candidates: ranked,
     };
   }
 }

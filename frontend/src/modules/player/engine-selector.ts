@@ -1,3 +1,4 @@
+import { withMediaTransport } from '@/modules/media/transport'
 /**
  * 引擎选择器
  *
@@ -89,16 +90,16 @@ export function selectEngine(source: PlayerSource): PlayerEngine {
   // DASH 源或含独立音频轨 → dash.js 引擎
   // （自研 MSE 引擎暂时禁用，统一由 dash.js 处理双轨合并）
   if (source.format === 'dash' || source.audioUrl) {
-    return ENGINES.dash
+    return withMediaTransport(ENGINES.dash)
   }
   if (source.format === 'hls') {
-    return ENGINES.hls
+    return withMediaTransport(ENGINES.hls)
   }
   if (source.format === 'flv') {
-    return ENGINES.flv
+    return withMediaTransport(ENGINES.flv)
   }
   if (shouldUsePlaysVideo(source)) {
-    return ENGINES.playsvideo
+    return withMediaTransport(ENGINES.playsvideo)
   }
-  return ENGINES.direct
+  return withMediaTransport(ENGINES.direct)
 }

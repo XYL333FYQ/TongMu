@@ -125,7 +125,7 @@ async function getVideoInfoWbi(
   cookie?: string,
 ): Promise<BilibiliVideoInfo | null> {
   const { imgKey, subKey } = await getWbiKeys(cookie);
-  const signed = signParams({ bvid }, imgKey, subKey);
+  const signed = signParams(videoIdentityParams(bvid), imgKey, subKey);
   const query = buildQueryString(signed);
 
   const res = await bilibiliFetch<RawVideoInfo>(
@@ -144,7 +144,7 @@ async function getVideoInfoLegacy(
   cookie?: string,
 ): Promise<BilibiliVideoInfo | null> {
   const res = await bilibiliFetch<RawVideoInfo>(
-    `https://api.bilibili.com/x/web-interface/view?bvid=${encodeURIComponent(bvid)}`,
+    `https://api.bilibili.com/x/web-interface/view?${new URLSearchParams(videoIdentityParams(bvid))}`,
     { cookie },
   );
 
@@ -252,4 +252,8 @@ export async function searchVideos(
     author: item.author ?? '',
     description: item.description ?? '',
   }));
+}
+
+export function videoIdentityParams(id: string): Record<string, string> {
+  return /^av\d+$/i.test(id) ? { aid: id.slice(2) } : { bvid: id };
 }

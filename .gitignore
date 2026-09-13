@@ -9,6 +9,18 @@ __pycache__/
 *.pyc
 .DS_Store
 
+# ---- 本机参考资料（不属于 TongMu 发布仓库） ----
+/references/
+
+# ---- 其他开发/测试生成物 ----
+output/
+tmp/
+temp/
+cache/
+backend/.tmp-migration-test/
+backend/dist/
+frontend/dist/
+
 # ---- 环境配置（含密钥，禁止提交） ----
 .env
 .env.local
@@ -21,11 +33,17 @@ log/
 
 # ---- 数据库文件（含用户信息、cookie、密码哈希等敏感数据，禁止提交） ----
 *.sqlite
+*.sqlite3
 *.sqlite-journal
+*.sqlite3-journal
 *.sqlite-wal
+*.sqlite3-wal
 *.sqlite-shm
+*.sqlite3-shm
 *.db
 *.db-journal
+*.db-wal
+*.db-shm
 
 # ---- 运行时数据根目录 ----
 # 所有持久化数据（数据库、用户上传文件、头像、媒体切片、SSL 自签名证书等）
@@ -51,6 +69,7 @@ apply-update.bat
 # ---- 本地测试产物 ----
 bili_test.json
 test-dev.sqlite
+frontend/scripts/diag-*.txt
 .playwright-cli/
 .e2e-runtime/
 test-results/

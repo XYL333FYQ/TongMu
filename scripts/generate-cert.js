@@ -277,12 +277,12 @@ function generateSelfSignedCert() {
   // 颁发者 / 主体（自签证书二者一致）
   cert.setSubject([
     { name: 'countryName', value: 'CN' },
-    { name: 'organizationName', value: 'ZViewer' },
+    { name: 'organizationName', value: 'TongMu' },
     { name: 'commonName', value: cn },
   ]);
   cert.setIssuer([
     { name: 'countryName', value: 'CN' },
-    { name: 'organizationName', value: 'ZViewer' },
+    { name: 'organizationName', value: 'TongMu' },
     { name: 'commonName', value: cn },
   ]);
 

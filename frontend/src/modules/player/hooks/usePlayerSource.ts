@@ -1,3 +1,4 @@
+import { message } from '@/components/ui/message'
 /**
  * usePlayerSource Hook（v2 重写）。
  *
@@ -97,6 +98,13 @@ export interface UsePlayerSourceReturn {
 export function usePlayerSource(
   options: UsePlayerSourceOptions
 ): UsePlayerSourceReturn {
+  useEffect(() => {
+    const video = options.videoRef.current
+    if (!video) return
+    const report = (event: Event) => message.error((event as CustomEvent<string>).detail)
+    video.addEventListener('media-transport-error', report)
+    return () => video.removeEventListener('media-transport-error', report)
+  }, [options.videoRef])
   const blobUrlRef = useRef<string | null>(null)
   const engineCleanupRef = useRef<(() => void) | null>(null)
   const appliedSourceUrlRef = useRef<string | null>(null)

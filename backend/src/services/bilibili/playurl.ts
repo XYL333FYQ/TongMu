@@ -1,7 +1,6 @@
 import { bilibiliFetch } from './client';
 import { getWbiKeys, signParams, clearWbiKeyCache } from './wbi';
 import {
-  computeFnval,
   QN_QUALITY_MAP,
   DEFAULT_QN,
 } from './permission';
@@ -217,7 +216,7 @@ function buildAcceptQuality(
   });
 }
 
-function normalizePlayUrlData(
+export function normalizePlayUrlData(
   data?: RawPlayUrlData,
   requestedQn?: number,
   codec?: string,
@@ -258,8 +257,8 @@ function normalizePlayUrlData(
     // 不过滤会选到 id=80 的 1080P 流。
     const allTracks = data.dash.video.map(normalizeDashMedia);
     const matchedQnTracks = allTracks.filter((t) => t.id === qn);
-    const tracksToSort =
-      matchedQnTracks.length > 0 ? matchedQnTracks : allTracks;
+    if (!matchedQnTracks.length) throw new Error(`源站未返回实际清晰度 ${qn} 对应的 DASH representation`);
+    const tracksToSort = matchedQnTracks;
 
     const video = sortDashTracks(tracksToSort, codec);
     const audio = sortByBandwidthDesc(
@@ -318,9 +317,8 @@ async function getPlayUrlWbi(
   cookie?: string,
   options?: GetPlayUrlOptions,
 ): Promise<BilibiliPlayUrlResult | null> {
-  const isVip = options?.isVip ?? false;
   const effectiveQn = options?.qn ?? DEFAULT_QN;
-  const effectiveFnval = options?.fnval ?? computeFnval(isVip, effectiveQn);
+  const effectiveFnval = options?.fnval ?? 4048;
   const { imgKey, subKey } = await getWbiKeys(cookie);
   const signBase: Record<string, string> = {
     bvid,
@@ -363,9 +361,8 @@ async function getPlayUrlLegacy(
   cookie?: string,
   options?: GetPlayUrlOptions,
 ): Promise<BilibiliPlayUrlResult | null> {
-  const isVip = options?.isVip ?? false;
   const effectiveQn = options?.qn ?? DEFAULT_QN;
-  const effectiveFnval = options?.fnval ?? computeFnval(isVip, effectiveQn);
+  const effectiveFnval = options?.fnval ?? 4048;
   const params = new URLSearchParams({
     bvid,
     cid: String(cid),

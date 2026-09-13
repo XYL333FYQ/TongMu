@@ -154,13 +154,13 @@ export function StreamPushPage({
         <ol className="flex flex-col gap-1.5 pl-5 text-[var(--md-sys-color-on-surface-variant)]">
           <li>
             点击「下载 OBS 配置文件」获取{' '}
-            <code className="font-mono">zviewer-obs-config.json</code>
+            <code className="font-mono">tongmu-obs-config.json</code>
           </li>
           <li>
             打开 OBS → 顶部菜单「场景集合」→「导入」→ 选择下载的 JSON 文件
           </li>
           <li>
-            切换到导入的「ZViewer 推流」场景集合，确认推流服务地址与流密钥正确
+            切换到导入的「TongMu 推流」场景集合，确认推流服务地址与流密钥正确
           </li>
           <li>点击 OBS 右下角「开始推流」</li>
           <li>观众通过观看链接进入房间后会自动拉流播放</li>

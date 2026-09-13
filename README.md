@@ -1,486 +1,154 @@
-# ZViewer
+# TongMu
 
-> 多人同步观影、追番与远程共享平台。
+TongMu 是一个以同步观影与房间互动为核心的平台。视频能够由客户端直接访问源站或 CDN 时，默认由客户端直连；服务器主要负责房间、同步、互动、媒体解析和播放协调，只有 Direct 不可行时才使用 Media Gateway fallback。
 
-**[English](README.en.md)** | 中文
+TongMu 从 ZViewer 代码库演进而来。媒体核心的代理、清单和 provider 设计参考了本机只读资料 `references/synctv`；参考源码不属于本仓库，也不会随 GitHub 发布。
 
-<p align="left">
-  <a href="LICENSE">
-    <img src="https://img.shields.io/github/license/Zero-wyc/ZViewer?style=flat-square&logo=github&label=LICENSE&labelColor=333&color=blue" alt="MIT">
-  </a>
-  <img src="https://img.shields.io/github/stars/Zero-wyc/ZViewer?style=flat-square&logo=github&label=Stars&labelColor=333&color=blue" alt="Stars">
-  <a href="https://github.com/Zero-wyc/ZViewer/releases">
-    <img src="https://img.shields.io/github/v/release/Zero-wyc/ZViewer?style=flat-square&logo=github&label=RELEASE&labelColor=333&color=green" alt="Release">
-  </a>
-  <img src="https://img.shields.io/github/contributors/Zero-wyc/ZViewer?style=flat-square&logo=github&label=Contributors&labelColor=333&color=brightgreen" alt="Contributors">
-  <img src="https://img.shields.io/github/repo-size/Zero-wyc/ZViewer?style=flat-square&logo=github&label=Size&labelColor=333&color=yellow" alt="Repo Size">
-  <img src="https://img.shields.io/github/last-commit/Zero-wyc/ZViewer?style=flat-square&logo=github&label=Last%20Commit&labelColor=333&color=inactive" alt="Last Commit">
-  <img src="https://img.shields.io/github/languages/top/Zero-wyc/ZViewer?style=flat-square&logo=typescript&labelColor=333&color=3178C6" alt="Top Language">
-  <a href="https://t.me/Zero_251">
-    <img src="https://img.shields.io/badge/Telegram-26A5E4?style=flat-square&logo=telegram&logoColor=white" alt="Telegram">
-  </a>
-</p>
+## 核心特点
 
----
+- 多人房间、房主控制、观众申请、播放状态同步、评论、弹幕和语音互动。
+- Bilibili、统一媒体 URL、网页解析，以及 WebDAV、FTP、OpenList 等来源。
+- Media Protocol v1：统一 `MediaDescriptor`，客户端本地生成 `PlaybackPlan`，支持直链、HLS、DASH、FLV 和现有浏览器播放引擎。
+- Original Quality First、Direct First、Proxy as Fallback：传输方式切换不主动降低清晰度。
+- Resolve Once, Stream Independently：解析与播放分离；过期或失败时明确反馈，不静默伪造成功。
+- Public Metadata / Private Credentials：房间共享媒体事实，源站 Cookie、请求头和房主凭证不进入公开 DTO。
+- Shared Media / Local Playback Plan：房间共享媒体描述，播放能力与引擎选择属于各客户端。
+- No Video Transcoding by Default：服务器默认不转码视频；不兼容容器或音轨可由已有浏览器端播放路径处理。
+- 可选 BrowserResolver：推荐 Docker 镜像内置 Playwright 与 Chromium，用于需要 JavaScript 页面解析的来源。
 
-[Telegram](https://t.me/Zero_251) [QQ](https://qm.qq.com/q/MuKPRVz8wc)
+## 架构
 
-## 浏览器要求
+```text
+┌──────────────┐       room / sync / metadata       ┌─────────────────────┐
+│ Browser      │ ◄────────────────────────────────► │ TongMu Backend      │
+│ PlaybackPlan │                                     │ Room / Socket       │
+│ local engine │                                     │ Resolve / Auth      │
+└──────┬───────┘                                     │ Media Gateway       │
+       │                                             └──────┬──────────────┘
+       │ Direct First                                       │ fallback only
+       ▼                                                    ▼
+┌──────────────┐                                     ┌─────────────────────┐
+│ Source/CDN   │                                     │ Source/CDN           │
+│ HLS/DASH/... │                                     │ headers / manifest  │
+└──────────────┘                                     └─────────────────────┘
 
-> **强烈推荐使用 Chrome / Edge 等高版本（内核 130+）的 Chromium 内核浏览器**访问 ZViewer。
->
-> ⚠️ **不推荐** Safari 和 Firefox 浏览器——由于其对 MSE / MKV / 浏览器端解码与转码等能力的支持差异，可能出现播放卡顿、部分视频无法解码、字幕提取异常等 bug。
+                 config/  -> SQLite, credentials, uploads, media cache
+```
 
-## 目录
+## 快速 Docker 部署
 
-- [功能特性](#功能特性)
-- [快速开始](#快速开始)
-- [端口说明](#端口说明)
-- [HTTPS 与证书](#https-与证书)
-- [Docker 部署](#docker-部署)
-- [GitHub Actions 自动构建](#github-actions-自动构建)
-- [本地开发](#本地开发)
-- [环境变量](#环境变量)
-- [权限模型](#权限模型)
-- [视频源](#视频源)
-- [ZViewerCLI 本地代理](#zviewercli-本地代理)
-- [ZViewer 2.0 媒体核心](#zviewer-20-媒体核心)
-- [常见问题](#常见问题)
-
----
-
-| ![](https://github.cdn.zero251.xyz/Zero-wyc/Image/main/All/20260804013054107.webp) | ![](https://github.cdn.zero251.xyz/Zero-wyc/Image/main/All/20260804013133193.webp) |
-| ------------------------------------------------------------ | ------------------------------------------------------------ |
-| ![](https://github.cdn.zero251.xyz/Zero-wyc/Image/main/All/20260804013107507.webp) | ![](https://github.cdn.zero251.xyz/Zero-wyc/Image/main/All/20260804013127227.webp) |
-
-## 功能特性
-
-### 一起看房间
-
-- 创建或加入房间，与好友同步观看。
-- 房主拥有播放控制权：播放、暂停、跳转、倍速。观众可申请控制，房主确认后执行。
-- 房主离线时观众自动进入"自主控制模式"，可直接控制播放器；房主重连后自动恢复申请模式。
-- 播放记忆：房主短暂断线后，由服务器继续广播当前状态，观众无需中断观看。
-- 房主离线超时自动关房（10 分钟）。
-
-### 多源视频解析
-
-| 来源 | 说明 |
-|---|---|
-| **Bilibili** | 解析 BV 号或视频链接，支持清晰度切换、大会员凭证 |
-| **统一媒体 / 网页 URL** | 自动探测 MP4/MKV/WebM/TS/FLV/HLS/MPD、无后缀直链，以及静态/JavaScript 影片页面 |
-| **WebDAV** | 挂载 WebDAV 服务器，浏览并播放其中的视频文件 |
-| **FTP** | 挂载 FTP 服务器，浏览并播放其中的视频文件 |
-| **OpenList** | 挂载 OpenList 服务，浏览并播放其中的视频文件 |
-
-### 字幕与音频兼容
-
-- **原生字幕系统**：直接解析 SRT / ASS / SSA / VTT / SMI / SUB 并用 HTML/CSS 渲染，不再转换为 WebVTT，样式还原度更高。
-- **内嵌字幕浏览器端提取**：MKV 容器内的文本字幕轨由浏览器直接解析容器提取（自研 MKV demux，稀疏扫描跳过音视频负载），GB 级大文件秒级出字幕，无需在服务器安装 FFmpeg。
-- **浏览器端播放引擎（playsvideo）**：MKV / AVI / TS / WMV 等容器在浏览器内自动重封装为 fMP4 播放；DTS / AC3 / EAC3 等浏览器不兼容音轨在浏览器内实时转码为 AAC。全程自动生效，**无需任何管理后台开关**，转码核心随前端资源分发、无需服务端 FFmpeg。
-
-### 实时互动
-
-- 评论面板与弹幕系统：支持 Bilibili 官方弹幕、DandanPlay 弹幕、自定义弹幕轨道。
-- 播放状态同步：房主操作实时同步给所有观众。
-- 观众可申请暂停或跳转，房主在播放器左上角查看通知并决定是否通过。
-- 语音聊天：房主开启后，观众实时收听（固定 128kbps 比特率）。
-
-### 屏幕共享与推流
-
-- 基于 WebRTC 的屏幕共享，支持分享端共享屏幕或视频画面。
-- OBS RTMP 推流支持，配合 Node Media Server 提供 HTTP-FLV 拉流（通过后端 `/live` 代理）。
-
-### 主题系统
-
-- Material You (Monet) 动态主题，从壁纸提取色彩生成完整色板。
-- 明暗主题切换、自定义背景、玻璃拟态 UI、精简动画模式。
-
----
-
-## 快速开始
-
-系统首次启动时自动创建超级管理员账号：用户名 `root`，密码 `root`。生产环境部署后请立即修改默认密码。
-
-### 单文件版（推荐）
-
-无需安装 Node.js / npm，直接下载 [Releases](https://github.com/Zero-wyc/ZViewer/releases) 中的压缩包，解压后运行：
+根目录的 `docker-compose.yml` 是唯一推荐入口。它使用包含 BrowserResolver、Playwright 和 Chromium 的 `Dockerfile.linux-browser`，并保留 `/app/config` 的持久化语义。
 
 ```bash
-# Windows
-start.bat              # 交互菜单
-start.bat start        # 启动服务
-
-# Linux
-./start.sh             # 交互菜单
-./start.sh start       # 启动服务
+cp .env.example .env
+# 编辑 .env：至少设置生产环境的 JWT_ACCESS_SECRET、JWT_REFRESH_SECRET、CORS_ORIGIN
+docker compose config
+docker compose up -d --build
+docker compose ps
 ```
 
-### 源码版一键启动
+访问 `http://localhost:3333`。3333 提供 API、Socket.IO、前端页面和 `/live` HTTP-FLV 入口；3334 是 OBS 使用的 RTMP 端口。容器内 HTTP-FLV 默认使用 3335，不直接暴露。
 
-项目根目录的 `start-prod` 脚本会自动检测并安装依赖、按需构建、启动服务。
+默认 Compose 服务名为 `tongmu`。历史 volume 名 `zviewer-browser-data` 有意保留，避免仅因品牌改名而看不到已有数据。旧配置位于 `docker/legacy/`，不是推荐路线。
 
-**Windows**：
+Docker 镜像默认不自动签发 HTTPS 证书；生产环境请在前面配置 Nginx 或 Caddy，并转发 WebSocket 升级请求。严格 NAT 下的 WebRTC 可能仍需要外部 TURN 服务。
 
-```powershell
-.\start-prod.bat              # 交互菜单
-.\start-prod.bat start        # 启动（HTTP 前后端）
-.\start-prod.bat stop         # 停止服务
-.\start-prod.bat status       # 查看状态
-.\start-prod.bat cert         # 签发 SSL 证书
-.\start-prod.bat https        # 签发证书 + HTTPS 启动
-```
+## 环境变量
 
-**Linux / macOS**：
+根 `.env.example` 只包含占位值，真实 `.env` 会被忽略，不能提交。
 
-```bash
-./start-prod.sh               # 交互菜单
-./start-prod.sh start
-./start-prod.sh stop
-./start-prod.sh status
-```
-
-### 交互菜单
-
-```
-========================================
-  ZViewer 服务管理
-========================================
-  1) 启动服务 (HTTP)
-  2) 仅启动后端（可选 HTTP / HTTPS）
-  3) 停止服务
-  4) 重启服务
-  5) 查看状态
-  6) 查看日志
-  7) 一键签发 SSL 证书
-  8) HTTPS 启动（自动签发证书）
-  9) 构建前后端（源码版）
-  0) 退出
-```
-
-### 命令行用法
-
-| 命令 | 说明 |
-|---|---|
-| `start` | 启动服务（HTTP 前后端；加 `-Https` 使用 HTTPS 单进程模式） |
-| `backend` | 仅启动后端（可选 HTTP/HTTPS） |
-| `cert [host]` | 签发 SSL 证书，host 缺省时交互选择类型 |
-| `https [host]` | 签发证书后以 HTTPS 启动（仅后端，后端统一提供前端页面） |
-| `stop` / `restart` | 停止 / 重启服务 |
-| `status` | 查看运行状态（PID、端口监听、证书状态） |
-| `logs [backend\|frontend]` | 查看日志（默认 backend） |
-| `build` | 构建前后端（源码版） |
-| `help` / `menu` | 帮助 / 交互菜单 |
-
-### 启动后访问
-
-| 模式 | 地址 |
-|------|------|
-| HTTP | `http://localhost:3333` |
-| HTTPS | `https://localhost:3333` |
-
----
-
-## 端口说明
-
-| 服务 | 端口 | 说明 |
+| 变量 | 用途 | 默认/说明 |
 |---|---|---|
-| 后端服务（统一入口） | 3333 | HTTP/HTTPS API、WebSocket、前端静态文件、SPA 回退、`/live` HTTP-FLV 代理 |
-| RTMP 推流 | 3334 | OBS 推流端口（独立端口，RTMP 为 TCP 二进制协议，无法与 HTTP 复用） |
-| HTTP-FLV 拉流 | 3335 | 内部端口（Node Media Server），仅容器内使用，不对外暴露 |
+| `PORT` / `HOST` | HTTP 服务端口和监听地址 | `3333`；Docker 强制监听 `0.0.0.0` |
+| `NODE_ENV` | 运行环境 | `production` |
+| `CONFIG_DIR` | 运行时数据根目录 | `<project-root>/config` |
+| `DATABASE_URL` | SQLite 路径或 PostgreSQL 连接串 | 默认 `config/dev.sqlite` |
+| `CORS_ORIGIN` | CORS 允许来源 | 生产环境改为正式域名 |
+| `JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET` | 登录令牌密钥 | 生产环境必须使用随机值 |
+| `MEDIA_BROWSER_RESOLVER` | 启用 BrowserResolver | Docker 示例为 `true` |
+| `MEDIA_BROWSER_MAX_CONCURRENCY` | Chromium 页面并发数 | `1` |
+| `PLAYWRIGHT_EXECUTABLE_PATH` | 使用外部 Chromium 时的路径 | 可选 |
+| `MEDIA_HANDLE_SECRET` | 加密媒体句柄密钥 | 缺省写入 `config/jwt-secrets.json` |
+| `TYPEORM_MIGRATIONS` | 是否运行渐进式 migration | `false` |
+| `VITE_API_URL` | 前端构建时 API 基础地址 | 留空使用当前 origin |
+| `VITE_FLV_BASE_URL` | HTTP-FLV 拉流基础地址 | 留空使用 `/live` |
+| `RTMP_PORT` / `HTTP_FLV_PORT` | OBS 推流和内部 FLV 端口 | `3334` / `3335` |
 
-生产模式下，**仅 3333 端口对外暴露**。后端统一处理 API 请求、前端静态资源、WebSocket 实时通信，并将 `/live` 路径反向代理到内部 HTTP-FLV 服务，无需额外配置。
+## 持久化与更新
 
----
-
-## HTTPS 与证书
-
-### 签发类型
-
-证书工具（`zviewer-cert`，源码为 `scripts/generate-cert.js`）按地址类型自动选择签发方式：
-
-| 地址类型 | 证书 | 说明 |
-|---|---|---|
-| `localhost` | 自签证书 | SAN 含 `localhost`、`127.0.0.1`、`::1`，10 年有效 |
-| 域名（如 `example.com`） | **Let's Encrypt 可信 CA 证书** | 通过内置 ACME 客户端自动申请，浏览器不报警告 |
-| 公网 IP（如 `1.2.3.4`） | **Let's Encrypt 可信 CA 证书** | 2025 年起 Let's Encrypt 支持 IP 证书，通过 ACME 自动申请 |
-| 内网 IP（如 `192.168.1.1`） | 自签证书 | SAN 写入 IP 条目 |
-
-### 命令行签发
+所有运行时数据位于 `config/`，包括 `dev.sqlite`、`jwt-secrets.json`、SSL 文件、用户上传文件、头像和媒体切片。升级时保留整个 `config/`，不要删除 Compose volume。
 
 ```bash
-# 域名 → 自动申请 Let's Encrypt 可信证书
-start.bat cert example.com
-./start.sh cert example.com
-
-# 公网 IP → 自动申请 Let's Encrypt 可信证书
-start.bat cert 1.2.3.4
-
-# 内网 IP → 自签证书
-start.bat cert 192.168.1.1
-
-# 强制重新签发
-start.bat cert example.com --force
+docker compose pull        # 仅在使用外部镜像时需要
+docker compose up -d --build
+docker compose logs --tail=100 -f
 ```
 
-### 申请 Let's Encrypt 证书的前置条件
-
-1. 域名已解析到本机公网 IP，或公网 IP 直接指向本机。
-2. 本机 **80 端口**空闲且防火墙/安全组放行（ACME HTTP-01 验证）。
-3. 正式环境有速率限制（每域名每周 5 张），调试可用 `--staging` 测试环境。
-
-证书文件位于 `config/ssl/`（`cert.pem` 证书链、`key.pem` 私钥、`acme-account.key` ACME 账号）。
-
-HTTPS 模式下后端统一提供前端页面和 API，访问 `https://localhost:3333`。
-
----
-
-## Docker 部署
-
-Docker 镜像使用 HTTP 模式启动，后端统一托管前端静态文件，不自动签发证书。如需 HTTPS，建议在 Docker 前加一层反向代理（Nginx / Caddy）。
-
-### docker run
-
-```bash
-docker run -d \
-  --name zviewer \
-  --restart unless-stopped \
-  -p 3333:3333 \
-  -p 3334:3334 \
-  -v zviewer-data:/app/config \
-  zerowyc0721/zviewer:latest
-```
-
-> 注：更新流程会替换容器内程序文件后在容器内直接重启后端进程，无需重启整个容器，也不依赖 restart 策略。
-> 建议保留 `--restart unless-stopped` 以应对后端异常退出（非更新触发）时的自动恢复。
-
-### Docker Compose
-
-```yaml
-services:
-  zviewer:
-    image: zerowyc0721/zviewer:latest
-    ports:
-      - "3333:3333"   # 统一入口（API + WebSocket + 前端页面 + /live HTTP-FLV 代理）
-      - "3334:3334"   # RTMP 推流 (OBS)
-    volumes:
-      - zviewer-data:/app/config
-    restart: unless-stopped
-
-volumes:
-  zviewer-data:
-```
-
-### 自行构建
-
-```bash
-docker build -t zviewer -f Dockerfile.linux-single .
-docker compose -f docker-compose.linux-single.yml up -d
-```
-
-### 访问
-
-用户通过浏览器访问 `http://localhost:3333` 即可使用全部功能。OBS 推流地址 `rtmp://localhost:3334/live`。
-
-### 数据持久化
-
-`/app/config` 目录挂载 volume，包含：
-
-| 路径 | 内容 |
-|---|---|
-| `/app/config/dev.sqlite` | 数据库 |
-| `/app/config/ssl/` | SSL 证书 |
-| `/app/config/uploads/` | 用户上传文件 |
-| `/app/config/media/` | NMS 推流媒体切片 |
-
----
-
-## GitHub Actions 自动构建
-
-每次 push 到 `main` 分支或打 tag（`v*`）时，自动完成：
-
-1. **构建 Linux 单文件版** → 上传 artifact + 推送到 Docker Hub（`zerowyc0721/zviewer`）。
-2. **构建 Windows 单文件版** → 上传 artifact。
-3. 打 tag 时自动创建 GitHub Release，包含两个平台的压缩包。
-
-### 版本管理
-
-| 触发方式 | 版本号 | 示例 |
-|---|---|---|
-| 推送 tag `v1.0.0` | 正式版 | `1.0.0` |
-| 推送 `main` 分支 | 开发版（预发布） | `0.0.0-dev.a1b2c3d` |
-| 手动触发 | 手动构建 | `0.0.0-manual` |
-
-管理员可在管理后台通过开关控制是否接收预发布版本更新。
-
-### 构建产物
-
-| 平台 | 压缩包 | 说明 |
-|---|---|---|
-| Linux | `zviewer-linux-x64.tar.gz` | 含 `zviewer-backend`、`zviewer-cert`、`start.sh` |
-| Windows | `zviewer-windows-x64.zip` | 含 `zviewer-backend.exe`、`zviewer-cert.exe`、`start.bat` |
-| Docker | `zerowyc0721/zviewer:latest` | Linux 单文件版的 Docker 镜像，自动推送到 Docker Hub |
-
----
+当前根 Compose 使用源码构建，因此标准更新流程是拉取代码后重新执行 `docker compose up -d --build`。本仓库没有在 CI 中默认发布 Docker image。
 
 ## 本地开发
 
-项目使用 npm workspaces，根目录统一安装依赖。
+项目使用 npm workspaces；从 TongMu 根目录执行：
 
 ```bash
-# 安装全部依赖
 npm install
-
-# 同时启动前后端开发服务
-npm run dev
-
-# 或分别启动
+npm run dev                 # backend + frontend
 npm run dev:backend
 npm run dev:frontend
 ```
 
-开发端口：
+常用验证命令：
 
-- 前端：`http://localhost:5174`（Vite 开发服务器，HMR 热更新）
-- 后端：`http://localhost:3333`（Express + TypeScript，热重载）
-
-前端开发时通过 Vite 代理将 `/api`、`/socket.io`、`/live` 请求转发到后端，无需额外配置 `VITE_API_URL`。
-
-### 项目结构
-
-```
-ZViewer/
-├── backend/          # Express 后端（TypeScript + TypeORM + sql.js）
-│   └── src/
-│       ├── routes/          # REST API 路由
-│       ├── services/        # 业务逻辑（B站解析、代理、更新等）
-│       ├── modules/         # 模块化架构（房间、观众、同步等）
-│       ├── entities/        # TypeORM 实体
-│       └── middleware/      # 鉴权中间件
-├── frontend/         # React 前端（Vite + Tailwind CSS）
-│   └── src/
-│       ├── pages/           # 页面组件
-│       ├── components/      # 通用 UI 组件
-│       ├── modules/         # 功能模块
-│       └── store/           # Zustand 状态管理
-├── docker/           # Docker 入口脚本
-├── packaging/        # 启动脚本模板
-├── dist/             # 构建产物
-└── build-all.js      # 单文件编译脚本
+```bash
+npm run lint -w backend
+npm test -w backend
+npm run build -w frontend
+npm test -w frontend
+npm run test:e2e
 ```
 
----
+首次运行 E2E 时，如本机尚未安装浏览器，可执行 `npx playwright install chromium`。生产源码启动脚本仍保留在根目录；单文件打包脚本保留在 `build-all.js` 和 `packaging/`。
 
-## 环境变量
+## 目录结构
 
-### 后端
-
-| 变量 | 说明 | 默认值 |
-|---|---|---|
-| `PORT` | 后端服务端口 | `3333` |
-| `HOST` | 监听地址 | 空（双栈监听） |
-| `NODE_ENV` | 运行环境 | `production` |
-| `DATABASE_URL` | SQLite 文件路径或 PostgreSQL 连接串 | `<config>/dev.sqlite` |
-| `CONFIG_DIR` | 数据根目录 | `<project-root>/config` |
-| `CORS_ORIGIN` | CORS 允许来源，多个用逗号分隔 | `*` |
-| `JWT_ACCESS_SECRET` | Access Token 密钥（生产必须修改） | — |
-| `JWT_REFRESH_SECRET` | Refresh Token 密钥（生产必须修改） | — |
-| `JWT_ACCESS_EXPIRES_IN` | Access Token 有效期 | `15m` |
-| `JWT_REFRESH_EXPIRES_IN` | Refresh Token 有效期 | `7d` |
-| `RTMP_PORT` | RTMP 推流端口 | `3334` |
-| `HTTP_FLV_PORT` | HTTP-FLV 拉流端口（内部使用） | `3335` |
-| `MEDIA_BROWSER_RESOLVER` | 启用 Playwright JavaScript 页面嗅探 | `false` |
-| `MEDIA_BROWSER_MAX_CONCURRENCY` | 同时运行的 Chromium 页面数 | `1` |
-| `PLAYWRIGHT_EXECUTABLE_PATH` | 使用系统 Chromium 时的可执行文件路径 | — |
-| `MEDIA_HANDLE_SECRET` | 加密媒体句柄的部署密钥；缺省自动写入 config | — |
-| `TYPEORM_MIGRATIONS` | 运行渐进式数据库 migrations | `false` |
-
-### 前端构建
-
-| 变量 | 说明 | 默认值 |
-|---|---|---|
-| `VITE_API_URL` | API / Socket.IO 基础地址，留空时使用 `window.location.origin` | — |
-| `VITE_FLV_BASE_URL` | OBS 推流模式 HTTP-FLV 拉流基础地址 | — |
-
----
-
-## 权限模型
-
-系统采用四层权限模型：
-
-| 角色 | 说明 | 权限 |
-|---|---|---|
-| `root` | 超级管理员 | 创建/控制/删除任意房间，审核用户，修改角色，管理后台 |
-| `admin` | 管理员 | 创建房间并完全控制自己的房间，不能删除他人房间 |
-| `user` | 普通用户 | 加入房间观看、发送评论与弹幕，无法创建房间 |
-| `guest` | 游客 | 加入房间观看、发送评论与弹幕，无法创建房间 |
-
-新用户注册后角色为 `guest`，状态为 `pending`。仅 `root` 可在管理后台审核通过用户，通过后升级为 `user`。
-
----
-
-## 视频源
-
-### Bilibili
-
-解析 BV 号或视频链接，支持清晰度切换、大会员专享内容。可在管理后台配置 Bilibili 登录凭证以获取大会员清晰度。支持 ZViewerCLI 本地代理以使用本地 Cookie 获取高画质地址。
-
-### ZViewer 2.0 媒体核心
-
-“统一媒体 / 网页 URL”入口不再只看文件后缀：后端会用受限 HEAD/Range 与 magic bytes 识别真实容器，并依次尝试直链、普通网页和可选的 Playwright 浏览器解析。解析得到统一 MediaDescriptor，再由 Playback Planner 选择 Direct、HLS、DASH、FLV 或现有 playsvideo 重封装/仅音频转码路径。播放地址使用房间范围、可过期、加密防篡改的 media handle，源站 Cookie 与防盗链头不会暴露给前端。
-
-详细架构、部署要求、已知限制和验收清单见 [`docs/media-core.md`](docs/media-core.md)。
-
-### 直链与挂载
-
-- **统一媒体 / 网页 URL**：可输入影片页面、MP4/MKV/WebM/TS/FLV、M3U8、MPD 和无后缀媒体地址。
-- **WebDAV / FTP / OpenList**：在挂载点管理中保存连接配置，浏览目录并播放视频文件。
-
----
-
-## ZViewerCLI 本地代理
-
-[ZViewerCLI](https://github.com/Zero-wyc/ZViewerCLI) 是一个可选的本地代理客户端，用于解决浏览器端无法直接使用用户 Bilibili Cookie 与高画质地址的问题：
-
-- 使用用户本地 Cookie 解析 Bilibili 视频，获取大会员等高画质地址。
-- 在本地代理视频流请求，注入正确的 Referer/Origin/User-Agent，绕过 CDN 防盗链与 CORS 限制。
-- 通过 WebSocket 向房间注册，前端自动检测并使用本地代理。
-
----
-
-## 常见问题
-
-### 自签证书浏览器提示"不安全"
-
-`localhost` 与内网 IP 使用自签证书，浏览器会提示"证书颁发机构不受信任"。解决方法：
-
-- 将 `config/ssl/cert.pem` 导入客户端"受信任的根证书颁发机构"；或
-- 使用域名或公网 IP 并通过 Let's Encrypt 申请可信证书。
-
-### WebSocket 连接失败
-
-确认反向代理（Nginx 等）已正确配置 WebSocket 升级头：
-
-```nginx
-proxy_http_version 1.1;
-proxy_set_header Upgrade $http_upgrade;
-proxy_set_header Connection "upgrade";
+```text
+TongMu/
+├── .github/workflows/    # CI 与手动构建
+├── backend/              # Express + TypeScript + TypeORM/sql.js
+├── frontend/             # React + Vite + Tailwind
+├── e2e/                  # Playwright 验证
+├── docs/                 # 架构与媒体核心验证文档
+├── docker/               # entrypoint 与 legacy Compose
+├── scripts/              # 开发和测试脚本
+├── packaging/            # 单文件启动/打包辅助脚本
+├── patches/              # 仍在使用的依赖补丁
+├── references/           # 本机只读参考资料，永不上传
+├── config/               # 本地运行时数据，永不上传
+├── docker-compose.yml    # 推荐 BrowserResolver 部署入口
+└── AGENTS.md             # 后续协作约束
 ```
 
-### WebRTC 无法建立连接
+## Beta 限制
 
-WebRTC 的 `getUserMedia` 要求 HTTPS 访问。生产环境请配置 SSL 证书。若双方处于严格 NAT 之后，可能需要部署 TURN 服务器（如 coturn）。
+- BrowserResolver 依赖 Playwright/Chromium；默认 Docker 镜像已包含，普通本机 Node 环境需要单独安装浏览器。
+- 直连播放仍受源站 CORS、防盗链、登录凭证、过期地址和浏览器解码能力影响；Gateway fallback 不是所有来源的万能修复。
+- HLS/DASH 清单可能包含 live、鉴权子资源或不同厂商扩展，失败时会显式返回原因。
+- 服务器默认不做视频转码；浏览器端 playsvideo 等既有路径可能进行容器重封装或音轨处理。
+- WebRTC 的 HTTPS、NAT、TURN 和公网网络质量仍依赖部署环境。
+- Bilibili 大会员清晰度需要有效凭证或可选的 ZViewerCLI 本地代理；CLI 是独立项目，不属于本仓库。
 
-### 数据库说明
+## 上游项目与许可证
 
-后端使用 TypeORM + sql.js（wasm 版 SQLite）持久化，纯 JS 实现、无原生模块——单文件版可在任意平台直接运行，无需编译。数据库文件为标准 SQLite 格式（`config/dev.sqlite`），可用常规 SQLite 工具查看。
+本项目当前发布源码沿用根目录 [MIT License](LICENSE)，版权声明为 `Copyright (c) 2025 Zero-wyc`。TongMu 从 [ZViewer](https://github.com/Zero-wyc/ZViewer) 演进而来；`references/zviewer-original/` 保存本机原始参考压缩包。
 
-### Bilibili 解析失败
+媒体核心实现审阅并参考了 [SyncTV](https://github.com/synctv-org/synctv) 的代理、manifest 和 provider 组织方式；本机副本及其 MIT 许可证位于 `references/synctv/`，并通过 `.gitignore` 排除。若未来直接复制或重新分发 SyncTV 代码，应同时保留其版权和许可证要求。
 
-- 检查后端是否正确携带 Referer 等请求头。
-- 封面与视频地址通过后端代理获取，避免 CORS 与防盗链问题。
-- 大会员专享内容需在后台配置有效的 Bilibili 登录凭证，或使用 ZViewerCLI 本地代理。
+当前发布树中的归属说明见 [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md)。
 
-### 更新机制
+`zviewer-*` 文件名、localStorage key、旧环境变量、Updater 进程名以及历史 Docker volume 等兼容 identifier 暂不整体改名；它们不是当前用户可见品牌，改动可能破坏旧数据或升级流程。
 
-系统支持从 GitHub Releases 自动检测并应用更新，也支持手动上传压缩包更新。管理员可在管理后台控制是否接收预发布版（main 分支自动构建）的更新。
+## GitHub Actions
+
+- `ci.yml`：在 push/PR 上执行后端 lint/test、前端 test/build、关键 E2E 和 Compose 配置检查，不依赖 Docker Hub secret。
+- `build.yml`：按现有单文件流程构建 Windows/Linux artifact，并在 tag 或 main 时生成 Release；历史 `zviewer-*` artifact 文件名为兼容性保留项。
+- `docker.yml`：仅 `workflow_dispatch` 手动构建 BrowserResolver 镜像，不登录 Docker Hub，也不自动 push。

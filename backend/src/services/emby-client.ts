@@ -1,7 +1,7 @@
 /**
  * Emby 客户端服务（独立模块，无 Express 依赖）
  *
- * 对应 synctv vendors/emby 的 REST 客户端，适配 ZViewer 技术栈：
+ * 对应 synctv vendors/emby 的 REST 客户端，适配 TongMu 技术栈：
  * - 账号密码登录（authenticatebyname）或直接使用 API Key（X-Emby-Token）
  * - 媒体库浏览（Views / Items / Seasons / Episodes）
  * - 播放信息（PlaybackInfo，生成直连 / 转码 URL）

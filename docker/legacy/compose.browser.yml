@@ -1,7 +1,7 @@
 services:
   zviewer-browser:
     build:
-      context: .
+      context: ../..
       dockerfile: Dockerfile.linux-browser
     environment:
       MEDIA_BROWSER_RESOLVER: "true"

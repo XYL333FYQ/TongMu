@@ -1,109 +1,71 @@
-# ZViewer 2.0 media core
+# Media Protocol v1 — Direct First
 
-The existing room, synchronization and player engines remain the product core. The new pipeline only decides what an input represents and how the existing player should open it:
+本项目当前唯一工作树是仓库根目录 `TongMu`。`references/synctv` 与 `references/zviewer-original` 只读；它们是本机参考资料，不属于发布仓库。
 
-```text
-input -> SourceResolver -> MediaProbe -> MediaDescriptor
-      -> PlaybackPlanner -> encrypted media handle -> existing player engine
-```
+## 产品与媒体边界
 
-## Resolver order
+旧链路：添加输入 → Bilibili/Direct/Generic/Browser resolver → bounded probe → descriptor → 房主能力 planner → 无条件加密 gateway URL → Movie（含原始输入和房主计划）→ movie-list → player → 全量代理 HLS/DASH 子资源。
 
-1. `BilibiliResolver` handles BV identifiers and Bilibili URLs and adapts the existing, site-specific resolver.
-2. `DirectUrlResolver` probes HTTP(S) media, including URLs without a file suffix.
-3. `GenericWebResolver` reads at most 1 MiB of HTML/JSON and combines `<video>`, `<source>`, Open Graph video metadata, JSON-LD, nested player configuration, and embedded media URLs. It scores all candidates and penalizes common ad/preview/tracking names before probing up to twelve candidates.
-4. `BrowserResolver` is an optional fallback for JavaScript-generated sources. It watches media responses and bounded playback-API JSON, ignores individual `.m4s`/`.ts` segments, keeps needed Referer/Origin/User-Agent/Cookie headers server-side, and submits ranked candidates to the same probe.
+新链路：房主输入 → resolver/probe 私有媒体事实 → public descriptor + 有序 transportPlan → Movie 服务器保存原始 sourceInput，公开 DTO 仅 `media-movie:<id>` → movie-list → 每个客户端 localPlanner → 现有 engine + transport wrapper → CDN Direct；实际失败后逐项尝试同媒体候选。
 
-Browser sniffing is deliberately not a DRM bypass. MPD `ContentProtection`, Widevine, PlayReady, FairPlay and CENC markers produce a blocked plan and an explicit user error.
+公开协议在 `backend/src/services/media/protocol.ts`，前端入口在 `frontend/src/modules/media/mediaApi.ts`。现有 HTTP / Socket / Movie 字段保持兼容；历史 input/originalUrl 在公开 resolve 响应中为空字符串，持久化公开元数据中移除。`playbackPlan` 不再持久化为房间共同答案。`PrivateMediaSource` 定义服务器输入及凭证来源；加密媒体 handle 仅把不可解密的 capability 交给客户端。
 
-## Probe and planner limits
+## 传输候选
 
-`MediaProbe` treats URL suffix and `Content-Type` as hints. It performs advisory HEAD, then a bounded `Range: bytes=0-65535` GET. If Range is ignored it reads at most 64 KiB and cancels the body. It recognizes HLS, MPD, ISO-BMFF/MP4, EBML/Matroska/WebM, FLV and MPEG-TS magic. Timeout is 8 seconds and process-wide probe concurrency is four.
+- DIRECT：MP4/WebM、无后缀媒体、公开 HLS/MPD；不能需要 Cookie、Authorization、Referer、Origin、自定义 UA 等浏览器不能按要求设置的请求头。
+- 公开签名 URL 可直连：无 userinfo/fragment、无 token/cookie/auth/password/secret/API-key 参数、无私有请求头。签名 URL 是有意共享的播放能力；凭证采集 resolver 的头部要求仍会使其进入代理。
+- MANIFEST_ASSISTED：服务器读取/解析清单，子清单继续辅助处理，公开媒体段仍直连。
+- PARTIAL_PROXY：HLS 在上述基础上只中转 key，保留 AES-128 支持。DASH 当前与 manifest assisted 共用实现，没有假称单独实现 DASH key 代理。
+- FULL_PROXY：浏览器无法完成上述方式，或者源本身需要服务器私有头/私有 URL。加密 handle 绑定 room/user，所有源站跳转沿用 safe-fetch 与 Range 校验。
 
-The planner chooses direct, HLS, standard MPD/DASH, FLV or the existing playsvideo pipeline. It also checks the requesting browser's native HLS, MediaSource, Worker/playsvideo and HEVC capabilities and returns an explicit unsupported reason rather than allowing a predictable black screen. MKV/TS prefer remux with video copy. DTS/AC3/EAC3/TrueHD produce an audio-only AAC transcode plan with video copy. It never silently selects full video transcoding; the project has no server transcoder.
+候选 URL 在一次 resolve 中签发；客户端失败后才请求备用 URL，不需要重新调用 provider。失败不改 representation、codec 或清晰度。wrapper 保存 currentTime、播放/暂停和 playbackRate；一次 attach 最多尝试各候选一次。本机成功的传输方式供重连沿用，未写进房间媒体。最终失败通过现有 message UI 提示。
 
-Codec, dimensions and track metadata are available when a specialized resolver supplies them (currently Bilibili and mounted/server sources). Generic direct URLs only receive container-level bounded probing because the server does not bundle ffprobe. The existing browser playsvideo/mediabunny path performs deeper demuxing when playback needs it.
+网关不会把应用 JWT 或 roomGrant 追加到直连 CDN 子资源。DASH assisted 检测到私有凭证子资源时拒绝该候选，继续 full proxy。Manifest fetch 使用 safe-fetch 返回的最终 headers/provenance，避免 A→B→A 再恢复 Cookie。
 
-## Secure media gateway
+## 原画与 Bilibili
 
-`POST /api/stream/media/resolve` returns a media descriptor, playback plan and an encrypted, authenticated media handle. AES-256-GCM hides the upstream URL and anti-hotlink credentials. The handle expires after 12 hours and is bound to the room supplied by the host, or to the requesting user when no room is supplied. The key comes from `MEDIA_HANDLE_SECRET`; otherwise it is generated once inside `config/jwt-secrets.json`, so handles survive restarts when `config/` is persistent.
+- BV 与 av 保持不同身份：view 请求分别用 bvid / aid，拿到标准 bvid 后才请求 playurl。
+- b23.tv、bili2233.cn 进入 BilibiliResolver，短链逐跳使用公共网络安全策略。
+- 未指定质量时向源站请求最高档（qn=127），DASH flags 4048；账号权限由源站返回决定，不凭 VIP 布尔值假定可用画质。
+- 实际 representation 必须匹配返回 quality 的 id；没有对应轨道明确报错，不能随意按带宽选另一档。
+- 显式指定 qn 后若实际不一致，抛出 QUALITY_UNAVAILABLE。CDN HEAD/小 Range 探测失败也不调用 MP4 兼容接口；保留同 representation 的地址让实际播放决定。
+- MP4 仅在明确 preferMp4=true 时使用，最高请求 qn=64，并标注兼容上限。Bilibili MP4 不再无条件添加 DASH 防盗链头。
+- sourceMaximumQuality 来自源站质量目录；availableMaximumQuality 仅在 Highest 解析时用实际返回档位；未知值不伪造。requestedQuality、actualQuality、actualCodec、actualBandwidth 分开。
+- HLS.js 与标准 dash.js 默认锁最高 representation，关闭默认视频 ABR。Bilibili 双轨本来就是一档视频 representation。视频重编码未启用；现有 playsvideo 保留视频，仅必要时 remux / 转音频。
 
-Room handles require a separate encrypted room grant issued only after that exact Socket.IO connection joins the room. Every media request verifies both the grant and its database Session; normal leave, disconnect, or kick ends that Session, and startup closes any Sessions left active by a previous process before accepting requests. This is a database-backed capability check, not a direct live Socket.IO membership query. Guests are isolated by socket capability rather than the shared numeric guest user ID. User-scoped handles remain bound to their original user.
+新数据库默认 DASH enabled。旧库通过 `mediaPolicyVersion` 一次性把历史全局 dashDisabled=true 改为 false；这是主动废弃旧版强制 MP4 默认，用户逐影片 preferMp4 选择保留。现有项目仍使用 synchronize，初始化 schema 会增加版本列；没有擅自切换数据库管理策略。
 
-The gateway revalidates HTTP(S), DNS results and every redirect. Public inputs cannot reach loopback, RFC1918, link-local, metadata, multicast or reserved ranges. Unsafe forwarding headers are removed. HLS manifests rewrite playlists, segments and key URLs into child handles. Standard MPD inheritance is parsed as XML: MPD, Period, AdaptationSet and Representation `BaseURL` values are resolved in order, inherited templates are materialized per Representation, and each base receives an origin-constrained child handle. Cookie/Authorization-like headers are valid only for their recorded credential origin and are stripped after cross-origin redirects.
+## 安全与生命周期
 
-Range is passed through exactly. A valid upstream 206 retains `Content-Range`, `Content-Length` and status. If an upstream ignores a non-zero seek Range and answers 200, the gateway cancels it and returns 502 instead of downloading an entire movie or falsely advertising seek support. Only the initial open-ended `bytes=0-` request may degrade to an honest 200 sequential stream; no `Accept-Ranges` or `Content-Range` is invented. playsvideo remux/transcode is blocked when the probe confirms that Range is unavailable.
+BrowserResolver 和 GenericWebResolver 不再覆盖 probe 已经消毒的 headers。BrowserResolver 完整调用链测试包含网络响应捕获、跨 origin redirect、真实 probe、安全返回；Chromium 页面驱动被 mock，HTTP 安全链没有 mock 掉。
 
-## Browser Resolver deployment
+Movie.sourceInput 是服务器私有刷新材料。公开 sourceInput 字段只保留影片引用；resolve 对引用读取数据库，并核对 roomId 与当前 Socket Session 的 sharer 身份。观众不能用自己的 Cookie 重新解析房间共享媒体。更新 Movie 时忽略 opaque 引用对原始私有 sourceInput 的覆盖。旧 Movie 中含敏感 query 的媒体 URL 在序列化时改为加密 handle。
 
-It is off by default because Chromium is resource-intensive and visits untrusted pages.
+roomGrant 的 nominal TTL 与活跃会话授权分开：签名/结构必须有效，每次请求核对相同 roomId/socketId 的未结束 Session；连续在线时滚动授权至下一时间窗，已写进 HLS/MPD 的旧 token 无需整片重写。离开、踢出、断线或进程启动清理 Session 立即撤销，过期 token 单独不能脱离 Session 使用。媒体 handle 自身仍是 12h；到期按房主统一刷新流程处理。
 
-```dotenv
-MEDIA_BROWSER_RESOLVER=true
-MEDIA_BROWSER_MAX_CONCURRENCY=1
-MEDIA_HANDLE_SECRET=a-long-random-deployment-secret
-# Optional when Chromium is installed by the OS:
-PLAYWRIGHT_EXECUTABLE_PATH=/usr/bin/chromium
-```
+## 与 SyncTV 的逐项比较和下一步
 
-Install the browser once for a source deployment:
+以下位置相对只读参考目录 `references/synctv`：
 
-```bash
-npm ci
-npx playwright install chromium
-npm run build
-npm start
-```
+| 模块 | 已读取的参考位置 | 本轮决策 / 后续复用 |
+| --- | --- | --- |
+| HLS | `synctv-proxy/src/manifest.rs` | SyncTV 有 Manifest/Segment/Part/Key/Init/Auxiliary 分类、1000 URL 上限和 master/live/event/vod 生命周期；比当前简单 URI rewrite 更完整。优先移植 typed URL mapper 与对应测试，接 TransportMode，不默认全量代理。 |
+| MPD | `synctv-proxy/src/mpd.rs` | SyncTV 覆盖 Location、SegmentURL index、sourceURL、xlink:href 和模板作用域。当前 TS 保留已测试的继承模板物化与 BaseURL 解析；未来通过相同 transportPlan 接 Rust mapper，不搬产品层。 |
+| Range/cache | `synctv-proxy/src/slice_cache/range.rs`, `etag.rs`, `keys.rs`, `store.rs` | TS 已有真实 206/非零 Range 被忽略时停止传输的测试；SyncTV 具备 suffix/open-ended、多范围识别、slice 对齐、ETag 一致性和 URL+headers 隔离缓存键。最值得完整复用整个 slice_cache 子模块及 range/store/lifecycle/backend tests，而非在 TS 重写。 |
+| Redirect | `synctv-proxy/src/redirect.rs` | SyncTV 跨源丢 Cookie/Auth/Proxy-Auth，并把 Referer 收窄到 origin。TS 额外按 token/API-key 名称剥离和不可恢复 provenance，保留并作为 Rust 接入契约测试。 |
+| Bilibili | `synctv-media-providers/src/bilibili/client.rs`（dash_video_query_params、resolve_short_link、parse_dash_info）, `types.rs`, `service.rs` | 参考 aid/bvid 分离、qn127/4048、backup_urls 和多音轨模型。当前 strict requested-vs-actual、无 MP4 网络降档策略要保留，未来移植 provider 时必须带上。 |
 
-For Linux containers, keep the default `Dockerfile.linux-single` image lightweight, or explicitly select the Chromium-enabled image:
+长期留在 TongMu：Room/Socket、权限、UI、互动、同步、播放器事件、BrowserResolver、generic webpage extraction、TongMu adapters。未来可替换：HTTP transport / Range / manifest mapper / slice cache / provider。没有引入 Rust sidecar、Redis、集群或 gRPC management。
 
-```bash
-docker compose -f docker-compose.linux-browser.yml up -d --build
-```
+## 明确限制
 
-`Dockerfile.linux-browser` is pinned to the Playwright 1.62 Chromium image, enables `MEDIA_BROWSER_RESOLVER`, reserves a 1 GiB shared-memory area, and persists `/app/config`. Keep concurrency at one for small deployments. Set a stable, random `MEDIA_HANDLE_SECRET` in the Compose environment for production; otherwise the persisted config volume supplies the generated key. The lightweight image still does not contain Chromium and should leave Browser Resolver disabled.
+- 尚未用真实 Bilibili 登录/VIP/地区限制账号验证；provider 行为由固定响应、解析调用链及 quality/backup 测试验证。
+- 无 MSE 的原生 HLS 使用 MANIFEST_ASSISTED：服务器只保留 master 的最高视频档，保留音频/字幕 rendition groups，媒体段仍直连。单档策略有测试，但尚无真实 Safari/iOS 设备验收。
+- 通用 probe 只读有界媒体头，没有 ffprobe；不能凭未知 metadata 声称源最大分辨率/codec 已识别。
+- MPD Location/xlink/多 BaseURL 备选/复杂 SegmentBase 和 LL-HLS steering/变量等仍需成熟 mapper；本轮不是完整 Rust media core 迁移。
+- 当前 signed URL 安全判断依赖来源及参数名，不能识别任意站点把私有凭证隐藏在普通参数或路径中的语义。需要 provider 显式 URL visibility 元数据来扩展。
+- 12h 媒体 handle 到期仍需房主刷新；roomGrant 续期不延长源站签名 URL 本身有效期。
 
-Every Chromium connection is forced through a short-lived loopback proxy owned by the resolver. The proxy validates the destination, resolves all addresses, rejects any non-public answer, and connects to the already-validated IP. This closes the DNS-rebinding gap between a page-route check and Chromium's actual socket. The request interceptor remains as an earlier rejection layer. High-risk multi-tenant deployments should still isolate Chromium with an egress firewall as defense in depth.
+## 验证记录
 
-## Database transition
-
-The historical database still uses `synchronize: true`; switching it off without a complete baseline migration would risk existing installs. This release introduces the first idempotent migration for `sourceInput` and `mediaDescriptor` and an opt-in migration runner:
-
-```dotenv
-TYPEORM_MIGRATIONS=true
-```
-
-The stored descriptor never contains resolver headers/cookies. It keeps diagnostics, the original input, selected Bilibili quality metadata, signed room handles and the playback plan. Playback reuses an unexpired handle directly. Only the room host may refresh an expiring shared source and broadcast the replacement; viewers never independently re-resolve it with their own account/Cookie state. A later release can add a complete historical baseline and then safely disable synchronize.
-
-## Validation
-
-```bash
-npm ci
-npm test --workspace=backend
-npm run test:e2e
-npm run lint --workspace=backend
-npm run build --workspace=frontend
-npm run build
-```
-
-Automated fixtures cover magic detection for MP4, WebM, Matroska, AVI, WMV/ASF, TS, FLV, HLS and DASH; DRM; extensionless URLs; HTML behind misleading media suffixes; independent HEAD/Range timeouts; no-Range servers; anti-hotlink headers; signed/encrypted room handles; deterministic SSRF/DNS checks; exact 206 and sequential-200 semantics; Browser Resolver Cookie provenance and JSON limits; nested DASH BaseURL/SegmentTemplate/SegmentList resolution; candidate scoring; and planner remux/audio-only decisions. Playwright starts an isolated full stack and performs real playback of generated MP4 and extensionless MP4 (including seek), HLS master/extensionless child/AES-128/fMP4, and DASH nested BaseURL audio/video adaptations. It also verifies that HLS/DASH child requests remain authorized after a two-second access JWT expires, and checks the unified panel at 390 px without horizontal overflow.
-
-## Manual acceptance checklist
-
-- Bilibili page/BV: default DASH, requested and actual quality visible, MP4 compatibility explicitly capped at 720P.
-- Ordinary static video page: selects the main `<video>`, JSON-LD or player-config candidate rather than an ad.
-- JavaScript video page: enable Browser Resolver and confirm resolver=`browser`; CAPTCHA/login/DRM sites may correctly remain unsupported.
-- MP4 and extensionless MP4; MKV and extensionless MKV; WebM; TS; FLV.
-- HLS master/media playlists and AES key loading; standard MPD with relative segment templates.
-- MKV H264/AAC remux and MKV H264/DTS audio-only conversion through playsvideo.
-- Referer-, Origin- and Cookie-protected media; credentials must not appear in the returned descriptor or browser URL.
-- Seek: client Range receives the same 206, `Content-Range` and body slice.
-- Quality switching: a downgrade always shows requested, actual and fallback reason.
-
-## Known limits
-
-- Generic parsing cannot defeat CAPTCHA, login workflows, obfuscated/proprietary players or DRM.
-- Browser sniffing captures normal page-session cookies only; it does not automate account login.
-- Exotic DASH features outside BaseURL, SegmentTemplate and SegmentList (for example SegmentBase byte-range indexes) may still need a site-specific resolver.
-- A media handle expires after 12 hours. The host re-resolves it on playback when it is near expiry; this refresh is on demand rather than a background scheduler.
-- Full video transcoding and server-side ffprobe are intentionally not bundled.
+最终命令、通过数量及未验证边界见 `media-core-validation.md`。测试 fixture 用两秒 roomGrant/access JWT 验证持续在线授权，并通过浏览器请求拦截制造真实 Direct fetch 失败。没有用构建成功代替实际播放。

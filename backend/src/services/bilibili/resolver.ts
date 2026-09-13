@@ -1,3 +1,4 @@
+import { fetchWithProxyPolicyDetailed } from '../proxy/safe-fetch';
 /**
  * B站 视频解析独立编排模块。
  *
@@ -16,13 +17,9 @@ import { getVideoInfo, type BilibiliVideoInfo } from './video';
 import {
   getPlayUrl,
   NoPermissionError,
-  type BilibiliPlayUrlResult,
 } from './playurl';
 import {
   getVipStatus,
-  filterQualitiesByVip,
-  computeFnval,
-  getDefaultQn,
   VIP_ONLY_QNS,
   QN_QUALITY_MAP,
 } from './permission';
@@ -213,7 +210,7 @@ export function extractBvid(input: string): string | null {
   const bvMatch = input.match(/BV[0-9A-Za-z]{10}/);
   if (bvMatch) return bvMatch[0];
   const avMatch = input.match(/av(\d+)/i);
-  if (avMatch) return avMatch[1];
+  if (avMatch) return `av${avMatch[1]}`;
   return null;
 }
 
@@ -243,20 +240,20 @@ export async function expandBilibiliShortLink(input: string): Promise<string> {
   try {
     // GET + redirect: 'follow'：Response.url 即重定向后的最终地址。
     // 取到最终 URL 后立即释放响应体（无需内容，避免下载整页 HTML）。
-    const res = await fetch(parsed.toString(), {
+    const fetched = await fetchWithProxyPolicyDetailed(parsed.toString(), {
       method: 'GET',
-      redirect: 'follow',
       headers: { 'user-agent': DEFAULT_USER_AGENT },
       signal: AbortSignal.timeout(8000),
-    });
+    }, 'public-only');
+    const res = fetched.response;
     try {
       await res.body?.cancel();
     } catch {
       /* ignore */
     }
-    if (res.url && /^https?:\/\//.test(res.url)) {
+    if (fetched.finalUrl && /^https?:\/\//.test(fetched.finalUrl)) {
       console.log('[bilibili-resolver] 短链已展开:', redactMediaUrl(input), '->', redactMediaUrl(res.url));
-      return res.url;
+      return fetched.finalUrl;
     }
   } catch (err) {
     console.warn('[bilibili-resolver] 短链展开失败，使用原地址继续:', redactMediaError(err));
@@ -336,22 +333,8 @@ function getCurrentPageDuration(info: BilibiliVideoInfo, cid?: number): number {
   return info.duration;
 }
 
-/**
- * 在 DASH 所有 CDN 均不可达时降级为 MP4 直链。
- *
- * 使用 B站 HTML5 播放器接口（platform=html5）获取无防盗链 MP4 直链，
- * 浏览器可直接播放无需代理（SYNCTV 默认方案，服务器零流量）。
- * 参考：synctv/vendors/vendors/bilibili/movie.go GetVideoURL
- *
- * B站对 MP4 格式的清晰度限制：
- * - 非会员/会员账号请求 MP4(fnval=1) 时,B站服务端统一限制为 720P(qn=64)
- * - 1080P+/4K/HDR 等高画质仅 DASH 格式支持,MP4 无法获取
- * - 这是 B站服务端硬性限制,无法通过参数绕过
- *
- * 返回 MP4 实际使用的 currentQn（B站 可能降级到比请求更低的清晰度），
- * 便于上层收窄 acceptQuality 并准确展示当前清晰度。
- */
-async function fallbackToMp4(
+/** Explicit MP4 compatibility only: never called from a DASH transport failure. */
+async function requestMp4Compatibility(
   bvid: string,
   cid: number,
   cookie: string | undefined,
@@ -407,7 +390,7 @@ async function fallbackToMp4(
 export async function resolveBilibiliVideo(
   opts: ResolveOptions,
 ): Promise<ResolveResult> {
-  const { url: rawUrl, cookie, qn, codec, onProgress, preferMp4, page, cid, skipCdnCheck, forceDash } = opts;
+  const { url: rawUrl, cookie, qn, codec, onProgress, preferMp4, page, cid, skipCdnCheck } = opts;
 
   // 短链展开：b23.tv 等分享短链 302 到完整视频地址（可能带 ?p=N 分集参数）
   const url = await expandBilibiliShortLink(rawUrl);
@@ -483,16 +466,14 @@ export async function resolveBilibiliVideo(
 
   // 根据会员状态和登录态确定默认清晰度
   // 未登录 B站 时默认 480P（B站对未登录用户限制为 480P 及以下）
-  const hasCookie = !!cookie;
-  const defaultQn = getDefaultQn(isVip, hasCookie);
+  const defaultQn = 127;
   const requestedQn = qn ?? defaultQn;
-  let fallbackReason: string | undefined;
 
   // preferMp4 优先路径：直接请求 MP4 单流（fnval=1 + platform=html5），浏览器原生播放无需 MSE
   // MP4 模式最高支持 720P(qn=64)，失败时不再回退 DASH，避免用户明确选择 MP4 后仍被切换到 DASH
   if (preferMp4) {
     emit('cdn', '正在获取 MP4 直链（直连模式）...');
-    const mp4 = await fallbackToMp4(
+    const mp4 = await requestMp4Compatibility(
       info.bvid,
       effectiveCid,
       cookie,
@@ -533,79 +514,12 @@ export async function resolveBilibiliVideo(
 
   // 播放地址（使用 effectiveCid 对应的分集 cid 请求 playurl）
   emit('playurl', '正在获取播放地址...');
-  let playUrl: BilibiliPlayUrlResult | null;
-  try {
-    playUrl = await getPlayUrl(
-      info.bvid,
-      effectiveCid,
-      cookie,
-      { qn: requestedQn, codec, isVip },
-    );
-  } catch (err) {
-    // 权限错误：先请求该账号的保守默认档，以此拿到服务端真实的
-    // accept_quality，再从其中选择不高于用户请求的最高一档。
-    if (err instanceof NoPermissionError) {
-      const baselineQn = Math.min(requestedQn, getDefaultQn(isVip, hasCookie));
-      emit('playurl', `当前清晰度无权限，读取服务端可用清晰度...`);
-      try {
-        playUrl = await getPlayUrl(info.bvid, effectiveCid, cookie, {
-          qn: baselineQn,
-          codec,
-          isVip,
-        });
-      } catch (fallbackError) {
-        if (fallbackError instanceof NoPermissionError) throw err;
-        throw fallbackError;
-      }
-      if (!playUrl) throw err;
-      const available = filterQualitiesByVip(playUrl.acceptQuality, isVip, hasCookie);
-      const fallbackQn = selectBestAvailableQuality(requestedQn, available) ?? playUrl.currentQn;
-      if (fallbackQn && fallbackQn !== playUrl.currentQn) {
-        try {
-          const refetched = await getPlayUrl(info.bvid, effectiveCid, cookie, {
-            qn: fallbackQn,
-            codec,
-            isVip,
-          });
-          if (refetched) playUrl = refetched;
-        } catch (fallbackError) {
-          if (!(fallbackError instanceof NoPermissionError)) throw fallbackError;
-        }
-      }
-      fallbackReason = `请求 ${qualityLabel(requestedQn)} 无权限，服务端最高可用 ${qualityLabel(playUrl.currentQn ?? fallbackQn)}`;
-    } else {
-      throw err;
-    }
+  const playUrl = await getPlayUrl(info.bvid, effectiveCid, cookie, { qn: requestedQn, codec, isVip });
+  if (!playUrl) throw new ResolveError('源站未返回可播放媒体，请检查账号权限', 'NO_PERMISSION');
+  if (qn !== undefined && playUrl.currentQn !== qn) {
+    throw new ResolveError(`请求 ${qualityLabel(qn)}，源站实际只返回 ${qualityLabel(playUrl.currentQn)}；请检查账号、授权或主动选择其他清晰度`, 'QUALITY_UNAVAILABLE');
   }
-  if (!playUrl) {
-    throw new ResolveError('无法获取播放地址，可能需要登录或大会员', 'NO_PERMISSION');
-  }
-
-  // 清晰度匹配：以 B站实际返回的 accept_quality 为事实源，选择不高于请求值的最高项。
-  let acceptQuality = filterQualitiesByVip(playUrl.acceptQuality, isVip, hasCookie);
-  let effectiveQn = selectBestAvailableQuality(requestedQn, acceptQuality) ?? playUrl.currentQn;
-
-  if (effectiveQn && effectiveQn !== playUrl.currentQn) {
-    emit('quality', '正在匹配可用清晰度...');
-    try {
-      const refetched = await getPlayUrl(info.bvid, effectiveCid, cookie, {
-        qn: effectiveQn,
-        codec,
-        isVip,
-      });
-      if (refetched) {
-        playUrl = refetched;
-        acceptQuality = filterQualitiesByVip(playUrl.acceptQuality, isVip, hasCookie);
-      }
-    } catch (err) {
-      // 权限错误时保持当前清晰度
-      if (err instanceof NoPermissionError) {
-        console.warn('[bilibili-resolver] 清晰度匹配权限错误，保持当前清晰度:', effectiveQn);
-      } else {
-        throw err;
-      }
-    }
-  }
+  const acceptQuality = playUrl.acceptQuality ?? [];
 
   emit('finish', '解析完成，正在加载播放器...');
 
@@ -637,52 +551,9 @@ export async function resolveBilibiliVideo(
       ]);
     }
 
-    if (!videoUrl) {
-      if (forceDash) {
-        // 强制 DASH 模式：禁用 MP4 降级，直接报错
-        throw new ResolveError(
-          '当前网络无法访问 B站 媒体服务器，请稍后重试',
-          'CDN_UNREACHABLE',
-        );
-      }
-      emit('fallback', 'DASH 地址不可用，尝试 MP4 直链...');
-      const mp4 = await fallbackToMp4(
-        info.bvid,
-        effectiveCid,
-        cookie,
-        Math.min(effectiveQn ?? requestedQn, MP4_MAX_QN),
-        isVip,
-        skipCdnCheck,
-      );
-      if (mp4) {
-        // DASH 降级 MP4 时同样收窄清晰度列表
-        const mp4AcceptQuality = narrowAcceptQualityForMp4(
-          mp4.acceptQuality ?? acceptQuality,
-        );
-        return {
-          title: info.title,
-          duration: getCurrentPageDuration(info, effectiveCid),
-          cid: effectiveCid,
-          videoUrl: mp4.videoUrl,
-          format: 'mp4',
-          loggedIn: !!cookie,
-          vipStatus: isVip ? 1 : 0,
-          currentQn: Math.min(mp4.currentQn ?? MP4_MAX_QN, MP4_MAX_QN),
-          requestedQn,
-          qualityLabel: qualityLabel(mp4.currentQn ?? MP4_MAX_QN),
-          fallbackReason:
-            fallbackReason ?? 'DASH CDN 探测失败，已降级到 MP4 兼容模式',
-          acceptQuality: mp4AcceptQuality,
-          pages: pagesInfo,
-          currentPage,
-          resolvedUrl: url,
-        };
-      }
-      throw new ResolveError(
-        '当前网络无法访问 B站 媒体服务器，请稍后重试',
-        'CDN_UNREACHABLE',
-      );
-    }
+    // Server reachability is not browser reachability. Keep this exact representation.
+    videoUrl ??= upgradeBilibiliUrlToHttps(playUrl.bestVideo.baseUrl);
+    if (playUrl.bestAudio) audioUrl ??= upgradeBilibiliUrlToHttps(playUrl.bestAudio.baseUrl);
 
     return {
       title: info.title,
@@ -699,11 +570,6 @@ export async function resolveBilibiliVideo(
       requestedQn,
       qualityLabel: qualityLabel(playUrl.currentQn),
       videoBandwidth: playUrl.bestVideo.bandwidth,
-      fallbackReason:
-        fallbackReason ??
-        (playUrl.currentQn !== requestedQn
-          ? `服务端实际返回 ${qualityLabel(playUrl.currentQn)}，低于请求的 ${qualityLabel(requestedQn)}`
-          : undefined),
       acceptQuality,
       pages: pagesInfo,
       currentPage,
@@ -711,49 +577,7 @@ export async function resolveBilibiliVideo(
     };
   }
 
-  // MP4 直链路径（B站 在请求 DASH 时仍返回 MP4 的边缘场景）
-  // 强制 DASH 模式下禁用该回退，避免返回 MP4 格式
-  if (playUrl.format === 'mp4' && playUrl.durl?.length) {
-    if (forceDash) {
-      throw new ResolveError(
-        '该视频不支持 DASH 高清播放',
-        'DASH_NOT_AVAILABLE',
-      );
-    }
-    emit('cdn', '正在选择可用 CDN...');
-    // skipCdnCheck=true 时直接使用 baseUrl（下载场景）
-    const mp4Url = skipCdnCheck
-      ? upgradeBilibiliUrlToHttps(playUrl.durl[0].url)
-      : await findReachableMediaUrl({ baseUrl: playUrl.durl[0].url });
-    if (!mp4Url) {
-      throw new ResolveError(
-        '当前网络无法访问 B站 媒体服务器，请稍后重试',
-        'CDN_UNREACHABLE',
-      );
-    }
-    // 收窄清晰度列表到 MP4 支持范围
-    const mp4AcceptQuality = narrowAcceptQualityForMp4(acceptQuality);
-    return {
-      title: info.title,
-      duration: getCurrentPageDuration(info, effectiveCid),
-      cid: effectiveCid,
-      videoUrl: mp4Url,
-      format: 'mp4',
-      loggedIn: !!cookie,
-      vipStatus: isVip ? 1 : 0,
-      currentQn: playUrl.currentQn,
-      requestedQn,
-      qualityLabel: qualityLabel(playUrl.currentQn),
-      fallbackReason:
-        playUrl.currentQn !== requestedQn
-          ? `服务端实际返回 ${qualityLabel(playUrl.currentQn)}，低于请求的 ${qualityLabel(requestedQn)}`
-          : fallbackReason,
-      acceptQuality: mp4AcceptQuality,
-      pages: pagesInfo,
-      currentPage,
-      resolvedUrl: url,
-    };
-  }
+  if (playUrl.format === 'mp4') throw new ResolveError('源站没有返回 DASH；请主动选择 MP4 兼容模式', 'DASH_NOT_AVAILABLE');
 
   throw new ResolveError('未找到可用播放地址', 'NO_PLAYURL');
 }

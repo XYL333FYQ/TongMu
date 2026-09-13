@@ -50,7 +50,8 @@ export const PROJECT_ROOT = process.env.PROJECT_ROOT
  * 数据根目录：所有持久化数据的统一入口。
  *
  * 默认 `<project-root>/config/`，可通过 `CONFIG_DIR` 环境变量覆盖。
- * Docker 场景下由 docker-compose.linux-single.yml 挂载到 named volume。
+ * 推荐 Docker 场景下由根目录 docker-compose.yml 挂载到 named volume；
+ * 旧单文件配置位于 docker/legacy/，其 volume 标识继续兼容。
  */
 export const CONFIG_DIR =
   process.env.CONFIG_DIR || path.join(PROJECT_ROOT, 'config');

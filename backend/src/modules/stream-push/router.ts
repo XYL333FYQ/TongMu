@@ -71,24 +71,24 @@ router.get(
       const streamKey = room.streamKey;
 
       const obsConfig = {
-        current_scene: 'ZViewer 推流',
-        current_program_scene: 'ZViewer 推流',
-        name: 'ZViewer 推流',
+        current_scene: 'TongMu 推流',
+        current_program_scene: 'TongMu 推流',
+        name: 'TongMu 推流',
         scene_order: [
           {
-            name: 'ZViewer 推流',
+            name: 'TongMu 推流',
           },
         ],
         sources: [
           {
-            name: 'ZViewer 推流',
+            name: 'TongMu 推流',
             id: 'scene',
             versioned_id: 'scene',
             settings: {
               id_counter: 1,
               items: [
                 {
-                  name: 'ZViewer RTMP 推流',
+                  name: 'TongMu RTMP 推流',
                   source_uuid: 'zviewer-rtmp-push',
                   visible: true,
                   locked: false,
@@ -125,7 +125,7 @@ router.get(
             flags: 0,
           },
           {
-            name: 'ZViewer RTMP 推流',
+            name: 'TongMu RTMP 推流',
             id: 'rtmp_output',
             versioned_id: 'rtmp_output',
             settings: {
@@ -148,7 +148,7 @@ router.get(
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       res.setHeader(
         'Content-Disposition',
-        'attachment; filename="zviewer-obs-config.json"',
+        'attachment; filename="tongmu-obs-config.json"',
       );
       return res.json(obsConfig);
     } catch (err) {

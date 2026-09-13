@@ -1,3 +1,5 @@
+import { issueMediaHandle } from '../../services/media/handles';
+import { canPublishDirectUrl, publicMetadata } from '../../services/media/protocol';
 /**
  * 影片 CRUD 服务。v2
  *
@@ -86,20 +88,7 @@ function normalizeMediaDescriptor(value: unknown): string | null {
   try {
     const parsed = typeof value === 'string' ? JSON.parse(value) : value;
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-    const blockedKeys = new Set([
-      'headers', 'cookie', 'authorization', 'proxy-authorization',
-      'password', 'candidates',
-    ]);
-    const scrub = (item: unknown, depth = 0): unknown => {
-      if (depth > 12 || item === null || typeof item !== 'object') return item;
-      if (Array.isArray(item)) return item.map((child) => scrub(child, depth + 1));
-      return Object.fromEntries(
-        Object.entries(item as Record<string, unknown>)
-          .filter(([key]) => !blockedKeys.has(key.toLowerCase()))
-          .map(([key, child]) => [key, scrub(child, depth + 1)]),
-      );
-    };
-    const serialized = JSON.stringify(scrub(parsed));
+    const serialized = JSON.stringify(publicMetadata(parsed));
     return Buffer.byteLength(serialized, 'utf8') <= 128 * 1024 ? serialized : null;
   } catch { return null; }
 }
@@ -301,7 +290,7 @@ export class MovieService {
     if (typeof data.cover === 'string') update.cover = data.cover;
     if (typeof data.order === 'number' && Number.isFinite(data.order)) update.order = data.order;
     if (typeof data.source === 'string') update.source = data.source;
-    if (typeof data.sourceInput === 'string') update.sourceInput = data.sourceInput.slice(0, 4096);
+    if (typeof data.sourceInput === 'string' && !data.sourceInput.startsWith('media-movie:')) update.sourceInput = data.sourceInput.slice(0, 4096);
     if (data.mediaDescriptor !== undefined) update.mediaDescriptor = normalizeMediaDescriptor(data.mediaDescriptor);
     if (typeof data.audioUrl === 'string') update.audioUrl = data.audioUrl;
     if (typeof data.format === 'string') update.format = data.format;
@@ -370,16 +359,18 @@ export class MovieService {
    * - createdAt/updatedAt 转 ISO 字符串
    */
   serializeMovie(movie: MovieEntity): MovieDto {
+    const publicUrl = (url: string | null) => url && /^https?:/i.test(url) && !canPublishDirectUrl(url)
+      ? issueMediaHandle({ url, scope: `room:${movie.roomId}`, rewriteManifest: /(?:hls|dash)/.test(movie.format || '') && !movie.audioUrl }).url : url;
     return {
       id: movie.id,
       roomId: movie.roomId,
-      url: movie.url,
+      url: publicUrl(movie.url)!,
       title: movie.title,
       cover: movie.cover,
       source: (movie.source as MovieSourceType | null) ?? null,
-      sourceInput: movie.sourceInput,
-      mediaDescriptor: parseMediaDescriptor(movie.mediaDescriptor),
-      audioUrl: movie.audioUrl,
+      sourceInput: movie.sourceInput ? `media-movie:${movie.id}` : null,
+      mediaDescriptor: publicMetadata(parseMediaDescriptor(movie.mediaDescriptor)),
+      audioUrl: publicUrl(movie.audioUrl),
       format: movie.format,
       videoCodec: movie.videoCodec,
       audioCodec: movie.audioCodec,
@@ -389,14 +380,14 @@ export class MovieService {
       acceptQuality: parseAcceptQualityArray(movie.acceptQuality),
       pages: parsePagesArray(movie.pages),
       currentPage: movie.currentPage,
-      serverUrl: movie.serverUrl,
+      serverUrl: null,
       path: movie.path,
-      username: movie.username,
-      password: movie.password,
+      username: null,
+      password: null,
       directLink: movie.directLink,
       wasmEngine: movie.wasmEngine,
       playsvideoEnabled: movie.playsvideoEnabled !== false,
-      sourceMeta: parseSourceMeta(movie.sourceMeta),
+      sourceMeta: publicMetadata(parseSourceMeta(movie.sourceMeta)),
       order: movie.order,
       createdAt: movie.createdAt.toISOString(),
       updatedAt: movie.updatedAt.toISOString(),

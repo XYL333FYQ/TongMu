@@ -1,6 +1,7 @@
 // 临时诊断脚本：查询房间影片列表（验证后删除）
 const Database = require('better-sqlite3')
-const db = new Database('f:/Code/ZViewer/ZViewer/config/dev.sqlite', {
+const path = require('node:path')
+const db = new Database(path.resolve(__dirname, '../../config/dev.sqlite'), {
   readonly: true,
 })
 const movies = db

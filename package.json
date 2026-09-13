@@ -1,8 +1,8 @@
 {
-  "name": "zviewer",
+  "name": "tongmu",
   "version": "1.0.0",
   "private": true,
-  "description": "ZViewer —— 基于浏览器的在线观影与屏幕共享平台。",
+  "description": "TongMu —— 以同步观影与房间互动为核心的平台。",
   "workspaces": [
     "frontend",
     "backend"
@@ -39,17 +39,9 @@
     "sql.js": "^1.14.1"
   },
   "main": "index.js",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/Zero-wyc/ZViewer.git"
-  },
   "keywords": [],
   "author": "",
-  "license": "ISC",
-  "bugs": {
-    "url": "https://github.com/Zero-wyc/ZViewer/issues"
-  },
-  "homepage": "https://github.com/Zero-wyc/ZViewer#readme",
+  "license": "MIT",
   "overrides": {
     "mediabunny": "file:frontend/vendor/mediabunny"
   }

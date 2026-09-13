@@ -32,11 +32,17 @@ export const dashEngine: PlayerEngine = {
       const player = dashjs.MediaPlayer().create()
       try {
         player.updateSettings({
-          streaming: { buffer: { bufferTimeAtTopQuality: 30 } },
+          streaming: { buffer: { bufferTimeAtTopQuality: 30 }, abr: { autoSwitchBitrate: { video: false } } },
         })
+        player.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, () => {
+          const levels = player.getBitrateInfoListFor('video')
+          const highest = levels.reduce((best, level) => (level.height || 0) > (best?.height || 0) || ((level.height || 0) === (best?.height || 0) && level.bitrate > (best?.bitrate ?? -1)) ? level : best, levels[0])
+          if (highest) player.setQualityFor('video', highest.qualityIndex)
+        })
+        player.on(dashjs.MediaPlayer.events.ERROR, () => video.dispatchEvent(new Event('error')))
         player.initialize(
           video,
-          resolveProxyUrl(source.url, source.headers, source.format),
+          resolveProxyUrl(source.url, source.headers, source.format, { noProxyFallback: source.noProxyFallback }),
           false
         )
         await waitForMetadata(video)

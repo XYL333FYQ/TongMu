@@ -241,7 +241,7 @@ video {
 }
 
 /* =====================================================
-   ZViewer 动画系统 v3 (精简版)
+   TongMu 动画系统 v3 (精简版)
    设计原则：
    - 优先使用 opacity + 轻量 transform，避免 filter blur
    - 不使用 3D perspective / rotateX / rotateY / rotate

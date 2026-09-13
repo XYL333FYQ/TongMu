@@ -327,11 +327,11 @@ export function Header() {
         >
           <img
             src="/favicon.jpg"
-            alt="ZViewer"
+            alt="TongMu"
             className="w-8 h-8 rounded-[var(--md-sys-shape-corner)] object-cover"
           />
           <span className="font-semibold text-base text-[var(--md-sys-color-on-surface)]">
-            ZViewer
+            TongMu
           </span>
         </button>
 

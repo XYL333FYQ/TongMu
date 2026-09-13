@@ -1,3 +1,4 @@
+import { isProxiedMediaTransport } from '@/modules/media/transport'
 import { useEffect, useRef, useCallback, useState } from 'react'
 import type { MutableRefObject } from 'react'
 import { formatDuration } from '@/lib/utils'
@@ -234,6 +235,7 @@ export function useWatchTogether({
   useEffect(() => {
     const isMediaCoreUrl = (url?: string): boolean => {
       if (!url) return false
+      if (url && isProxiedMediaTransport(url)) return true
       try {
         return new URL(url, window.location.origin).pathname.startsWith(
           '/api/stream/media/'

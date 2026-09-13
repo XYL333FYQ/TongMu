@@ -16,7 +16,7 @@ const DEFAULT_SETTINGS: Partial<SystemSettings> = {
   registrationMode: 'approval',
   roomCreationMode: 'admin-only',
   betaFeaturesEnabled: false,
-  dashDisabled: true,
+  dashDisabled: false,
   cdnAccelerate: false,
   cdnProxyUrl: 'https://gh-proxy.com',
   embeddedSubtitleEnabled: true,
@@ -34,6 +34,11 @@ export async function getSystemSettings(): Promise<SystemSettings> {
   let settings = await settingsRepo.findOne({ where: {} });
   if (!settings) {
     settings = settingsRepo.create(DEFAULT_SETTINGS);
+    await settingsRepo.save(settings);
+  }
+  if (settings.mediaPolicyVersion < 1) {
+    settings.dashDisabled = false;
+    settings.mediaPolicyVersion = 1;
     await settingsRepo.save(settings);
   }
   return settings;

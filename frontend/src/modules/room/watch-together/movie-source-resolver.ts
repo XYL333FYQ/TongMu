@@ -1,3 +1,7 @@
+import { useRoomStore } from '@/store/roomStore'
+import { registerMediaTransport } from '@/modules/media/transport'
+import { planPlayback } from '@/modules/media/localPlanner'
+import { browserCapabilities, type MediaDescriptor } from '@/modules/media/mediaApi'
 /**
  * 影片播放源解析器（从 useWatchTogether.loadMovie 抽取）。
  *
@@ -14,7 +18,6 @@ import { detectMediaFormat, type MediaFormat } from '@/lib/mediaFormat'
 import { extractBvid, resolveBilibiliViaCli } from '@/modules/bilibili/cliApi'
 import { useCliAgentStore } from '@/store/cliAgentStore'
 import { getBilibiliParseOptions } from '@/modules/bilibili/parseOptions'
-import { useSystemSettingsStore } from '@/store/systemSettingsStore'
 import type { QualityOption } from './resolveSource'
 import { buildServerFileProxyUrl } from '@/modules/server-files/serverFilesApi'
 import {
@@ -123,7 +126,9 @@ async function resolveMediaCoreMovie(
       }
     | undefined)?.bilibili
   const storedExpiry = Number(stored.expiresAt ?? 0)
-  const storedPlan = stored.playbackPlan as { engine?: string } | undefined
+  const storedPlan = planPlayback(stored as unknown as MediaDescriptor, browserCapabilities())
+  if (storedPlan.engine === 'blocked') throw new Error(storedPlan.reasons.join('；'))
+  registerMediaTransport(stored as unknown as MediaDescriptor)
   if (storedExpiry > Date.now() + 60_000) {
     return {
       sourceUrl: movie.url,
@@ -160,6 +165,17 @@ async function resolveMediaCoreMovie(
     requestedQn: bili?.bilibili?.requestedQn ?? movie.currentQn,
     preferMp4: bili?.bilibili?.preferMp4 === true,
   })
+  if (roomId) {
+    await useRoomStore.getState().updateMovie(roomId, movie.id, {
+      url: resolved.descriptor.finalUrl,
+      audioUrl: resolved.descriptor.audioUrl,
+      mediaDescriptor: { ...resolved.descriptor },
+      format: resolved.descriptor.container,
+      videoCodec: resolved.descriptor.videoCodec,
+      audioCodec: resolved.descriptor.audioCodec,
+      currentQn: resolved.descriptor.actualQuality,
+    })
+  }
   mediaCoreResolveCache.set(movie.id, {
     resolved,
     expiresAt: resolved.descriptor.expiresAt ?? Date.now() + 5 * 60_000,
@@ -235,11 +251,6 @@ export function getEffectivePreferMp4(movieId: number): boolean {
   if (cliEnabled) {
     // CLI 已启用：强制使用 DASH，不受 dashDisabled 影响
     return false
-  }
-  // CLI 未启用：检查服务器端是否禁用了 DASH
-  const { dashDisabled } = useSystemSettingsStore.getState()
-  if (dashDisabled) {
-    return true
   }
   return preferMp4
 }

@@ -236,7 +236,7 @@ async function alistRequest<T>(
           : data.code === 500
             ? 'NOT_FOUND'
             : 'UNREACHABLE';
-      // 在错误消息前添加来源标识，帮助用户区分是 AList 服务器返回的错误还是 ZViewer 自身的问题
+      // 在错误消息前添加来源标识，帮助用户区分是 AList 服务器返回的错误还是 TongMu 自身的问题
       // AList 内部存储驱动（如 139Cloud、阿里云盘等）配置问题时会返回 Go 风格的错误
       const rawMessage = data.message || `AList code=${data.code}`;
       throw new OpenListError(`[AList 服务器] ${rawMessage}`, code);

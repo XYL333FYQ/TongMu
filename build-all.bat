@@ -2,7 +2,7 @@
 setlocal
 
 :: =============================================
-::  ZViewer Build Launcher
+::  TongMu Build Launcher
 ::
 ::  Pure-ASCII forwarder. All interactive menus and
 ::  Chinese output are handled by build-all.js

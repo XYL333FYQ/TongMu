@@ -11,13 +11,7 @@
 import Hls from 'hls.js'
 import type { PlayerEngine, PlayerSource, EngineAttachResult } from '../types'
 import { resetVideoElement, waitForMetadata } from '../utils'
-import {
-  resolveProxyUrl,
-  isLocalUrl,
-  isConfiguredApiUrl,
-  isRelativeUrl,
-  buildProxyUrl,
-} from '../services/url-proxy'
+import { resolveProxyUrl } from '../services/url-proxy'
 import { redactMediaError, redactMediaUrl } from '../services/media-redaction'
 
 /** Safari 等原生 HLS 支持检测 */
@@ -35,50 +29,8 @@ function canPlayNativeHls(video: HTMLVideoElement): boolean {
  * 关键：加载完成后需恢复 context.url 与 response.url 为原始 URL，
  * 否则 hls.js 会基于代理 URL 解析 m3u8 中的相对路径 ts 分片，导致拼接错误。
  */
-function createProxyLoader() {
-  const BaseLoader = Hls.DefaultConfig.loader
-
-  return class ProxyLoader extends BaseLoader {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    load(context: any, config: any, callbacks: any): void {
-      const originalUrl = context.url
-      const shouldProxy =
-        originalUrl &&
-        !isLocalUrl(originalUrl) &&
-        !isConfiguredApiUrl(originalUrl) &&
-        !isRelativeUrl(originalUrl) &&
-        !originalUrl.includes('/api/stream/proxy?url=')
-
-      if (shouldProxy) {
-        context.url = buildProxyUrl(originalUrl)
-        // 包装 onSuccess 回调：加载完成后恢复原始 URL，
-        // 确保 hls.js 基于原始 URL 解析 m3u8 中的相对路径
-        const originalOnSuccess = callbacks.onSuccess
-        callbacks.onSuccess = (
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          stats: any,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          response: any,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          ctx: any
-        ) => {
-          if (response) {
-            response.url = originalUrl
-          }
-          if (ctx) {
-            ctx.url = originalUrl
-          }
-          originalOnSuccess(stats, response, ctx)
-        }
-      }
-
-      super.load(context, config, callbacks)
-    }
-  }
-}
-
 /** 等待 hls.js 加载 m3u8 清单完成或失败，带超时 */
-function waitForHlsReady(hls: Hls, timeoutMs = 15000): Promise<void> {
+function waitForHlsReady(hls: Hls, video: HTMLVideoElement, timeoutMs = 15000): Promise<void> {
   return new Promise((resolve, reject) => {
     let settled = false
 
@@ -111,12 +63,12 @@ function waitForHlsReady(hls: Hls, timeoutMs = 15000): Promise<void> {
     }
 
     function cleanup() {
-      hls.off(Hls.Events.MANIFEST_PARSED, onManifestParsed)
+      video.removeEventListener('loadedmetadata', onManifestParsed)
       hls.off(Hls.Events.ERROR, onError)
       clearTimeout(timer)
     }
 
-    hls.on(Hls.Events.MANIFEST_PARSED, onManifestParsed)
+    video.addEventListener('loadedmetadata', onManifestParsed)
     hls.on(Hls.Events.ERROR, onError)
     const timer = setTimeout(onTimeout, timeoutMs)
   })
@@ -131,7 +83,7 @@ export const hlsEngine: PlayerEngine = {
   ): Promise<EngineAttachResult> {
     resetVideoElement(video)
 
-    const targetUrl = resolveProxyUrl(source.url, source.headers, source.format)
+    const targetUrl = resolveProxyUrl(source.url, source.headers, source.format, { noProxyFallback: source.noProxyFallback })
     console.log('[hls-engine] attach start', {
       originalUrl: redactMediaUrl(source.url),
       resolvedUrl: redactMediaUrl(targetUrl),
@@ -145,7 +97,7 @@ export const hlsEngine: PlayerEngine = {
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: false,
-        loader: createProxyLoader(),
+
         // 内存控制：hls.js 默认 maxMaxBufferLength=600s、backBufferLength=Infinity——
         // 已播数据永不清理，长视频播放 1-2 小时后 MSE SourceBuffer 累积到 GB 级内存。
         // 前向缓冲 30s 保证平滑，硬上限 120s 兜底极低码率，已播仅保留 90s
@@ -161,9 +113,10 @@ export const hlsEngine: PlayerEngine = {
         hls.loadSource(targetUrl)
       })
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        console.log('[hls-engine] MANIFEST_PARSED')
+        hls.currentLevel = hls.levels.reduce((best, level, i, levels) => (level.height || 0) > (levels[best].height || 0) || ((level.height || 0) === (levels[best].height || 0) && level.bitrate > levels[best].bitrate) ? i : best, 0)
       })
       hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal && video.readyState >= 1) video.dispatchEvent(new Event('error'))
         console.error('[hls-engine] hls.js error', {
           type: data.type,
           details: data.details,
@@ -182,7 +135,7 @@ export const hlsEngine: PlayerEngine = {
 
       try {
         // 使用事件驱动等待替代 waitForMetadata，避免永久阻塞
-        await waitForHlsReady(hls)
+        await waitForHlsReady(hls, video)
       } catch (err) {
         try {
           hls.destroy()

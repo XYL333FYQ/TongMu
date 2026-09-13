@@ -1,7 +1,7 @@
 ﻿#!/usr/bin/env pwsh
 #Requires -Version 5.1
 
-# ZViewer 一键启动脚本
+# TongMu 一键启动脚本
 # 命令：start | backend | stop | restart | status | logs | build | help
 
 param(
@@ -138,7 +138,7 @@ function Invoke-Start {
     Set-Ports
 
     Write-Host "========================================"
-    Write-Host "  ZViewer 启动"
+    Write-Host "  TongMu 启动"
     Write-Host "  端口: $Port"
     if ($Https) {
       Write-Host "  模式: HTTPS（自签/可信证书）"
@@ -255,7 +255,7 @@ function Invoke-Restart {
 
 function Invoke-Status {
     Write-Host "========================================"
-    Write-Host "  ZViewer 运行状态"
+    Write-Host "  TongMu 运行状态"
     Write-Host "========================================"
 
     Set-Ports
@@ -419,7 +419,7 @@ function Show-Menu {
     while ($true) {
         Clear-Host
         Write-Host "========================================"
-        Write-Host "  ZViewer 生产服务管理"
+        Write-Host "  TongMu 生产服务管理"
         Write-Host "========================================"
         Write-Host ""
         Write-Host "  1) 启动服务"

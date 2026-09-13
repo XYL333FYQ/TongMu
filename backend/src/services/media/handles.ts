@@ -5,7 +5,7 @@ import { CONFIG_DIR } from '../paths';
 import { redactMediaError } from './redact';
 
 const DEFAULT_TTL_MS = 12 * 60 * 60 * 1000;
-const ROOM_GRANT_TTL_MS = 12 * 60 * 60 * 1000;
+const ROOM_GRANT_TTL_MS = process.env.NODE_ENV === 'test' ? Number(process.env.MEDIA_ROOM_GRANT_TTL_MS) || 12 * 60 * 60 * 1000 : 12 * 60 * 60 * 1000;
 const SECRETS_FILE = path.join(CONFIG_DIR, 'jwt-secrets.json');
 
 export interface MediaHandleResource {
@@ -16,6 +16,7 @@ export interface MediaHandleResource {
   credentialOrigins?: string[];
   contentType?: string;
   rewriteManifest?: boolean;
+  transportMode?: import('./protocol').TransportMode;
   expiresAt: number;
 }
 
@@ -113,14 +114,14 @@ export function issueRoomMediaGrant(roomId: string, socketId: string): string {
   } satisfies RoomMediaGrant);
 }
 
-export function resolveRoomMediaGrant(token: string): RoomMediaGrant | undefined {
+export function resolveRoomMediaGrant(token: string, allowSessionRenewal = false): RoomMediaGrant | undefined {
   const grant = open(token) as Partial<RoomMediaGrant> | undefined;
   if (
     grant?.kind !== 'room-media-grant' ||
     typeof grant.roomId !== 'string' ||
     typeof grant.socketId !== 'string' ||
     !Number.isFinite(grant.expiresAt) ||
-    grant.expiresAt! <= Date.now()
+    (!allowSessionRenewal && grant.expiresAt! <= Date.now())
   ) return undefined;
   return grant as RoomMediaGrant;
 }

@@ -25,14 +25,14 @@
  * 1. **不支持自定义请求头**：`loadUrl()` 内部由 mediabunny `UrlSource` 裸
  *    fetch 取流，无法携带防盗链 Referer/UA，也受 CORS 约束。因此跨域源
  *   一律走后端 `/api/stream/proxy`（同源、后端注入 headers、透传 Range）。
- * 2. **内嵌字幕由 playsvideo 提取，但由 ZViewer 渲染**：
+ * 2. **内嵌字幕由 playsvideo 提取，但由 TongMu 渲染**：
  *    playsvideo 的产物是本机 `<track>` + blob URL，无法经 socket 广播给
  *    观众，因此 playsvideo-subtitle-bridge 会把它们取回并解析成
- *    ParsedCue[]，交回 ZViewer 既有的渲染与广播管线。
+ *    ParsedCue[]，交回 TongMu 既有的渲染与广播管线。
  *
  * 关于 `embeddedSubtitlePolicy: 'off'`：该策略**只关闭自动选中**，不阻止
  * 提取（见引擎源码——策略仅用于 shouldAutoSelectEmbeddedSubtitle）。保留
- * off 可让轨道挂上但不原生渲染，避免与 ZViewer 的 SubtitleOverlay 双字幕。
+ * off 可让轨道挂上但不原生渲染，避免与 TongMu 的 SubtitleOverlay 双字幕。
  *
  * 已知取舍：playsvideo 在导出 WebVTT 时会用 stripAssTags 剥掉 ASS 覆盖
  * 标签且丢弃样式表头，所以 ASS 特效在此链路下不可恢复地退化为纯文本。
@@ -51,12 +51,7 @@ import type {
   SeekResult,
 } from '../types'
 import { resetVideoElement, waitForMetadata } from '../utils'
-import {
-  buildProxyUrl,
-  appendAuthToken,
-  isLocalUrl,
-  isRelativeUrl,
-} from '../services/url-proxy'
+import { resolveProxyUrl } from '../services/url-proxy'
 
 /**
  * 引擎准备超时（毫秒）。
@@ -126,13 +121,7 @@ export function isPlaysVideoSupported(): boolean {
  * 换来的是任意容器/编码都能播。
  */
 function resolvePlaysVideoUrl(source: PlayerSource): string {
-  const url = source.url
-  if (!url) return url
-  // 同源 / 相对路径（如 /api/webdav/stream、/api/server-files/raw）：
-  // 直接请求，仅需补 token（HTTP 环境下无 auth cookie）。
-  if (isLocalUrl(url) || isRelativeUrl(url)) return appendAuthToken(url)
-  // 跨域：走后端代理，由后端注入防盗链头并透传 Range。
-  return buildProxyUrl(url)
+  return resolveProxyUrl(source.url, source.headers, source.format, { noProxyFallback: source.noProxyFallback })
 }
 
 /**
@@ -187,7 +176,7 @@ class PlaysVideoController implements PlayerController {
 
     const engine = new PlaysVideoEngine(this.video, {
       // 提取内嵌字幕但**不自动选中**：轨道会挂到 video 上（blob URL），
-      // 由 playsvideo-subtitle-bridge 取回转成 ParsedCue[] 交给 ZViewer
+      // 由 playsvideo-subtitle-bridge 取回转成 ParsedCue[] 交给 TongMu
       // 渲染。若改为 'auto' 会同时启用原生渲染，与 SubtitleOverlay 重影。
       embeddedSubtitlePolicy: 'off',
     })
@@ -297,10 +286,10 @@ class PlaysVideoController implements PlayerController {
   }
 
   /**
-   * 监听 playsvideo 挂载的原生字幕轨，取回内容后交给 ZViewer 渲染管线。
+   * 监听 playsvideo 挂载的原生字幕轨，取回内容后交给 TongMu 渲染管线。
    *
    * playsvideo 每提取完一条轨就 `video.appendChild(track)`，触发
-   * `textTracks` 的 addtrack 事件。ZViewer 与 ArtPlayer 都不创建 `<track>`
+   * `textTracks` 的 addtrack 事件。TongMu 与 ArtPlayer 都不创建 `<track>`
    * 元素，因此挂到 video 上的必然是 playsvideo 的轨道。
    *
    * 提取是异步且滞后的（大文件可能晚于起播数十秒），故走事件而非轮询。

@@ -156,7 +156,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
     (state) => state.setPendingPreviewPlay
   )
   const roomId = useRoomStore((state) => state.roomId)
-  // ZViewer 2.0 默认就是统一入口；专用来源面板仍保留给高级配置与质量切换。
+  // TongMu 默认就是统一入口；专用来源面板仍保留给高级配置与质量切换。
   const [sourceType, setSourceType] = useState<SourceType>('mp4')
   const [url, setUrl] = useState('')
   const [loading, setLoading] = useState(false)
@@ -1070,7 +1070,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           url: movieUrl,
           title,
           source: media.sourceType,
-          sourceInput: media.input,
+          sourceInput: url.trim(),
           mediaDescriptor: {
             ...media,
             playbackPlan: resolved.plan,
@@ -1910,10 +1910,10 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
                 Playback Diagnostics
               </Text>
               <Text type="secondary" className="block break-all">
-                Input: {mediaDiagnostics.descriptor.input}
+                来源输入：仅服务器保存
               </Text>
               <Text type="secondary" className="block break-all">
-                Gateway: {mediaDiagnostics.descriptor.finalUrl}
+                播放地址: {mediaDiagnostics.descriptor.finalUrl}
               </Text>
               <Text type="secondary" className="block break-all">
                 Resolver: {mediaDiagnostics.descriptor.resolver} · Source:{' '}
