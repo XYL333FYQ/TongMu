@@ -16,12 +16,23 @@ function isWebm(buffer) {
   return buffer.length >= 4 && buffer.readUInt32BE(0) === 0x1a45dfa3;
 }
 
-function transcodeWebmToFragmentedMp4(buffer, kind) {
+function hasBoxType(buffer, type) {
+  return buffer.indexOf(Buffer.from(type, 'ascii')) >= 0;
+}
+
+function isCompatibleMp4(buffer, kind) {
+  if (!isIsoBmff(buffer)) return false;
+  const hasAvc = hasBoxType(buffer, 'avcC') || hasBoxType(buffer, 'avc1');
+  const hasAac = hasBoxType(buffer, 'mp4a');
+  return kind === 'audio' ? hasAac : kind === 'video' ? hasAvc : hasAvc && hasAac;
+}
+
+function transcodeToFragmentedMp4(buffer, kind, inputFormat) {
   return new Promise((resolve, reject) => {
     const args = [
       '-hide_banner',
       '-loglevel', 'error',
-      '-f', 'webm',
+      '-f', inputFormat,
       '-i', 'pipe:0',
     ];
     if (kind === 'audio') {
@@ -73,8 +84,9 @@ function transcodeWebmToFragmentedMp4(buffer, kind) {
 }
 
 async function normalizeToFragmentedMp4(buffer, kind) {
-  if (isIsoBmff(buffer)) return buffer;
-  if (isWebm(buffer)) return transcodeWebmToFragmentedMp4(buffer, kind);
+  if (isCompatibleMp4(buffer, kind)) return buffer;
+  if (isIsoBmff(buffer)) return transcodeToFragmentedMp4(buffer, kind, 'mp4');
+  if (isWebm(buffer)) return transcodeToFragmentedMp4(buffer, kind, 'webm');
   throw new Error(`Unsupported ${kind} fixture container; expected MP4 or WebM`);
 }
 
