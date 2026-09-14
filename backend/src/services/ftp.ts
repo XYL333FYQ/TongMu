@@ -1,5 +1,5 @@
 import { Client } from 'basic-ftp';
-import { Readable, PassThrough } from 'node:stream';
+import { Readable, PassThrough, Writable } from 'node:stream';
 
 const DEFAULT_TIMEOUT = 10000; // 10 秒
 
@@ -115,6 +115,7 @@ export async function statFTPFileCached(
 export function createFTPReadStream(
   params: FTPConnectionParams,
   startAt = 0,
+  endAt?: number,
 ): Readable {
   const passThrough = new PassThrough();
   const client = new Client();
@@ -122,6 +123,37 @@ export function createFTPReadStream(
   const { host, protocol } = parseServerUrl(params.serverUrl);
   const port = params.port || 21;
   const secure = protocol === 'ftps:';
+
+  const output = endAt === undefined ? passThrough : new PassThrough();
+  const expectedLength = endAt === undefined ? undefined : Math.max(0, endAt - startAt + 1);
+  let remaining = expectedLength;
+  const destination = endAt === undefined
+    ? passThrough
+    : new Writable({
+      write(chunk: Buffer, _encoding, callback) {
+        if (remaining === undefined || remaining <= 0) {
+          callback();
+          return;
+        }
+        const slice = chunk.subarray(0, remaining);
+        remaining -= slice.length;
+        output.write(slice);
+        if (remaining === 0) {
+          output.end();
+          // Stop the FTP transfer once the HTTP representation is complete.
+          client.close();
+        }
+        callback();
+      },
+      final(callback) {
+        if (remaining !== undefined && remaining > 0) {
+          callback(new Error('FTP 上游未返回完整的 Range 内容'));
+          return;
+        }
+        if (!output.writableEnded) output.end();
+        callback();
+      },
+    });
 
   client
     .access({
@@ -134,16 +166,16 @@ export function createFTPReadStream(
     .then(async () => {
       // basic-ftp 的 downloadTo 第三参数 startAt 支持 Range 起始偏移，
       // 内部使用 REST 命令，video 元素 seek 时可按需拉取片段
-      await client.downloadTo(passThrough, params.path, startAt);
+      await client.downloadTo(destination, params.path, startAt);
     })
     .catch((err) => {
-      passThrough.destroy(err);
+      if (!output.writableEnded) output.destroy(err);
     })
     .finally(() => {
       client.close();
     });
 
-  return passThrough;
+  return output;
 }
 
 export interface FTPDirectoryEntry {

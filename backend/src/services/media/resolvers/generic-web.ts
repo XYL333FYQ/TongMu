@@ -54,9 +54,12 @@ export class GenericWebResolver implements SourceResolver {
     try { return ['http:', 'https:'].includes(new URL(input).protocol); } catch { return false; }
   }
 
-  async resolve(input: string, _context: ResolverContext): Promise<MediaDescriptor> {
+  async resolve(input: string, context: ResolverContext): Promise<MediaDescriptor> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10_000);
+    const onAbort = () => controller.abort();
+    if (context.signal?.aborted) controller.abort();
+    else context.signal?.addEventListener('abort', onAbort, { once: true });
     let pageUrl: string;
     let html: string;
     try {
@@ -74,13 +77,15 @@ export class GenericWebResolver implements SourceResolver {
       html = await readHtml(response);
     } finally {
       clearTimeout(timeout);
+      context.signal?.removeEventListener('abort', onAbort);
     }
+    if (context.signal?.aborted) throw new Error('generic web resolution cancelled');
     const discovered = discoverCandidatesFromHtml(html, pageUrl);
     const ranked = discovered.candidates.slice(0, MAX_CANDIDATES_TO_PROBE);
     const headers = { Referer: pageUrl, Origin: new URL(pageUrl).origin, 'User-Agent': 'Mozilla/5.0 ZViewer/2.0' };
     const probed = await Promise.all(ranked.map(async (candidate) => {
       try {
-        const descriptor = await probeMediaUrl(candidate.url, { headers, sourceType: 'web-page', resolver: this.name });
+        const descriptor = await probeMediaUrl(candidate.url, { headers, sourceType: 'web-page', resolver: this.name, signal: context.signal });
         return descriptor.container === 'unknown' ? undefined : { candidate, descriptor };
       } catch { return undefined; }
     }));

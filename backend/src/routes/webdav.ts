@@ -33,7 +33,12 @@ import {
 } from '../services/openlist';
 import { isInternalOpenListServer } from '../services/openlist-errors';
 import { detectMediaFormat, getContentType } from '../services/mediaFormat';
-import { resolveUserMount, resolveMovieStream, pipeRangeStream } from '../services/proxy';
+import {
+  resolveUserMount,
+  resolveMovieStream,
+  pipeRangeStream,
+  sendRangeNotSatisfiable,
+} from '../services/proxy';
 
 export interface MountRouterOptions {
   /** 挂载类型（'webdav' | 'openlist'） */
@@ -73,6 +78,12 @@ function extractErrorCode(err: unknown): string {
   if (err instanceof WebDAVError) return err.code;
   if (err instanceof OpenListError) return err.code;
   return 'UNREACHABLE';
+}
+
+function extractRangeFileSize(err: unknown): number | undefined {
+  return err instanceof WebDAVError && Number.isSafeInteger(err.fileSize)
+    ? err.fileSize
+    : undefined;
 }
 
 export function createMountRouter(opts: MountRouterOptions): Router {
@@ -473,7 +484,11 @@ export function createMountRouter(opts: MountRouterOptions): Router {
         end = result.end;
       } catch (err) {
         const code = extractErrorCode(err);
-        const status = code === 'AUTH_FAILED' ? 401 : code === 'NOT_FOUND' ? 404 : 400;
+        if (code === 'RANGE_NOT_SATISFIABLE') {
+          sendRangeNotSatisfiable(res, extractRangeFileSize(err) ?? 0, extractErrorMessage(err, '请求的字节范围不可满足'));
+          return;
+        }
+        const status = code === 'AUTH_FAILED' ? 401 : code === 'NOT_FOUND' ? 404 : code === 'RANGE_UPSTREAM_INVALID' ? 502 : 400;
         res.status(status).json({
           success: false,
           message: extractErrorMessage(err, `打开 ${displayName} 流失败`),
@@ -492,6 +507,7 @@ export function createMountRouter(opts: MountRouterOptions): Router {
         logTag,
         errorMessage: `${displayName} 代理流错误`,
         errorCode: 'UNREACHABLE',
+        softDestroy: true,
       });
     } catch (err) {
       console.error(`[${logTag}] proxy error:`, err);
@@ -661,7 +677,11 @@ export function createMountRouter(opts: MountRouterOptions): Router {
         end = result.end;
       } catch (err) {
         const code = extractErrorCode(err);
-        const status = code === 'AUTH_FAILED' ? 401 : code === 'NOT_FOUND' ? 404 : 400;
+        if (code === 'RANGE_NOT_SATISFIABLE') {
+          sendRangeNotSatisfiable(res, extractRangeFileSize(err) ?? 0, extractErrorMessage(err, '请求的字节范围不可满足'));
+          return;
+        }
+        const status = code === 'AUTH_FAILED' ? 401 : code === 'NOT_FOUND' ? 404 : code === 'RANGE_UPSTREAM_INVALID' ? 502 : 400;
         res.status(status).json({
           success: false,
           message: extractErrorMessage(err, `打开 ${displayName} 流失败`),
@@ -680,6 +700,7 @@ export function createMountRouter(opts: MountRouterOptions): Router {
         logTag: `${logTag}-stream`,
         errorMessage: `${displayName} 影片流错误`,
         errorCode: 'UNREACHABLE',
+        softDestroy: true,
       });
     } catch (err) {
       console.error(`[${logTag}] stream error:`, err);

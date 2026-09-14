@@ -12,6 +12,7 @@ import {
 } from '../services/danmaku';
 import { toTraditional, toSimplified } from '../services/danmaku/chinese-convert';
 import { getCredential } from '../services/bilibili/credential';
+import { redactMediaError } from '../services/media/redact';
 
 const router = Router();
 
@@ -121,10 +122,10 @@ router.get('/search', async (req: AuthenticatedRequest, res: Response) => {
 
     res.json({ success: true, results: [...matched, ...others] });
   } catch (err) {
-    console.error('[danmaku] search error:', err);
+    console.error('[danmaku] search error:', redactMediaError(err));
     res.status(502).json({
       success: false,
-      message: err instanceof Error ? err.message : '搜索弹幕源失败',
+      message: '搜索弹幕源失败',
     });
   }
 });
@@ -154,10 +155,10 @@ router.get('/episodes', async (req: AuthenticatedRequest, res: Response) => {
     const episodes = await provider.getEpisodes(identifier.trim(), ctx);
     res.json({ success: true, episodes });
   } catch (err) {
-    console.error('[danmaku] episodes error:', err);
+    console.error('[danmaku] episodes error:', redactMediaError(err));
     res.status(502).json({
       success: false,
-      message: err instanceof Error ? err.message : '获取集数列表失败',
+      message: '获取集数列表失败',
     });
   }
 });
@@ -207,10 +208,10 @@ router.post('/fetch', async (req: AuthenticatedRequest, res: Response) => {
       })),
     });
   } catch (err) {
-    console.error('[danmaku] fetch error:', err);
+    console.error('[danmaku] fetch error:', redactMediaError(err));
     res.status(502).json({
       success: false,
-      message: err instanceof Error ? err.message : '获取弹幕失败',
+      message: '获取弹幕失败',
     });
   }
 });

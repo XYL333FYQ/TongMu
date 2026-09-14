@@ -119,6 +119,12 @@ export interface ResolverContext {
   preferMp4?: boolean;
   page?: number;
   cid?: number;
+  signal?: AbortSignal;
+  deadline?: number;
+  roomId?: string;
+  sourceGeneration?: number;
+  playbackClientProfile?: import('./playback-profile').PlaybackClientProfileV1;
+  credentialOwnerPolicy?: import('./providers/types').ProviderCredentialOwner;
 }
 
 export interface SourceResolver {

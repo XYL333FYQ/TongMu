@@ -1,16 +1,18 @@
 # TongMu 单文件版自动构建（Windows + Linux）
 # 触发方式：
-#   1. push 到 main 分支 → 构建并发布到 GitHub Releases (prerelease tag: latest)
-#   2. push tag (v*) → 构建并发布到 GitHub Releases (正式版)
-#   3. 手动触发（workflow_dispatch）→ 仅构建 + 上传 artifact
+#   1. push tag (v*) → 构建并发布到 GitHub Releases (正式版)
+#   2. 手动触发（workflow_dispatch）→ 仅构建 + 上传 artifact
 
 name: Build TongMu Single-File (Windows + Linux)
 
 on:
   push:
-    branches: [main]
     tags: ['v*']
   workflow_dispatch:
+
+concurrency:
+  group: tongmu-release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -44,7 +46,7 @@ jobs:
       - name: Inject version
         # 根据触发方式注入版本号：
         # - tag 推送 (v*)：用 tag 名作为版本号（如 1.0.0）
-        # - main 分支推送：用 0.0.0-dev.<sha前7位> 作为版本号
+        # - main 分支手动构建：用 0.0.0-dev.<sha前7位> 作为版本号
         # - 手动触发：用 0.0.0-manual 作为版本号
         shell: bash
         run: |
@@ -84,47 +86,6 @@ jobs:
           name: ${{ matrix.artifact-name }}
           path: ${{ matrix.artifact-name }}${{ matrix.ext }}
           retention-days: 30
-
-  # main 分支推送：创建/更新 prerelease（tag: latest），确保持久化保存单文件产物
-  release-latest:
-    if: github.ref == 'refs/heads/main'
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v7
-        with:
-          pattern: 'zviewer-*'
-          merge-multiple: true
-
-      - name: Delete existing latest release
-        run: gh release delete latest --yes --cleanup-tag || true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create prerelease (latest)
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: latest
-          name: Latest Build (main)
-          body: |
-            自动构建产物（main 分支最新代码）。
-
-            下载说明：
-            - Windows: 下载 `zviewer-windows-x64.zip`，解压后运行 `start.bat`
-            - Linux: 下载 `zviewer-linux-x64.tar.gz`，解压后运行 `./start.sh`
-            - Docker: 使用仓库根目录的 BrowserResolver Compose 配置自行构建
-
-            构建提交: ${{ github.sha }}
-            构建时间: ${{ github.event.head_commit.timestamp }}
-          files: |
-            zviewer-linux-x64.tar.gz
-            zviewer-windows-x64.zip
-          prerelease: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # tag 推送：创建正式版 Release
   release:

@@ -17,6 +17,7 @@ import { bilibiliFetch } from '../../services/bilibili/client';
 import {
   saveCredential,
   clearCredential,
+  getCredentialStatus,
 } from '../../services/bilibili/credential';
 import {
   getCachedUserInfo,
@@ -161,19 +162,15 @@ router.get('/bilibili/login-status', async (req: AuthenticatedRequest, res) => {
   }
 });
 
-// 获取当前绑定的 B站 Cookie（仅返回用户自己的凭据，供「复制 Cookie」功能使用）
+// 获取当前绑定凭据的非敏感状态；原始 Cookie 永远只在服务端使用。
 router.get('/bilibili/cookie', async (req: AuthenticatedRequest, res) => {
   try {
     const userId = req.user?.userId;
-    const cookie = await getUserCookie(userId);
-    if (!cookie) {
-      res.json({ success: false, message: '未登录 B站' });
-      return;
-    }
-    res.json({ success: true, cookie });
+    const status = await getCredentialStatus(String(userId));
+    res.json({ success: true, ...status });
   } catch (err) {
     console.error('bilibili cookie error:', redactMediaError(err));
-    res.status(500).json({ success: false, message: '获取 Cookie 失败' });
+    res.status(500).json({ success: false, message: '获取凭据状态失败' });
   }
 });
 
@@ -226,7 +223,7 @@ router.post('/bilibili/cookie-login', async (req: AuthenticatedRequest, res) => 
     console.error('[bilibili] cookie login error:', redactMediaError(err));
     res.status(500).json({
       success: false,
-      message: err instanceof Error ? err.message : 'Cookie 登录失败',
+      message: 'Cookie 登录失败，请稍后重试',
     });
   }
 });
@@ -312,7 +309,7 @@ router.get('/bilibili/user-info', async (req: AuthenticatedRequest, res) => {
     console.error('[bilibili] user-info error:', redactMediaError(err));
     res.json({
       success: false,
-      message: err instanceof Error ? err.message : '获取 B站 用户信息失败',
+      message: '获取 B站 用户信息失败',
     });
   }
 });
@@ -412,7 +409,7 @@ router.get('/bilibili/following-bangumi', async (req: AuthenticatedRequest, res:
     console.error('[bilibili] following-bangumi error:', redactMediaError(err));
     res.status(502).json({
       success: false,
-      message: err instanceof Error ? err.message : '获取关注番剧列表失败',
+      message: '获取关注番剧列表失败',
     });
   }
 });
@@ -473,7 +470,7 @@ router.get('/bilibili/bangumi-episodes', async (req: AuthenticatedRequest, res: 
     console.error('[bilibili] bangumi-episodes error:', redactMediaError(err));
     res.status(502).json({
       success: false,
-      message: err instanceof Error ? err.message : '获取番剧集数失败',
+      message: '获取番剧集数失败',
     });
   }
 });

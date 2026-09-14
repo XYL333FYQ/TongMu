@@ -5,8 +5,38 @@ import path from 'path';
 import os from 'os';
 import { getSystemSettings } from '../system-settings';
 
-const REPO_OWNER = 'Zero-wyc';
-const REPO_NAME = 'ZViewer';
+const UPDATE_REPOSITORY_ENV = 'TONGMU_UPDATE_REPOSITORY';
+
+export class UpdateNotConfiguredError extends Error {
+  constructor(message = 'TongMu updater is disabled: no trusted update repository is configured') {
+    super(message);
+    this.name = 'UpdateNotConfiguredError';
+  }
+}
+
+interface UpdateRepository {
+  owner: string;
+  name: string;
+}
+
+/**
+ * No repository is implicit. In particular, TongMu must never inherit the
+ * historical ZViewer release source. Phase 6 can add a signed source policy.
+ */
+function getConfiguredUpdateRepository(): UpdateRepository {
+  const raw = process.env[UPDATE_REPOSITORY_ENV]?.trim();
+  if (!raw) throw new UpdateNotConfiguredError();
+  const match = /^(?:https:\/\/github\.com\/)?([^/]+)\/([^/]+?)(?:\.git)?\/?$/i.exec(raw);
+  if (!match) {
+    throw new UpdateNotConfiguredError(`${UPDATE_REPOSITORY_ENV} 必须是 owner/repository`);
+  }
+  const owner = match[1];
+  const name = match[2];
+  if (owner.toLowerCase() === 'zero-wyc' && name.toLowerCase() === 'zviewer') {
+    throw new UpdateNotConfiguredError('TongMu updater refuses the historical ZViewer repository');
+  }
+  return { owner, name };
+}
 
 /** CDN 加速配置，由调用方从 SystemSettings 读取后传入 */
 interface CdnConfig {
@@ -249,6 +279,7 @@ interface GithubRelease {
 export async function getUpdateInfo(
   includePrerelease = false,
 ): Promise<UpdateInfo> {
+  const repository = getConfiguredUpdateRepository();
   const currentVersion = getLocalVersion();
   const assetName = getPlatformAssetName();
 
@@ -262,7 +293,7 @@ export async function getUpdateInfo(
   // 原因：gh-proxy.com 等代理转发 api.github.com 时使用代理自身的 GitHub 账号/IP，
   // 多用户共用易触发 GitHub API 速率限制（403 rate limit exceeded）。
   // CDN 代理仅用于 release 文件下载（下载不受 API 限制）。
-  const apiUrl = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases?per_page=10`;
+  const apiUrl = `https://api.github.com/repos/${repository.owner}/${repository.name}/releases?per_page=10`;
 
   // 获取 releases 列表（包含正式版和预发布版）
   const releases = await httpsGetJson<GithubRelease[]>(apiUrl);

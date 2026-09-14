@@ -16,6 +16,7 @@ import {
   resolveMovieStream,
   parseRangeHeader,
   pipeRangeStream,
+  sendRangeNotSatisfiable,
 } from '../services/proxy';
 
 const router = Router();
@@ -396,18 +397,22 @@ router.get('/proxy', async (req: AuthenticatedRequest, res: Response): Promise<v
       // 解析 Range 请求（video 元素会发 Range 请求按需拉取片段）
       const rangeHeader = req.headers.range;
       const parsed = parseRangeHeader(rangeHeader, fileSize);
-      const start = parsed && parsed !== 'invalid' ? parsed.start : 0;
-      const endByte =
-        parsed && parsed !== 'invalid' ? parsed.end : fileSize - 1;
+      if (parsed === 'invalid') {
+        sendRangeNotSatisfiable(res, fileSize);
+        return;
+      }
+      const ranged = !!rangeHeader && !!parsed;
+      const start = parsed ? parsed.start : 0;
+      const endByte = parsed ? parsed.end : fileSize - 1;
 
-      const stream = createFTPReadStream(params, start);
+      const stream = createFTPReadStream(params, start, ranged ? endByte : undefined);
       pipeRangeStream(res, {
         stream,
         contentType: getContentType(detectMediaFormat(targetPath)),
         fileSize,
         start,
         end: endByte,
-        ranged: !!rangeHeader,
+        ranged,
         logTag: 'ftp',
         errorMessage: '流传输失败',
         softDestroy: true,
@@ -456,18 +461,22 @@ router.get('/stream', async (req: AuthenticatedRequest, res: Response): Promise<
 
       const rangeHeader = req.headers.range;
       const parsed = parseRangeHeader(rangeHeader, fileSize);
-      const start = parsed && parsed !== 'invalid' ? parsed.start : 0;
-      const endByte =
-        parsed && parsed !== 'invalid' ? parsed.end : fileSize - 1;
+      if (parsed === 'invalid') {
+        sendRangeNotSatisfiable(res, fileSize);
+        return;
+      }
+      const ranged = !!rangeHeader && !!parsed;
+      const start = parsed ? parsed.start : 0;
+      const endByte = parsed ? parsed.end : fileSize - 1;
 
-      const stream = createFTPReadStream(params, start);
+      const stream = createFTPReadStream(params, start, ranged ? endByte : undefined);
       pipeRangeStream(res, {
         stream,
         contentType: getContentType(detectMediaFormat(movie.path!)),
         fileSize,
         start,
         end: endByte,
-        ranged: !!rangeHeader,
+        ranged,
         logTag: 'ftp-stream',
         errorMessage: 'FTP 影片流错误',
         softDestroy: true,

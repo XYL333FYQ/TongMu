@@ -1,7 +1,12 @@
 import { Connection, BasicAuthenticator } from 'webdav-client';
-import { Readable } from 'node:stream';
+import { Readable, Transform } from 'node:stream';
 import { promisify } from 'node:util';
 import { TtlCache } from '../utils/ttl-cache';
+import {
+  parseByteRangeHeader,
+  parseContentRangeHeader,
+  resolveByteRange,
+} from './proxy/byte-range';
 
 const DEFAULT_TIMEOUT = 10000; // 10 秒
 
@@ -17,10 +22,12 @@ function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
 // 错误类型：携带错误码便于上层路由处理
 export class WebDAVError extends Error {
   code: string;
-  constructor(message: string, code: string) {
+  fileSize?: number;
+  constructor(message: string, code: string, fileSize?: number) {
     super(message);
     this.name = 'WebDAVError';
     this.code = code;
+    this.fileSize = fileSize;
   }
 }
 
@@ -339,37 +346,6 @@ export async function listWebDAVDirectory(
   }
 }
 
-// 解析 HTTP Range 头，返回 start/end（end 为包含的闭区间边界）
-function parseRangeHeader(rangeHeader: string, fileSize: number): { start: number; end: number } {
-  const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim());
-  if (!match) {
-    return { start: 0, end: fileSize - 1 };
-  }
-  const startStr = match[1];
-  const endStr = match[2];
-  let start: number;
-  let end: number;
-  if (startStr === '' && endStr === '') {
-    start = 0;
-    end = fileSize - 1;
-  } else if (startStr === '') {
-    // 后缀范围：取最后 N 字节
-    const suffix = parseInt(endStr, 10);
-    if (!Number.isFinite(suffix) || suffix <= 0) {
-      return { start: 0, end: fileSize - 1 };
-    }
-    start = Math.max(0, fileSize - suffix);
-    end = fileSize - 1;
-  } else {
-    start = parseInt(startStr, 10);
-    end = endStr === '' ? fileSize - 1 : parseInt(endStr, 10);
-  }
-  if (!Number.isFinite(start) || start < 0) start = 0;
-  if (!Number.isFinite(end) || end >= fileSize) end = fileSize - 1;
-  if (start > end) start = end;
-  return { start, end };
-}
-
 // ── 文件 stat 缓存 ─────────────────────────────────────
 // 视频播放/seek 期间会产生大量 Range 请求，每次都 PROPFIND 取 fileSize
 // 会多一次上游往返（高延迟 WebDAV 下显著拖慢 seek 响应）。
@@ -407,19 +383,33 @@ export async function statWebDAVFileCached(
 // 创建带 Range 的 WebDAV 读取流；未提供 rangeHeader 时返回完整流
 export async function createWebDAVReadStreamWithRange(
   params: WebDAVConnectionParams,
-  rangeHeader?: string,
+  rangeHeader?: string | string[],
 ): Promise<{ stream: Readable; fileSize: number; start: number; end: number }> {
   const info = await statWebDAVFileCached(params);
   const fileSize = info.size;
   // info.path 可能是 fallback 修正后的服务器真名路径，流请求必须与其一致
   const streamPath = info.path || params.path;
 
-  if (!rangeHeader || !rangeHeader.trim()) {
+  const hasRange = Array.isArray(rangeHeader)
+    ? rangeHeader.some((value) => value.trim())
+    : !!rangeHeader?.trim();
+  if (!hasRange) {
     const stream = createWebDAVReadStream({ ...params, path: streamPath });
     return { stream, fileSize, start: 0, end: fileSize - 1 };
   }
 
-  const { start, end } = parseRangeHeader(rangeHeader, fileSize);
+  const parsed = parseByteRangeHeader(rangeHeader);
+  const resolved = parsed ? resolveByteRange(parsed, fileSize) : null;
+  if (!resolved || resolved.kind !== 'single') {
+    throw new WebDAVError(
+      resolved?.kind === 'multi'
+        ? 'WebDAV 暂不支持 multipart/byteranges'
+        : '请求的字节范围不可满足',
+      'RANGE_NOT_SATISFIABLE',
+      fileSize,
+    );
+  }
+  const { start, end } = resolved.range;
   const connection = createConnection(params);
   // webdav-client 的 connection.get 不支持 range 选项，需直接构造 stream 请求
   // 通过 connection.stream({ url, method, headers }) 发送带 Range 头的 GET 请求
@@ -437,7 +427,59 @@ export async function createWebDAVReadStreamWithRange(
       Range: `bytes=${start}-${end}`,
     },
   });
-  return { stream, fileSize, start, end };
+  const response = await new Promise<{
+    statusCode?: number;
+    headers?: Record<string, string | string[]>;
+  }>((resolve, reject) => {
+    stream.once('response', resolve);
+    stream.once('error', reject);
+  });
+  if (response.statusCode !== 206) {
+    stream.destroy();
+    throw new WebDAVError(
+      response.statusCode === 200
+        ? 'WebDAV 上游忽略 Range 请求'
+        : 'WebDAV 上游 Range 响应无效',
+      'RANGE_UPSTREAM_INVALID',
+      fileSize,
+    );
+  }
+  const headers = response.headers || {};
+  const contentRangeValue = Array.isArray(headers['content-range'])
+    ? headers['content-range'][0]
+    : headers['content-range'];
+  const contentRange = parseContentRangeHeader(contentRangeValue);
+  const expected = resolveByteRange(parsed!, fileSize);
+  if (!contentRange || expected.kind !== 'single' ||
+      contentRange.start !== expected.range.start ||
+      contentRange.end !== expected.range.end ||
+      contentRange.total !== fileSize) {
+    stream.destroy();
+    throw new WebDAVError('WebDAV 上游 Content-Range 与请求不一致', 'RANGE_UPSTREAM_INVALID', fileSize);
+  }
+  const contentLengthValue = Array.isArray(headers['content-length'])
+    ? headers['content-length'][0]
+    : headers['content-length'];
+  if (contentLengthValue !== undefined &&
+      (!/^\d+$/.test(String(contentLengthValue)) || Number(contentLengthValue) !== expected.range.length)) {
+    stream.destroy();
+    throw new WebDAVError('WebDAV 上游 Content-Length 与 Range 不一致', 'RANGE_UPSTREAM_INVALID', fileSize);
+  }
+  let actualLength = 0;
+  const validator = new Transform({
+    transform(chunk, _encoding, callback) {
+      actualLength += chunk.length;
+      callback(null, chunk);
+    },
+    flush(callback) {
+      if (actualLength !== expected.range.length) {
+        callback(new Error('WebDAV 上游 body 长度与 Range 不一致'));
+        return;
+      }
+      callback();
+    },
+  });
+  return { stream: stream.pipe(validator), fileSize, start, end };
 }
 
 // 目录缓存：key=`${mountId}:${targetPath || params.path}`

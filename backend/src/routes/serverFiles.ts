@@ -27,7 +27,12 @@ import { AppDataSource } from '../data-source';
 import { ServerFolder } from '../entities/ServerFolder';
 import { authenticateToken, requireRoot, AuthenticatedRequest } from '../middleware/auth';
 import { detectMediaFormat, getContentType } from '../services/mediaFormat';
-import { parseRangeHeader, pipeRangeStream, setWildcardCors } from '../services/proxy';
+import {
+  parseRangeHeader,
+  pipeRangeStream,
+  sendRangeNotSatisfiable,
+  setWildcardCors,
+} from '../services/proxy';
 import {
   UPLOADS_ROOT,
   resolveSafePath,
@@ -614,12 +619,23 @@ router.head('/proxy', async (req: AuthenticatedRequest, res: Response): Promise<
 
     const format = detectMediaFormat(target);
     const stat = fs.statSync(targetAbs);
+    const parsed = parseRangeHeader(req.headers.range, stat.size);
+    if (req.headers.range && parsed === 'invalid') {
+      sendRangeNotSatisfiable(res, stat.size);
+      return;
+    }
     setWildcardCors(res);
     res.setHeader('Content-Type', getContentType(format));
     res.setHeader('Accept-Ranges', 'bytes');
-    res.setHeader('Content-Length', stat.size.toString());
-
-    res.status(200).end();
+    if (parsed && parsed !== 'invalid') {
+      res.status(206);
+      res.setHeader('Content-Range', `bytes ${parsed.start}-${parsed.end}/${stat.size}`);
+      res.setHeader('Content-Length', String(parsed.length));
+    } else {
+      res.status(200);
+      res.setHeader('Content-Length', stat.size.toString());
+    }
+    res.end();
   } catch {
     if (!res.headersSent) {
       res.status(400).end();
@@ -653,12 +669,23 @@ router.get('/proxy', async (req: AuthenticatedRequest, res: Response): Promise<v
     if (rangeHeader) {
       const parsed = parseRangeHeader(rangeHeader, fileSize);
       if (parsed === 'invalid') {
-        res.status(416).setHeader('Content-Range', `bytes */${fileSize}`);
-        res.end();
+        sendRangeNotSatisfiable(res, fileSize);
         return;
       }
-      const start = parsed?.start ?? 0;
-      const end = parsed?.end ?? fileSize - 1;
+      if (!parsed) {
+        const stream = fs.createReadStream(targetAbs);
+        pipeRangeStream(res, {
+          stream,
+          contentType: getContentType(format),
+          fileSize,
+          ranged: false,
+          logTag: 'server-files',
+          errorMessage: '文件读取失败',
+        });
+        return;
+      }
+      const start = parsed.start;
+      const end = parsed.end;
       const stream = fs.createReadStream(targetAbs, { start, end });
       pipeRangeStream(res, {
         stream,
@@ -874,7 +901,7 @@ router.post('/bilibili-download', async (req: AuthenticatedRequest, res: Respons
       });
     } catch (err) {
       try { fs.unlinkSync(targetPath); } catch { /* ignore */ }
-      fail(`下载失败：${err instanceof Error ? err.message : '写入文件失败'}`);
+      fail(`下载失败：${redactMediaError(err)}`);
       return;
     }
 
@@ -893,7 +920,7 @@ router.post('/bilibili-download', async (req: AuthenticatedRequest, res: Respons
   } catch (err) {
     console.error('[server-files] bilibili-download error:', redactMediaError(err));
     const normalized = normalizeResolveError(err);
-    fail(normalized.message, normalized.code);
+    fail(redactMediaError(normalized.message), normalized.code);
   }
 });
 

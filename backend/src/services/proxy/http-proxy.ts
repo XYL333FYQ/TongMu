@@ -22,6 +22,12 @@ import {
   type ProxyTargetPolicy,
 } from './safe-fetch';
 import { redactMediaError, redactMediaUrl } from '../media/redact';
+import {
+  parseByteRangeHeader,
+  parseContentRangeHeader,
+  resolveByteRange,
+  type ByteRangeRequest,
+} from './byte-range';
 
 /** 将字节数格式化为人类可读单位 */
 function formatBytes(bytes: number): string {
@@ -116,9 +122,7 @@ function buildUpstreamHeaders(
   if (h.cookie && h.cookie.trim()) headers.Cookie = h.cookie;
   // Range 头归一：极端场景下 req.headers.range 可能是 string[]（重复头），
   // 直接传给 fetch 会抛 TypeError，取首个值兜底。
-  const rangeValue = Array.isArray(req.headers.range)
-    ? req.headers.range[0]
-    : req.headers.range;
+  const rangeValue = rangeHeaderValue(req);
   if (rangeValue) headers.Range = rangeValue;
   // 条件请求头透传：ETag/Last-Modified 已通过白名单回传给客户端，
   // 补传协商请求头以激活 304 协商缓存（否则透传的 ETag 是"死头"）。
@@ -131,6 +135,32 @@ function buildUpstreamHeaders(
     : req.headers['if-range'];
   if (ifRange) headers['If-Range'] = ifRange;
   return headers;
+}
+
+function rangeHeaderValue(req: Request): string | undefined {
+  const value = req.headers.range;
+  if (!Array.isArray(value)) return value;
+  return value
+    .map((part, index) => index === 0
+      ? part
+      : part.replace(/^\s*bytes\s*=\s*/i, ''))
+    .join(',');
+}
+
+function contentLengthValue(value: string | null): { present: boolean; value: number | null } {
+  if (value === null) return { present: false, value: null };
+  if (!/^\d+$/.test(value.trim())) return { present: true, value: null };
+  const parsed = Number(value.trim());
+  return { present: true, value: Number.isSafeInteger(parsed) ? parsed : null };
+}
+
+async function rejectUpstreamRange(
+  res: Response,
+  body: any,
+  message: string,
+): Promise<void> {
+  try { await body?.cancel(); } catch { /* best effort */ }
+  if (!res.headersSent) res.status(502).json({ success: false, message });
 }
 
 /** https 上游是否允许降级 http 重试（仅内网目标，判定统一走 network-utils） */
@@ -170,7 +200,8 @@ export async function proxyHttpUpstream(
   // 流量追踪：记录传输字节数与耗时
   const startTime = Date.now();
   let bytesSent = 0;
-  const rangeHeader = req.headers.range as string | undefined;
+  const rangeHeader = rangeHeaderValue(req);
+  const parsedRange = parseByteRangeHeader(rangeHeader);
 
   // 客户端断连 / 超时统一中断上游
   let controller = new AbortController();
@@ -191,6 +222,15 @@ export async function proxyHttpUpstream(
   let hasDowngraded = false;
 
   try {
+    if (parsedRange?.kind === 'invalid') {
+      res.status(416).json({
+        success: false,
+        message: parsedRange.reason === 'overflow'
+          ? 'Range 数值超出安全范围'
+          : 'Range 请求格式无效',
+      });
+      return;
+    }
     const startUpstreamFetch = () =>
       fetchWithProxyPolicy(requestUrl, {
         method: req.method,
@@ -250,16 +290,49 @@ export async function proxyHttpUpstream(
       return;
     }
 
+    const upstreamContentType = upstream.headers.get('content-type') || '';
+    const isMultipart = /multipart\/byteranges/i.test(upstreamContentType);
+
     // A Range request answered with a full 200 response is not partial content.
     // Stop before relaying an entire movie or advertising fake seek support.
-    const isSequentialStart = /^bytes=0-\s*$/i.test(rangeHeader ?? '');
-    if (rangeHeader && !isSequentialStart && upstream.status === 200 && !upstream.headers.get('content-range')) {
-      await upstream.body?.cancel();
-      res.status(502).json({
-        success: false,
-        message: '上游忽略 Range 请求，已停止整文件中转',
-      });
+    const isSequentialStart = parsedRange?.kind === 'open-ended' && parsedRange.start === 0;
+    if (rangeHeader && !isSequentialStart && upstream.status === 200) {
+      await rejectUpstreamRange(res, upstream.body, '上游忽略 Range 请求，已停止整文件中转');
       return;
+    }
+
+    let expectedBodyLength: number | undefined;
+    if (upstream.status === 206) {
+      if (isMultipart) {
+        if (parsedRange?.kind !== 'multi') {
+          await rejectUpstreamRange(res, upstream.body, '上游返回了未请求的 multipart Range 响应');
+          return;
+        }
+      } else {
+        const contentRange = parseContentRangeHeader(upstream.headers.get('content-range'));
+        if (!contentRange) {
+          await rejectUpstreamRange(res, upstream.body, '上游返回了无效 Content-Range');
+          return;
+        }
+        expectedBodyLength = contentRange.end - contentRange.start + 1;
+        if (parsedRange) {
+          const resolved = resolveByteRange(parsedRange, contentRange.total);
+          if (resolved.kind !== 'single' ||
+              resolved.range.start !== contentRange.start ||
+              resolved.range.end !== contentRange.end) {
+            await rejectUpstreamRange(res, upstream.body, '上游 Content-Range 与请求不一致');
+            return;
+          }
+        }
+        const declaredLength = contentLengthValue(upstream.headers.get('content-length'));
+        if (
+          declaredLength.present &&
+          (declaredLength.value === null || declaredLength.value !== expectedBodyLength)
+        ) {
+          await rejectUpstreamRange(res, upstream.body, '上游 Content-Length 与 Content-Range 不一致');
+          return;
+        }
+      }
     }
 
     // 转发上游状态码：Range 请求上游返回 206 时必须转发 206，
@@ -270,7 +343,6 @@ export async function proxyHttpUpstream(
     // Content-Type 处理：B站 CDN 偶发返回 application/json（实际是视频数据），
     // 此时使用调用方提供的 defaultContentType（如 video/mp4）纠正，
     // 避免 MSE 引擎或浏览器因 Content-Type 不匹配而拒绝处理。
-    const upstreamContentType = upstream.headers.get('content-type');
     const isJsonMismatch =
       upstreamContentType &&
       upstreamContentType.toLowerCase().includes('application/json') &&
@@ -281,14 +353,19 @@ export async function proxyHttpUpstream(
     } else {
       res.setHeader('Content-Type', upstreamContentType || defaultContentType);
     }
+    const upstreamProvedRange = upstream.status === 206 || !!upstream.headers.get('content-range');
     for (const name of PASSTHROUGH_HEADERS) {
+      if (name === 'accept-ranges' && !upstreamProvedRange) continue;
       const value = upstream.headers.get(name);
       if (value) res.setHeader(name, value);
+    }
+    if (expectedBodyLength !== undefined) {
+      res.setHeader('Content-Length', String(expectedBodyLength));
     }
     // Only advertise byte ranges after the upstream proves partial-response semantics.
     if (
       !res.getHeader('accept-ranges') &&
-      (upstream.status === 206 || !!upstream.headers.get('content-range'))
+      upstreamProvedRange
     ) {
       res.setHeader('Accept-Ranges', 'bytes');
     }
@@ -325,6 +402,13 @@ export async function proxyHttpUpstream(
         bytesSent += chunk.length;
         callback(null, chunk);
       },
+      flush(callback) {
+        if (expectedBodyLength !== undefined && bytesSent !== expectedBodyLength) {
+          callback(new Error('上游 body 长度与 Content-Range 不一致'));
+          return;
+        }
+        callback();
+      },
     });
     stream.on('error', (err) => {
       console.error(`[${logTag}] proxy upstream stream error: ${redactMediaError(err)}`);
@@ -336,6 +420,10 @@ export async function proxyHttpUpstream(
       } else {
         res.destroy();
       }
+    });
+    byteCounter.on('error', (err) => {
+      console.error(`[${logTag}] proxy range validation error: ${redactMediaError(err)}`);
+      if (!res.writableEnded) res.destroy();
     });
     // 响应结束时输出流量日志
     res.on('finish', () => {

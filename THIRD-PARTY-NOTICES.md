@@ -4,6 +4,10 @@
 
 TongMu 的部分 provider、媒体代理和清单处理设计，以及若干适配器的实现，参考或改写了 SyncTV 对应模块。SyncTV 的完整源码只保存在本机只读目录 `references/synctv/`，不会进入 TongMu 的 GitHub 仓库；以下通知保留给可能来自或改写自 SyncTV 的部分。
 
+Phase 2 的 `PlaybackClientProfileV1` tuple matching、provider context/credential
+dependency/lifecycle 语义，以及对应的 provider compatibility ledger，属于
+对 SyncTV MIT 语义的 TypeScript 适配；`references/` 中的源码仍未复制到本仓库。
+
 SyncTV is distributed under the MIT License:
 
 ```text

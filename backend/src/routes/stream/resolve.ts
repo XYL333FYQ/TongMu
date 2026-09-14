@@ -190,7 +190,7 @@ router.get('/resolve-bilibili', async (req: AuthenticatedRequest, res) => {
   } catch (err) {
     console.error('[bilibili] resolve-bilibili error:', redactMediaError(err));
     const normalized = normalizeResolveError(err);
-    writer.fail(normalized.message, normalized.code);
+    writer.fail(redactMediaError(normalized.message), normalized.code);
   }
 });
 
@@ -219,7 +219,7 @@ router.get('/bilibili/danmaku', async (req: AuthenticatedRequest, res) => {
       console.error('[bilibili] danmaku video info error:', redactMediaError(err));
       res.status(500).json({
         success: false,
-        message: err instanceof Error ? err.message : '获取 B站 视频信息失败',
+        message: '获取 B站 视频信息失败',
       });
       return;
     }
@@ -237,7 +237,7 @@ router.get('/bilibili/danmaku', async (req: AuthenticatedRequest, res) => {
     console.error('[bilibili] danmaku fetch error:', redactMediaError(err));
     res.status(500).json({
       success: false,
-      message: err instanceof Error ? err.message : '解析 B站 弹幕失败',
+      message: '解析 B站 弹幕失败',
     });
   }
 });

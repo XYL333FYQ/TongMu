@@ -11,7 +11,7 @@
 import { Router, Response } from 'express';
 import { AuthenticatedRequest } from '../../middleware/auth';
 import { statFTPFile, createFTPReadStream } from '../../services/ftp';
-import { pipeRangeStream } from '../../services/proxy';
+import { parseRangeHeader, pipeRangeStream, sendRangeNotSatisfiable } from '../../services/proxy';
 import { redactMediaError } from '../../services/media/redact';
 
 const router = Router();
@@ -90,17 +90,29 @@ router.get('/resolve-ftp', async (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
-// FTP 流式代理（全量输出，不支持 Range；保持与历史行为一致）
+// FTP 流式代理，使用与本地/WebDAV 相同的 Range 解析语义。
 router.get('/proxy-ftp', async (req: AuthenticatedRequest, res: Response) => {
   const params = readFtpParams(req, res);
   if (!params) return;
 
   try {
-    const stream = createFTPReadStream(params);
+    const info = await statFTPFile(params);
+    const parsed = parseRangeHeader(req.headers.range, info.size);
+    if (parsed === 'invalid') {
+      sendRangeNotSatisfiable(res, info.size);
+      return;
+    }
+    const ranged = !!req.headers.range && !!parsed;
+    const start = parsed ? parsed.start : 0;
+    const end = parsed ? parsed.end : info.size - 1;
+    const stream = createFTPReadStream(params, start, ranged ? end : undefined);
     pipeRangeStream(res, {
       stream,
       contentType: 'video/mp4',
-      ranged: false,
+      fileSize: info.size,
+      start,
+      end,
+      ranged,
       // 历史行为：未手动设置 CORS，交由全局 cors 中间件
       cors: 'global',
       logTag: 'stream',

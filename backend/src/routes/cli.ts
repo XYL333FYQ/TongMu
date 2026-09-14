@@ -7,6 +7,7 @@
 
 import { Router } from 'express'
 import { resolveBilibiliVideo, normalizeResolveError } from '../services/bilibili/resolver'
+import { redactMediaError } from '../services/media/redact'
 
 const router = Router()
 
@@ -88,11 +89,11 @@ router.get('/resolve', async (req, res) => {
       currentPage: result.currentPage,
     })
   } catch (err) {
-    console.error('[cli] resolve error:', err)
+    console.error('[cli] resolve error:', redactMediaError(err))
     const normalized = normalizeResolveError(err)
     res.status(500).json({
       success: false,
-      message: normalized.message,
+      message: redactMediaError(normalized.message),
       code: normalized.code,
     })
   }

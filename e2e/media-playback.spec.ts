@@ -445,6 +445,23 @@ test.beforeEach(async ({ page }, testInfo) => {
   installMediaDiagnostics(page, testInfo.title);
 });
 
+test('Chromium capability collector emits a bounded deterministic V1 profile', async ({ page }) => {
+  await page.goto('/login');
+  const profile = await page.evaluate(async () => {
+    // Vite serves this module for the browser integration test so the check
+    // exercises the real DOM/MediaSource/ManagedMediaSource feature probes.
+    const module = await import('/src/modules/media/playbackProfile.ts');
+    return module.collectPlaybackClientProfile();
+  });
+  expect(profile.profileVersion).toBe(1);
+  expect(profile.environment).toBe('web');
+  expect(profile.mediaCapabilities.length).toBeLessThanOrEqual(64);
+  expect(profile.mediaCapabilities.every((capability: { exactCodecStrings?: string[] }) =>
+    (capability.exactCodecStrings ?? []).every((value) => value.length <= 128))).toBe(true);
+  expect(profile.mediaCapabilities.some((capability: { transport: string }) =>
+    capability.transport === 'progressive')).toBe(true);
+});
+
 test("real MP4 and extensionless sources load, play, and seek directly without gateway bytes", async ({
   page,
 }) => {

@@ -1,5 +1,11 @@
 import { registerMediaTransport } from './transport';
 import { planPlayback } from './localPlanner';
+import {
+  collectPlaybackClientProfile,
+  collectPlaybackClientProfileSync,
+  toLegacyClientCapabilities,
+  type PlaybackClientProfileV1,
+} from './playbackProfile'
 import { apiFetch, getApiUrl, safeJson } from '@/lib/api'
 import type { MediaFormat } from '@/lib/mediaFormat'
 import { getRoomMediaGrant } from './roomMediaGrant'
@@ -73,11 +79,14 @@ export interface PlaybackPlan {
   videoAction: string
   audioAction: string
   reasons: string[]
+  candidateUrl?: string
+  candidateMode?: 'DIRECT' | 'MANIFEST_ASSISTED' | 'PARTIAL_PROXY' | 'FULL_PROXY'
 }
 
 export interface ResolvedMedia {
   descriptor: MediaDescriptor
   plan: PlaybackPlan
+  profile?: PlaybackClientProfileV1
 }
 
 export function normalizeMediaGatewayUrl(url?: string): string | undefined {
@@ -125,7 +134,7 @@ export async function resolveMediaInput(
   options: ResolveMediaInputOptions = {}
 ): Promise<ResolvedMedia> {
   const { browserSniff = false, roomId, requestedQn, preferMp4, page, cid } = options
-  const video = document.createElement('video')
+  const profile = await collectPlaybackClientProfile()
   const response = await apiFetch('/api/stream/media/resolve', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -138,21 +147,16 @@ export async function resolveMediaInput(
       preferMp4,
       page,
       cid,
-      capabilities: {
-        nativeHls: video.canPlayType('application/vnd.apple.mpegurl') !== '',
-        mediaSource: typeof MediaSource !== 'undefined',
-        playsvideo: typeof Worker !== 'undefined',
-        hevc: video.canPlayType('video/mp4; codecs="hvc1.1.6.L93.B0"') !== '',
-      },
+      profile,
     }),
   })
   const data = await safeJson<{
     success?: boolean
     message?: string
     descriptor?: MediaDescriptor
-    plan?: PlaybackPlan
+    viability?: { removed?: Array<{ mode: string; reason: string }> }
   }>(response, {})
-  if (!response.ok || !data.success || !data.descriptor || !data.plan) {
+  if (!response.ok || !data.success || !data.descriptor) {
     throw new Error(data.message || '媒体解析失败')
   }
   const result: ResolvedMedia = {
@@ -161,13 +165,13 @@ export async function resolveMediaInput(
       finalUrl: normalizeMediaGatewayUrl(data.descriptor.finalUrl) ?? data.descriptor.finalUrl,
       audioUrl: normalizeMediaGatewayUrl(data.descriptor.audioUrl),
     },
-    plan: planPlayback(data.descriptor, browserCapabilities()),
+    plan: planPlayback(data.descriptor, profile, data.descriptor.transportPlan?.candidates),
+    profile,
   }
   registerMediaTransport(result.descriptor)
   return result
 }
 
 export function browserCapabilities() {
-  const video = document.createElement('video')
-  return { nativeHls: !!video.canPlayType('application/vnd.apple.mpegurl'), mediaSource: typeof MediaSource !== 'undefined', playsvideo: typeof Worker !== 'undefined', hevc: !!video.canPlayType('video/mp4; codecs="hvc1.1.6.L93.B0"') }
+  return toLegacyClientCapabilities(collectPlaybackClientProfileSync())
 }

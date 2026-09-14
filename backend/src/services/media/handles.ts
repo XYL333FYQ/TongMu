@@ -57,14 +57,22 @@ function seal(resource: object): string {
   return [iv, cipher.getAuthTag(), encrypted].map((part) => part.toString('base64url')).join('.');
 }
 
+function decodeCanonicalBase64Url(value: string): Buffer {
+  const decoded = Buffer.from(value, 'base64url');
+  // Reject alternate encodings that differ only in unused padding bits; they
+  // otherwise decode to the same bytes and can evade a naive tamper test.
+  if (!value || decoded.toString('base64url') !== value) throw new Error('invalid capability encoding');
+  return decoded;
+}
+
 function open(token: string): unknown {
   try {
     const [ivRaw, tagRaw, encryptedRaw, extra] = token.split('.');
     if (!ivRaw || !tagRaw || !encryptedRaw || extra) return undefined;
-    const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(ivRaw, 'base64url'));
-    decipher.setAuthTag(Buffer.from(tagRaw, 'base64url'));
+    const decipher = createDecipheriv('aes-256-gcm', key, decodeCanonicalBase64Url(ivRaw));
+    decipher.setAuthTag(decodeCanonicalBase64Url(tagRaw));
     const plain = Buffer.concat([
-      decipher.update(Buffer.from(encryptedRaw, 'base64url')),
+      decipher.update(decodeCanonicalBase64Url(encryptedRaw)),
       decipher.final(),
     ]).toString('utf8');
     return JSON.parse(plain) as unknown;

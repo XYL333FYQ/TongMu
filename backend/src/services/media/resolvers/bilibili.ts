@@ -14,11 +14,13 @@ export class BilibiliResolver implements SourceResolver {
   }
 
   async resolve(input: string, context: ResolverContext): Promise<MediaDescriptor> {
+    if (context.signal?.aborted) throw new Error('bilibili resolution cancelled');
     const result = await resolveBilibiliVideo({
       url: input, userId: context.userId, cookie: context.cookie,
       qn: context.requestedQn, preferMp4: context.preferMp4,
       page: context.page, cid: context.cid,
     });
+    if (context.signal?.aborted) throw new Error('bilibili resolution cancelled');
     return {
       title: result.title,
       sourceType: 'bilibili', resolver: this.name, input,

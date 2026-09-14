@@ -1,5 +1,12 @@
 import { redactMediaError } from '../../services/media/redact';
-import { canDirect, publicMetadata, type TransportPlan, type PublicMediaDescriptor } from '../../services/media/protocol';
+import {
+  canDirect,
+  publicMetadata,
+  publicTransportCandidate,
+  type PlaybackCandidate,
+  type TransportPlan,
+  type PublicMediaDescriptor,
+} from '../../services/media/protocol';
 import { AppDataSource } from '../../data-source';
 import { Movie } from '../../entities/Movie';
 import { Session } from '../../entities/Session';
@@ -7,8 +14,13 @@ import { IsNull } from 'typeorm';
 import { Router } from 'express';
 import { AuthenticatedRequest } from '../../middleware/auth';
 import { getUserCookie } from './helpers';
-import { resolveMediaInput } from '../../services/media/resolvers';
-import { planPlayback } from '../../services/media/planner';
+import { resolveMediaProvider } from '../../services/media/resolvers';
+import {
+  validatePlaybackClientProfile,
+  PlaybackProfileError,
+  type PlaybackPipeline,
+} from '../../services/media/playback-profile';
+import { filterPlaybackCandidates } from '../../services/media/viability';
 import { issueMediaHandle, resolveMediaHandle, type MediaHandleResource } from '../../services/media/handles';
 import { proxyHttpUpstream } from '../../services/proxy/http-proxy';
 import { fetchWithProxyPolicy, fetchWithProxyPolicyDetailed } from '../../services/proxy/safe-fetch';
@@ -33,6 +45,50 @@ const mediaResolveLimiter = rateLimit({
   legacyHeaders: false,
   message: { success: false, message: '媒体解析请求过于频繁，请稍后再试' },
 });
+
+function requiredPipelinesForDescriptor(descriptor: MediaDescriptor): PlaybackPipeline[] {
+  if (descriptor.transport === 'hls') return ['native', 'mse'];
+  if (descriptor.transport === 'dash' || descriptor.transport === 'flv') return ['mse'];
+  if (['mkv', 'avi', 'wmv', 'ts'].includes(descriptor.container)) return ['native', 'playsvideo'];
+  return ['native'];
+}
+
+function candidateFacts(
+  descriptor: MediaDescriptor,
+  mode: PlaybackCandidate['mode'],
+  url: string,
+  audioUrl?: string,
+  providerCandidate?: PlaybackCandidate,
+): PlaybackCandidate {
+  const exactCodecStrings = providerCandidate?.exactCodecStrings ?? [descriptor.videoCodec, descriptor.audioCodec]
+    .filter((value): value is string => !!value)
+    .flatMap((value) => value.split(','))
+    .map((value) => value.trim())
+    .filter((value) => /^(?:avc1|avc3|hev1|hvc1|av01|vp0[89]|mp4a|opus|vorbis|ac-?3|ec-?3|dts|flac)(?:[.\d]|$)/i.test(value));
+  return {
+    mode,
+    url,
+    audioUrl,
+    transport: providerCandidate?.transport ?? descriptor.transport,
+    container: providerCandidate?.container ?? descriptor.container,
+    videoCodec: providerCandidate?.videoCodec,
+    audioCodec: providerCandidate?.audioCodec,
+    actualQuality: providerCandidate?.actualQuality ?? descriptor.actualQuality,
+    requiredPipelines: providerCandidate?.requiredPipelines ?? requiredPipelinesForDescriptor(descriptor),
+    exactCodecStrings,
+    requiresCustomHeaders: providerCandidate?.requiresCustomHeaders ?? (mode === 'DIRECT' && Object.keys(descriptor.headers ?? {}).some((key) => !/^accept(?:-language)?$/i.test(key))),
+  };
+}
+
+function pageProtocolForRequest(req: AuthenticatedRequest): 'http' | 'https' | undefined {
+  const origin = req.get('origin');
+  if (origin?.startsWith('https://')) return 'https';
+  if (origin?.startsWith('http://')) return 'http';
+  const forwarded = req.get('x-forwarded-proto');
+  if (forwarded?.split(',')[0]?.trim() === 'https') return 'https';
+  if (forwarded?.split(',')[0]?.trim() === 'http') return 'http';
+  return undefined;
+}
 
 function userIdOf(req: AuthenticatedRequest): string {
   return String(req.user?.userId ?? '');
@@ -368,28 +424,43 @@ router.post('/media/resolve', authenticateToken, mediaResolveLimiter, async (req
     }
     input = movie.sourceInput;
   }
+  let profile: ReturnType<typeof validatePlaybackClientProfile>;
+  try {
+    profile = validatePlaybackClientProfile(req.body?.profile);
+  } catch (error) {
+    const code = error instanceof PlaybackProfileError ? error.code : 'MALFORMED_PROFILE';
+    res.status(400).json({ success: false, code, message: error instanceof Error ? error.message : '播放能力声明无效' });
+    return;
+  }
   const scope = roomId ? `room:${roomId}` : `user:${ownerId}`;
+  const resolveController = new AbortController();
+  const resolveDeadline = Date.now() + 30_000;
+  const abortResolve = () => resolveController.abort();
+  const resolveTimer = setTimeout(abortResolve, 30_000);
+  req.once('aborted', abortResolve);
   try {
     const cookie = (await getUserCookie(req.user?.userId)) || undefined;
-    const descriptor = await resolveMediaInput(input, {
+    const providerResolution = await resolveMediaProvider(input, {
       userId: ownerId, cookie, browserSniff: req.body?.browserSniff === true,
       requestedQn: Number.isFinite(req.body?.requestedQn) ? Number(req.body.requestedQn) : undefined,
       preferMp4: req.body?.preferMp4 === true,
       page: Number.isFinite(req.body?.page) ? Number(req.body.page) : undefined,
       cid: Number.isFinite(req.body?.cid) ? Number(req.body.cid) : undefined,
+      signal: resolveController.signal,
+      deadline: resolveDeadline,
+      roomId,
+      sourceGeneration: Number.isSafeInteger(req.body?.sourceGeneration) ? Number(req.body.sourceGeneration) : undefined,
+      playbackClientProfile: profile,
     });
-    const plan = planPlayback(descriptor);
+    const descriptor = providerResolution.descriptor;
+    const providerDirectCandidate = providerResolution.candidates.find((candidate) => candidate.mode === 'DIRECT');
     if (descriptor.drm.protected) {
       res.status(422).json({
         success: false,
+        code: 'DRM_UNSUPPORTED',
         message: '检测到 DRM 加密，当前无法作为普通媒体播放',
         descriptor: toPublicDescriptor(descriptor, ''),
-        plan,
       });
-      return;
-    }
-    if (plan.engine === 'blocked') {
-      res.status(422).json({ success: false, message: plan.reasons.join('；') || '当前客户端无法播放该媒体', descriptor: toPublicDescriptor(descriptor, ''), plan });
       return;
     }
     const videoHandle = issueMediaHandle({
@@ -415,27 +486,54 @@ router.post('/media/resolve', authenticateToken, mediaResolveLimiter, async (req
     }) : undefined;
     descriptor.expiresAt = videoHandle.expiresAt;
     const direct = canDirect(descriptor);
+    const privateCandidates: PlaybackCandidate[] = [
+      ...(direct ? [candidateFacts(descriptor, 'DIRECT', descriptor.finalUrl, descriptor.audioUrl, providerDirectCandidate)] : []),
+      ...(direct && shouldRewriteManifest(descriptor)
+        ? (['MANIFEST_ASSISTED', 'PARTIAL_PROXY'] as const).map((mode) => candidateFacts(
+          descriptor,
+          mode,
+          issueMediaHandle({
+            url: descriptor.finalUrl,
+            scope,
+            rewriteManifest: true,
+            transportMode: mode,
+            expiresAt: videoHandle.expiresAt,
+          }).url,
+          undefined,
+          providerDirectCandidate,
+        ))
+        : []),
+      candidateFacts(descriptor, 'FULL_PROXY', videoHandle.url, audioHandle?.url, providerDirectCandidate),
+    ];
+    const viability = filterPlaybackCandidates(descriptor, privateCandidates, profile, {
+      pageProtocol: pageProtocolForRequest(req),
+    });
+    if (viability.viable.length === 0) {
+      res.status(422).json({
+        success: false,
+        code: 'PLAYBACK_CAPABILITY_UNAVAILABLE',
+        message: '当前客户端没有可行的同质量媒体传输路线',
+        descriptor: toPublicDescriptor(descriptor, ''),
+        viability: { removed: viability.removed },
+      });
+      return;
+    }
     const transportPlan: TransportPlan = {
       reason: direct ? '优先客户端直连；失败后保持同质量中转' : '源站需要私有请求头或私有 URL，使用中转',
-      candidates: [
-        ...(direct ? [{ mode: 'DIRECT' as const, url: descriptor.finalUrl, audioUrl: descriptor.audioUrl }] : []),
-        ...(direct && shouldRewriteManifest(descriptor) ? [
-          ...(['MANIFEST_ASSISTED', 'PARTIAL_PROXY'] as const).map(mode => ({ mode, url: issueMediaHandle({
-            url: descriptor.finalUrl, scope, rewriteManifest: true, transportMode: mode,
-            expiresAt: videoHandle.expiresAt,
-          }).url })),
-        ] : []),
-        { mode: 'FULL_PROXY', url: videoHandle.url, audioUrl: audioHandle?.url },
-      ],
+      candidates: viability.viable.map(publicTransportCandidate),
     };
+    const first = transportPlan.candidates[0];
 
     res.json({
       success: true,
-      descriptor: { ...toPublicDescriptor(descriptor, transportPlan.candidates[0].url, transportPlan.candidates[0].audioUrl), transportPlan },
-      plan: { ...plan, proxy: !direct },
+      descriptor: { ...toPublicDescriptor(descriptor, first.url, first.audioUrl), transportPlan },
+      viability: { removed: viability.removed },
     });
   } catch (error) {
     res.status(422).json({ success: false, message: redactMediaError(error) });
+  } finally {
+    clearTimeout(resolveTimer);
+    req.off('aborted', abortResolve);
   }
 });
 

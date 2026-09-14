@@ -118,6 +118,7 @@ export class BrowserResolver implements SourceResolver {
     const candidateHeaders = new Map<string, Record<string, string>>();
     const pendingResponses = new Set<Promise<void>>();
     try {
+      if (context.signal?.aborted) throw new Error('browser resolution cancelled');
       await page.route('**/*', async (route: any) => {
         const requestUrl = route.request().url();
         if (!/^https?:/i.test(requestUrl)) return route.continue();
@@ -164,12 +165,13 @@ export class BrowserResolver implements SourceResolver {
       });
       await page.goto(input, { waitUntil: 'domcontentloaded', timeout: 20_000 });
       await page.waitForTimeout(5_000);
+      if (context.signal?.aborted) throw new Error('browser resolution cancelled');
       await Promise.allSettled([...pendingResponses]);
       const ranked = [...candidates.values()].sort((a, b) => b.score - a.score).slice(0, 12);
       for (const candidate of ranked) {
         try {
           const headers = candidateHeaders.get(candidate.url);
-          const descriptor = await probeMediaUrl(candidate.url, { headers, sourceType: 'browser-page', resolver: this.name });
+          const descriptor = await probeMediaUrl(candidate.url, { headers, sourceType: 'browser-page', resolver: this.name, signal: context.signal });
           if (descriptor.container === 'unknown') continue;
           return { ...descriptor, input, originalUrl: page.url(), candidates: ranked };
         } catch { /* test next candidate */ }

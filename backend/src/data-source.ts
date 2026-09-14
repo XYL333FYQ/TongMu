@@ -26,8 +26,9 @@ export const AppDataSource = new DataSource({
   autoSave: true,
   useLocalForage: false,
   synchronize: true,
-  // Transitional opt-in while the historical schema is still synchronize-managed.
-  migrationsRun: process.env.TYPEORM_MIGRATIONS === 'true',
+  // The Phase 1 migration foundation runs explicitly after initialization so
+  // it can classify fresh vs existing installs before applying versioned work.
+  migrationsRun: false,
   logging: process.env.NODE_ENV === 'development',
   entities: [Room, Session, User, Comment, BilibiliCredential, Movie, UserMount, SystemSettings, PlaybackState, ServerFolder, DanmakuTrack, RoomDanmakuMeta, AuditLog],
   migrations: [AddMediaCoreMetadata1789160000000],

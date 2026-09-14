@@ -10,8 +10,8 @@ export class DirectUrlResolver implements SourceResolver {
     catch { return false; }
   }
 
-  async resolve(input: string, _context: ResolverContext) {
-    const descriptor = await probeMediaUrl(input, { sourceType: 'url', resolver: this.name });
+  async resolve(input: string, context: ResolverContext) {
+    const descriptor = await probeMediaUrl(input, { sourceType: 'url', resolver: this.name, signal: context.signal });
     if (isHtmlDescriptor(descriptor)) throw new ResolverNotApplicableError('输入是 HTML 页面，不是媒体直链');
     if (descriptor.container === 'unknown') {
       throw new ResolverNotApplicableError('直链 probe 未识别出媒体格式');

@@ -36,6 +36,13 @@ const {
   authorizeRoomMediaGrant,
   cleanupStaleRoomSessions,
 } = require('../dist/services/media/room-access');
+
+function tamperAuthenticatedHandle(token) {
+  const parts = token.split('.');
+  const original = parts[0][0];
+  parts[0] = (original === 'A' ? 'B' : 'A') + parts[0].slice(1);
+  return parts.join('.');
+}
 const { discoverCandidatesFromHtml } = require('../dist/services/media/resolvers/generic-web');
 const {
   rewriteManifest,
@@ -663,7 +670,7 @@ test('encrypted media handles hide credentials, reject tampering and enforce use
   assert.equal(issued.url.includes('super-secret'), false);
   assert.equal(issued.url.includes('session=secret'), false);
   assert.equal(resolveMediaHandle(issued.id, '8'), undefined);
-  assert.equal(resolveMediaHandle(`${issued.id.slice(0, -1)}x`, '7'), undefined);
+  assert.equal(resolveMediaHandle(tamperAuthenticatedHandle(issued.id), '7'), undefined);
   assert.equal(resolveMediaHandle(issued.id, '7').url, 'https://cdn.example/video?token=super-secret');
 
   const room = issueMediaHandle({ url: 'https://cdn.example/room.mp4', scope: 'room:abc' });

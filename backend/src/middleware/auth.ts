@@ -133,34 +133,80 @@ export function verifyRefreshToken(token: string): JwtPayload {
 // ==================== Token 失效检查（V4/V5） ====================
 
 /**
- * tokenInvalidBefore 的内存缓存（60s TTL）。
- * 避免每个认证请求都查一次 User 表；改密/管理操作调用 invalidateUserTokens
- * 更新缓存，未命中的 key 在 TTL 过期后从 DB 回源。
+ * tokenInvalidBefore 的内存缓存（60s TTL）。缓存 miss 必须等待权威 DB
+ * 结果，不能把“尚未查询”当成“未撤销”。同一用户的并发 miss 共用一次查询。
  */
-const invalidBeforeCache = new Map<number, { value: number | null; expireAt: number }>();
+interface TokenRevocationState {
+  exists: boolean;
+  value: number | null;
+}
+
+interface RevocationRepository {
+  findOneBy(criteria: { id: number }): Promise<{ tokenInvalidBefore?: Date | null } | null>;
+  update(criteria: { id: number }, values: { tokenInvalidBefore: Date }): Promise<unknown>;
+}
+
+const invalidBeforeCache = new Map<number, { value: TokenRevocationState; expireAt: number }>();
+const invalidBeforeInflight = new Map<number, Promise<TokenRevocationState>>();
+const invalidBeforeGeneration = new Map<number, number>();
 const INVALID_CACHE_TTL_MS = 60 * 1000;
 
-/** 获取用户的 token 失效时间戳（毫秒），null 表示未设置或查询失败（fail-open 由调用方处理）。 */
-export function getTokenInvalidBefore(userId: number): number | null {
+let revocationRepositoryProvider = (): RevocationRepository => {
+  const { AppDataSource } = require('../data-source') as { AppDataSource: { getRepository(name: string): RevocationRepository } };
+  return AppDataSource.getRepository('User');
+};
+
+export class TokenRevocationError extends Error {
+  constructor(message = 'token revocation state unavailable') {
+    super(message);
+    this.name = 'TokenRevocationError';
+  }
+}
+
+/** Read authoritative revocation state, with safe concurrent cache filling. */
+export async function getTokenRevocationState(userId: number): Promise<TokenRevocationState> {
   const cached = invalidBeforeCache.get(userId);
   if (cached && cached.expireAt > Date.now()) {
     return cached.value;
   }
-  // 缓存未命中：同步返回 null（不阻塞请求），异步回源填充。
-  // 首次 miss 的容忍窗口 ≤ TTL；改密路径会主动写入缓存保证立即生效。
-  void (async () => {
+
+  const existing = invalidBeforeInflight.get(userId);
+  if (existing) return existing;
+
+  const generation = invalidBeforeGeneration.get(userId) || 0;
+  const lookup = (async () => {
     try {
-      const { AppDataSource } = require('../data-source');
-      const user = await AppDataSource.getRepository('User').findOneBy({ id: userId });
-      invalidBeforeCache.set(userId, {
+      const user = await revocationRepositoryProvider().findOneBy({ id: userId });
+      const value: TokenRevocationState = {
+        exists: !!user,
         value: user?.tokenInvalidBefore ? new Date(user.tokenInvalidBefore).getTime() : null,
-        expireAt: Date.now() + INVALID_CACHE_TTL_MS,
-      });
+      };
+      // A concurrent password change may have populated a newer cache value.
+      if ((invalidBeforeGeneration.get(userId) || 0) !== generation) {
+        const current = invalidBeforeCache.get(userId);
+        if (current && current.expireAt > Date.now()) return current.value;
+        // The invalidation marker changed while this read was in flight, but
+        // its authoritative cache entry is unavailable. Do not let the stale
+        // read authorize a request.
+        throw new TokenRevocationError();
+      }
+      invalidBeforeCache.set(userId, { value, expireAt: Date.now() + INVALID_CACHE_TTL_MS });
+      return value;
     } catch {
-      /* 查询失败不影响当前请求 */
+      // A lookup failure is an authorization-state failure, never “not revoked”.
+      throw new TokenRevocationError();
+    } finally {
+      invalidBeforeInflight.delete(userId);
     }
   })();
-  return cached ? cached.value : null;
+  invalidBeforeInflight.set(userId, lookup);
+  return lookup;
+}
+
+/** Compatibility accessor; callers that authorize must use the full state above. */
+export async function getTokenInvalidBefore(userId: number): Promise<number | null> {
+  const state = await getTokenRevocationState(userId);
+  return state.value;
 }
 
 /**
@@ -171,18 +217,32 @@ export function getTokenInvalidBefore(userId: number): number | null {
 export async function invalidateUserTokens(userId: number): Promise<void> {
   const now = new Date();
   try {
-    const { AppDataSource } = require('../data-source');
-    await AppDataSource.getRepository('User').update(
+    await revocationRepositoryProvider().update(
       { id: userId },
       { tokenInvalidBefore: now },
     );
+    invalidBeforeGeneration.set(userId, (invalidBeforeGeneration.get(userId) || 0) + 1);
     invalidBeforeCache.set(userId, {
-      value: now.getTime(),
+      value: { exists: true, value: now.getTime() },
       expireAt: Date.now() + INVALID_CACHE_TTL_MS,
     });
-  } catch (err) {
-    console.error('[auth] invalidateUserTokens error:', err);
+  } catch {
+    // Do not install a permissive cache value when revocation persistence fails.
+    throw new TokenRevocationError('token revocation write failed');
   }
+}
+
+/** Test hooks keep the production path on the real TypeORM repository. */
+export function __setRevocationRepositoryForTests(repository?: RevocationRepository): void {
+  revocationRepositoryProvider = repository
+    ? () => repository
+    : () => {
+      const { AppDataSource } = require('../data-source') as { AppDataSource: { getRepository(name: string): RevocationRepository } };
+      return AppDataSource.getRepository('User');
+    };
+  invalidBeforeCache.clear();
+  invalidBeforeInflight.clear();
+  invalidBeforeGeneration.clear();
 }
 
 /**
@@ -351,11 +411,11 @@ export function extractAccessToken(req: Request): string | undefined {
   return undefined;
 }
 
-export function authenticateToken(
+export async function authenticateToken(
   req: AuthenticatedRequest,
   res: Response,
   next: NextFunction,
-) {
+): Promise<void> {
   const token = extractAccessToken(req);
 
   if (!token) {
@@ -369,10 +429,14 @@ export function authenticateToken(
     // Token 失效检查（V4/V5）：改密/管理操作会使此前签发的 token 全部失效。
     // guest（userId=0）无 User 行，跳过。使用 60s TTL 缓存避免每请求查库。
     if (payload.userId !== 0) {
-      const invalidBefore = getTokenInvalidBefore(payload.userId);
-      if (invalidBefore !== null) {
+      const state = await getTokenRevocationState(payload.userId);
+      if (!state.exists) {
+        res.status(401).json({ success: false, message: '用户不存在或已删除' });
+        return;
+      }
+      if (state.value !== null) {
         const iat = payload.iat;
-        if (typeof iat === 'number' && iat * 1000 < invalidBefore) {
+        if (typeof iat !== 'number' || iat * 1000 < state.value) {
           res
             .status(401)
             .json({ success: false, message: '令牌已失效，请重新登录' });
@@ -384,6 +448,13 @@ export function authenticateToken(
     req.user = payload;
     next();
   } catch (err) {
+    if (err instanceof TokenRevocationError) {
+      res.status(503).json({
+        success: false,
+        message: '认证状态暂不可用，请稍后重试',
+      });
+      return;
+    }
     res.status(403).json({ success: false, message: '认证令牌无效或已过期' });
   }
 }

@@ -10,7 +10,8 @@ function load(file, imports = {}, directory = path.join(__dirname, '../src/modul
   new Function('require', 'module', 'exports', output)(name => imports[name] ?? {}, module, module.exports);
   return module.exports;
 }
-const { planPlayback } = load('localPlanner.ts');
+const playbackProfile = load('playbackProfile.ts');
+const { planPlayback } = load('localPlanner.ts', { './playbackProfile': playbackProfile });
 const media = { drm: { protected: false }, transport: 'dash', container: 'dash', videoCodec: 'hvc1.1.6.L93.B0' };
 test('each client independently plans the same shared HEVC DASH media', () => {
   assert.equal(planPlayback(media, { mediaSource: true, hevc: true }).engine, 'dash');
@@ -66,4 +67,97 @@ test('native HLS uses assisted single-quality master instead of uncontrolled nat
     const result = await withMediaTransport({ type: 'hls', async attach(_video, source) { calls.push(source.url); return { cleanup() {} }; } }).attach(new Video(), { url: descriptor.finalUrl });
     assert.deepEqual(calls, ['https://app.example/api/stream/media/highest']); result.cleanup();
   } finally { if (previous === undefined) delete globalThis.window; else globalThis.window = previous; }
+});
+
+test('V1 profile matching keeps codec tuples together and preserves the selected route', () => {
+  const profile = {
+    profileVersion: 1,
+    environment: 'web',
+    mediaCapabilities: [
+      { transport: 'progressive', container: 'mp4', videoCodec: 'h264', audioCodec: 'aac', pipeline: 'native', supportsCustomHeaders: false },
+      { transport: 'progressive', container: 'webm', videoCodec: 'vp9', audioCodec: 'opus', pipeline: 'native', supportsCustomHeaders: false },
+    ],
+    supportsProviderProxy: true,
+    supportsInsecureHttpMedia: true,
+    mixedContentRestricted: false,
+    subtitlePreference: 'embedded-or-external',
+    liveTransports: [],
+  };
+  const h264 = {
+    drm: { protected: false }, transport: 'direct', container: 'mp4',
+    videoCodec: 'h264', audioCodec: 'aac', actualQuality: 1080,
+    finalUrl: 'https://cdn.example/h264',
+  };
+  const selected = planPlayback(h264, profile, [
+    { mode: 'DIRECT', url: h264.finalUrl },
+    { mode: 'FULL_PROXY', url: '/api/stream/media/h264' },
+  ]);
+  assert.equal(selected.engine, 'direct');
+  assert.equal(selected.candidateMode, 'DIRECT');
+  assert.equal(selected.candidateUrl, h264.finalUrl);
+
+  const splitTuple = planPlayback({ ...h264, audioCodec: 'opus' }, profile, [
+    { mode: 'DIRECT', url: 'https://cdn.example/split' },
+  ]);
+  assert.equal(splitTuple.engine, 'blocked');
+});
+
+test('empty V1 capabilities are an explicit no-support profile', () => {
+  const profile = {
+    profileVersion: 1,
+    environment: 'web',
+    mediaCapabilities: [],
+    supportsProviderProxy: true,
+    supportsInsecureHttpMedia: true,
+    mixedContentRestricted: false,
+    subtitlePreference: 'none',
+    liveTransports: [],
+  };
+  const result = planPlayback({
+    drm: { protected: false }, transport: 'direct', container: 'mp4',
+    videoCodec: 'h264', audioCodec: 'aac', finalUrl: 'https://cdn.example/empty',
+  }, profile, [{ mode: 'DIRECT', url: 'https://cdn.example/empty' }]);
+  assert.equal(result.engine, 'blocked');
+});
+
+test('browser capability collector is bounded and fingerprints deterministically', () => {
+  const previous = {
+    document: global.document,
+    MediaSource: global.MediaSource,
+    ManagedMediaSource: global.ManagedMediaSource,
+    Worker: global.Worker,
+    window: global.window,
+    location: global.location,
+    RTCPeerConnection: global.RTCPeerConnection,
+  };
+  class FakeVideo {
+    canPlayType(mime) { return /video\/(?:mp4|webm)|mpegurl/.test(mime) ? 'probably' : ''; }
+  }
+  global.document = { createElement: () => new FakeVideo() };
+  global.MediaSource = { isTypeSupported: (mime) => /video\/(?:mp4|webm)/.test(mime) };
+  global.ManagedMediaSource = undefined;
+  global.Worker = class {};
+  global.window = {};
+  global.location = { protocol: 'https:' };
+  global.RTCPeerConnection = undefined;
+  try {
+    const profile = playbackProfile.collectPlaybackClientProfileSync();
+    assert.equal(profile.profileVersion, 1);
+    assert.equal(profile.environment, 'web');
+    assert.equal(profile.mixedContentRestricted, true);
+    assert.equal(profile.supportsInsecureHttpMedia, false);
+    assert.ok(profile.mediaCapabilities.length > 0);
+    assert.ok(profile.mediaCapabilities.length <= 64);
+    assert.ok(profile.mediaCapabilities.some((item) => item.videoCodec === 'h264' && item.audioCodec === 'aac'));
+    const reversed = { ...profile, mediaCapabilities: [...profile.mediaCapabilities].reverse(), liveTransports: [...profile.liveTransports].reverse() };
+    assert.equal(
+      playbackProfile.playbackClientProfileFingerprint(profile),
+      playbackProfile.playbackClientProfileFingerprint(reversed),
+    );
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete global[key];
+      else global[key] = value;
+    }
+  }
 });

@@ -8,6 +8,7 @@ import {
   getUpdateInfo,
   applyUpdate,
   applyUpdateFromFile,
+  UpdateNotConfiguredError,
   type UpdateStageEvent,
 } from '../services/updater';
 
@@ -55,7 +56,7 @@ router.get(
       res.json({ success: true, info });
     } catch (err) {
       console.error('update check error:', err);
-      res.status(500).json({
+      res.status(err instanceof UpdateNotConfiguredError ? 503 : 500).json({
         success: false,
         message: err instanceof Error ? err.message : '检查更新失败',
       });
@@ -112,7 +113,7 @@ router.post(
       res.json(result);
     } catch (err) {
       console.error('update apply error:', err);
-      res.status(500).json({
+      res.status(err instanceof UpdateNotConfiguredError ? 503 : 500).json({
         success: false,
         message: err instanceof Error ? err.message : '应用更新失败',
       });

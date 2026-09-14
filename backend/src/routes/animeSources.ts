@@ -1,5 +1,4 @@
 import { Router, Response } from 'express';
-import { Readable } from 'node:stream';
 import {
   authenticateToken,
   AuthenticatedRequest,
@@ -9,13 +8,11 @@ import {
   getAnimeProvider,
   AnimeEpisode,
 } from '../services/anime';
+import { proxyHttpUpstream } from '../services/proxy';
 
 const router = Router();
 
 router.use(authenticateToken);
-
-const DEFAULT_PROXY_UA =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
 /**
  * 通用媒体代理：转发带防盗链的视频流。
@@ -38,77 +35,19 @@ router.get('/proxy', async (req: AuthenticatedRequest, res: Response) => {
     return;
   }
 
-  try {
-    const range = req.headers.range;
-    const upstreamHeaders: Record<string, string> = {
-      'User-Agent':
-        typeof userAgent === 'string' && userAgent.trim()
-          ? userAgent
-          : DEFAULT_PROXY_UA,
-      Accept: '*/*',
-    };
-    if (typeof referer === 'string' && referer.trim()) {
-      upstreamHeaders.Referer = referer;
-    }
-    if (typeof origin === 'string' && origin.trim()) {
-      upstreamHeaders.Origin = origin;
-    }
-    if (typeof cookie === 'string' && cookie.trim()) {
-      upstreamHeaders.Cookie = cookie;
-    }
-    if (range) {
-      upstreamHeaders.Range = range;
-    }
-
-    const upstream = await fetch(url, { headers: upstreamHeaders });
-
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader(
-      'Access-Control-Allow-Headers',
-      'Authorization, Content-Type, Range',
-    );
-    res.setHeader(
-      'Access-Control-Expose-Headers',
-      'Content-Range, Accept-Ranges, Content-Length',
-    );
-
-    if (!upstream.ok) {
-      res.status(upstream.status);
-      res.end();
-      return;
-    }
-
-    const contentType = upstream.headers.get('content-type');
-    res.setHeader('Content-Type', contentType || 'application/octet-stream');
-
-    const contentLength = upstream.headers.get('content-length');
-    if (contentLength) {
-      res.setHeader('Content-Length', contentLength);
-    }
-    const acceptRanges = upstream.headers.get('accept-ranges');
-    if (acceptRanges) {
-      res.setHeader('Accept-Ranges', acceptRanges);
-    }
-    const contentRange = upstream.headers.get('content-range');
-    if (contentRange) {
-      res.setHeader('Content-Range', contentRange);
-    }
-
-    if (upstream.body) {
-      Readable.fromWeb(
-        upstream.body as unknown as import('node:stream/web').ReadableStream,
-      ).pipe(res);
-    } else {
-      res.status(204).end();
-    }
-  } catch (err) {
-    console.error('[animeSources] proxy error:', err);
-    if (!res.headersSent) {
-      res.status(502).json({ success: false, message: '代理媒体失败' });
-    } else {
-      res.end();
-    }
-  }
+  await proxyHttpUpstream(req, res, {
+    url: url.trim(),
+    targetPolicy: 'public-only',
+    headers: {
+      userAgent: typeof userAgent === 'string' ? userAgent : undefined,
+      referer: typeof referer === 'string' ? referer : undefined,
+      origin: typeof origin === 'string' ? origin : undefined,
+      cookie: typeof cookie === 'string' ? cookie : undefined,
+    },
+    cors: 'wildcard',
+    logTag: 'animeSources',
+    errorMessage: '代理媒体失败',
+  });
 });
 
 // 列出可用番剧数据源

@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import bcrypt from 'bcryptjs';
 import { IsNull, LessThan } from 'typeorm';
 import { AppDataSource } from './data-source';
+import { runMigrationFoundation } from './migrations/foundation';
 import { Room } from './entities/Room';
 import { Session } from './entities/Session';
 import { User } from './entities/User';
@@ -214,6 +215,14 @@ async function bootstrap() {
 
   await AppDataSource.initialize();
   console.log('TypeORM Data Source has been initialized.');
+  const migrationResult = await runMigrationFoundation(AppDataSource, {
+    execute: process.env.TYPEORM_MIGRATIONS === 'true',
+  });
+  console.log(
+    `[migration] ${migrationResult.before.installState} database, ` +
+      `${migrationResult.executed.length} versioned migration(s) applied; ` +
+      `config backup boundary: ${migrationResult.backupExpectation.configDir}`,
+  );
   const staleSessions = await cleanupStaleRoomSessions();
   if (staleSessions > 0) {
     console.log(`Closed ${staleSessions} stale room sessions from the previous process.`);

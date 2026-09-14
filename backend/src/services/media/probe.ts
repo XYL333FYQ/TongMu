@@ -10,19 +10,43 @@ const MAX_PROBE_BYTES = 64 * 1024;
 const DEFAULT_TIMEOUT_MS = 8_000;
 
 let activeProbes = 0;
-const waiters: Array<() => void> = [];
+interface ProbeWaiter {
+  resolve: () => void;
+  reject: (error: Error) => void;
+  signal?: AbortSignal;
+  onAbort?: () => void;
+}
+const waiters: ProbeWaiter[] = [];
 const MAX_CONCURRENT_PROBES = 4;
 
-async function withProbeSlot<T>(work: () => Promise<T>): Promise<T> {
+async function withProbeSlot<T>(work: () => Promise<T>, signal?: AbortSignal): Promise<T> {
   if (activeProbes >= MAX_CONCURRENT_PROBES) {
-    await new Promise<void>((resolve) => waiters.push(resolve));
+    await new Promise<void>((resolve, reject) => {
+      const waiter: ProbeWaiter = { resolve, reject, signal };
+      const onAbort = () => {
+        const index = waiters.indexOf(waiter);
+        if (index >= 0) waiters.splice(index, 1);
+        reject(new Error('media probe cancelled'));
+      };
+      waiter.onAbort = onAbort;
+      if (signal?.aborted) onAbort();
+      else {
+        signal?.addEventListener('abort', onAbort, { once: true });
+        waiters.push(waiter);
+      }
+    });
   }
+  if (signal?.aborted) throw new Error('media probe cancelled');
   activeProbes += 1;
   try {
     return await work();
   } finally {
     activeProbes -= 1;
-    waiters.shift()?.();
+    const waiter = waiters.shift();
+    if (waiter) {
+      waiter.signal?.removeEventListener('abort', waiter.onAbort!);
+      waiter.resolve();
+    }
   }
 }
 
@@ -140,40 +164,60 @@ export interface ProbeOptions {
   headTimeoutMs?: number;
   targetPolicy?: ProxyTargetPolicy;
   trustedPrivateHosts?: string[];
+  signal?: AbortSignal;
+}
+
+function linkedController(signal: AbortSignal | undefined, timeoutMs: number): { controller: AbortController; cleanup: () => void } {
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener('abort', onAbort, { once: true });
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  return {
+    controller,
+    cleanup: () => {
+      clearTimeout(timeout);
+      signal?.removeEventListener('abort', onAbort);
+    },
+  };
 }
 
 /** HEAD is advisory; a bounded Range GET supplies the actual format evidence. */
 export async function probeMediaUrl(input: string, options: ProbeOptions = {}): Promise<MediaDescriptor> {
   return withProbeSlot(async () => {
     const warnings: string[] = [];
-    let head: Awaited<ReturnType<typeof fetchWithProxyPolicy>> | undefined;
+    let headResponse: Awaited<ReturnType<typeof fetchWithProxyPolicy>> | undefined;
     try {
       try {
-        const headController = new AbortController();
-        const headTimeout = setTimeout(
-          () => headController.abort(),
+        const headRequest = linkedController(
+          options.signal,
           options.headTimeoutMs ?? Math.min(2_500, options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
         );
         try {
-          head = await fetchWithProxyPolicy(input, {
-            method: 'HEAD', headers: options.headers, signal: headController.signal,
+          headResponse = await fetchWithProxyPolicy(input, {
+            method: 'HEAD', headers: options.headers, signal: headRequest.controller.signal,
           }, options.targetPolicy ?? 'public-only', options.trustedPrivateHosts);
-          if (!head.ok) warnings.push(`HEAD returned ${head.status}`);
+          if (!headResponse.ok) warnings.push(`HEAD returned ${headResponse.status}`);
         } finally {
-          clearTimeout(headTimeout);
+          headRequest.cleanup();
         }
       } catch (error) {
+        if (options.signal?.aborted) throw new Error('media probe cancelled');
         warnings.push(`HEAD failed: ${redactMediaError(error)}`);
       } finally {
-        await head?.body?.cancel().catch(() => undefined);
+        await headResponse?.body?.cancel().catch(() => undefined);
       }
 
       const getHeaders = { ...options.headers, Range: `bytes=0-${MAX_PROBE_BYTES - 1}` };
-      const getController = new AbortController();
-      const getTimeout = setTimeout(() => getController.abort(), options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-      const fetched = await fetchWithProxyPolicyDetailed(input, {
-        method: 'GET', headers: getHeaders, signal: getController.signal,
-      }, options.targetPolicy ?? 'public-only', options.trustedPrivateHosts);
+      const get = linkedController(options.signal, options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+      let fetched: Awaited<ReturnType<typeof fetchWithProxyPolicyDetailed>>;
+      try {
+        fetched = await fetchWithProxyPolicyDetailed(input, {
+          method: 'GET', headers: getHeaders, signal: get.controller.signal,
+        }, options.targetPolicy ?? 'public-only', options.trustedPrivateHosts);
+      } finally {
+        get.cleanup();
+      }
       const response = fetched.response;
       if (!response.ok) {
         await response.body?.cancel();
@@ -181,9 +225,8 @@ export async function probeMediaUrl(input: string, options: ProbeOptions = {}): 
       }
       if (response.status === 200) warnings.push('上游忽略 Range；探测器已在读取上限处中止');
       const bytes = await readAtMost(response, MAX_PROBE_BYTES);
-      clearTimeout(getTimeout);
       const magic = sniffMediaMagic(bytes);
-      const contentType = response.headers.get('content-type') ?? head?.headers.get('content-type') ?? undefined;
+      const contentType = response.headers.get('content-type') ?? headResponse?.headers.get('content-type') ?? undefined;
       const headerContainer = containerFromContentType(contentType);
       const urlContainer = containerFromUrl(response.url || input);
       const explicitHtml = magic.magic === 'HTML' || /(?:text\/html|application\/xhtml\+xml)/i.test(contentType ?? '');
@@ -192,10 +235,10 @@ export async function probeMediaUrl(input: string, options: ProbeOptions = {}): 
         : headerContainer !== 'unknown' ? headerContainer : urlContainer;
       const contentLengthRaw = response.headers.get('content-range')?.match(/\/(\d+)$/)?.[1]
         ?? response.headers.get('content-length')
-        ?? head?.headers.get('content-length');
+        ?? headResponse?.headers.get('content-length');
       const contentLength = contentLengthRaw ? Number(contentLengthRaw) : undefined;
       const rangeSupported = response.status === 206 || !!response.headers.get('content-range') ||
-        (response.headers.get('accept-ranges') ?? head?.headers.get('accept-ranges'))?.toLowerCase() === 'bytes';
+        (response.headers.get('accept-ranges') ?? headResponse?.headers.get('accept-ranges'))?.toLowerCase() === 'bytes';
       const drmSystems = magic.drm ?? [];
       const mediaHeaders = Object.fromEntries(
         Object.entries(fetched.headers).filter(([name]) => name.toLowerCase() !== 'range'),
@@ -214,7 +257,7 @@ export async function probeMediaUrl(input: string, options: ProbeOptions = {}): 
         probe: { method: 'range-get', bytesRead: bytes.length, magic: magic.magic, warnings },
       };
     } finally { /* each request owns an independent abort budget */ }
-  });
+  }, options.signal);
 }
 
 export function isHtmlDescriptor(descriptor: MediaDescriptor): boolean {

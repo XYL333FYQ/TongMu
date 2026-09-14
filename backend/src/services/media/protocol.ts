@@ -1,12 +1,41 @@
-import type { MediaDescriptor } from './types';
+import type { MediaContainer, MediaDescriptor, MediaTransport } from './types';
+import type { PlaybackPipeline, PlaybackVideoCodec, PlaybackAudioCodec } from './playback-profile';
 
 export type TransportMode = 'DIRECT' | 'MANIFEST_ASSISTED' | 'PARTIAL_PROXY' | 'FULL_PROXY';
 export interface TransportCandidate { mode: TransportMode; url: string; audioUrl?: string }
 export interface TransportPlan { candidates: TransportCandidate[]; reason: string }
-export type PrivateMediaSource = Pick<MediaDescriptor, 'input' | 'originalUrl' | 'headers' | 'credentialOrigins'>;
+/** Server-private resolved source. Never serialize this type as a public DTO. */
+export type PrivateMediaSource = Pick<MediaDescriptor, 'input' | 'originalUrl' | 'finalUrl' | 'headers' | 'credentialOrigins'>;
+
+/**
+ * Candidate facts used by the server viability filter. URL/header fields remain
+ * private until the route has applied the filter and converted the result to a
+ * small public TransportCandidate.
+ */
+export interface PlaybackCandidate {
+  mode: TransportMode;
+  url: string;
+  audioUrl?: string;
+  transport: MediaTransport;
+  container: MediaContainer;
+  videoCodec?: PlaybackVideoCodec;
+  audioCodec?: PlaybackAudioCodec;
+  exactCodecStrings?: string[];
+  actualQuality?: number;
+  requiredPipelines: PlaybackPipeline[];
+  requiresCustomHeaders?: boolean;
+}
 export type PublicMediaDescriptor = Omit<MediaDescriptor, 'input' | 'originalUrl' | 'headers' | 'credentialOrigins' | 'candidates'> & {
   input: string; originalUrl: string; transportPlan?: TransportPlan;
 };
+
+export function publicTransportCandidate(candidate: PlaybackCandidate): TransportCandidate {
+  return {
+    mode: candidate.mode,
+    url: candidate.url,
+    audioUrl: candidate.audioUrl,
+  };
+}
 
 /** Public capability URLs may contain expiring signatures, never account/session secrets. */
 export function canPublishDirectUrl(value: string): boolean {
