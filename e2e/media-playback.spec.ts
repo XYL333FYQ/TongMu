@@ -196,6 +196,47 @@ async function loginRoot(page: Page): Promise<void> {
   await expect(page.getByText("已连接", { exact: true })).toBeVisible();
 }
 
+type MediaServerProvider = 'emby' | 'jellyfin';
+
+async function createMediaServerMount(
+  page: Page,
+  provider: MediaServerProvider,
+): Promise<{ mountId: number; reference: string }> {
+  return page.evaluate(async ({ provider, fixtureOrigin }) => {
+    // @ts-ignore Vite serves application modules for the browser integration test.
+    const { apiFetch } = await import('/src/lib/api.ts');
+    // @ts-ignore Vite serves application modules for the browser integration test.
+    const { buildMediaServerReference } = await import('/src/modules/media/mediaServerReference.ts');
+    const response = await apiFetch(`/api/${provider}/mounts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: `phase2c1-${provider}`,
+        serverUrl: fixtureOrigin,
+        apiKey: 'fixture-api-key',
+        directLink: false,
+      }),
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.success || !payload.mount?.id) {
+      throw new Error(JSON.stringify(payload));
+    }
+    if (JSON.stringify(payload).includes('fixture-api-key')) {
+      throw new Error('media-server credential leaked from mount response');
+    }
+    const mountId = Number(payload.mount.id);
+    return {
+      mountId,
+      reference: buildMediaServerReference({
+        provider,
+        mountId,
+        itemId: 'fixture-movie',
+        mediaSourceId: 'source-1',
+      }),
+    };
+  }, { provider, fixtureOrigin: FIXTURE_ORIGIN });
+}
+
 async function configureGeneratedMedia(page: Page): Promise<void> {
   await page.goto("about:blank");
   const payload = await page.evaluate(async () => {
@@ -780,3 +821,104 @@ test('storage providers resolve through mediaApi and play via scoped gateway fix
     }, mounts).catch(() => undefined);
   }
 });
+
+for (const provider of ['emby', 'jellyfin'] as const) {
+  test(`${provider} playback converges through mediaApi and provider session lifecycle`, async ({ page }) => {
+    await loginRoot(page);
+    const mount = await createMediaServerMount(page, provider);
+    try {
+      const resolved = await page.evaluate(async (sourceInput) => {
+        // @ts-ignore Vite serves application modules for the browser integration test.
+        const { resolveMediaInput } = await import('/src/modules/media/mediaApi.ts');
+        const result = await resolveMediaInput(sourceInput);
+        return {
+          descriptor: result.descriptor,
+          plan: result.plan,
+          sourceReference: result.sourceReference,
+        };
+      }, mount.reference);
+
+      expect(resolved.descriptor.resolver).toBe(provider);
+      expect(resolved.descriptor.sourceMetadata?.[provider]?.providerReference).toBe(mount.reference);
+      expect(resolved.descriptor.sourceMetadata?.[provider]?.representationId).toBe('source-1');
+      expect(resolved.descriptor.sourceMetadata?.[provider]?.subtitles?.[0]).toMatchObject({
+        index: 2,
+        language: 'eng',
+        codec: 'srt',
+        embedded: false,
+        external: true,
+        default: true,
+      });
+      expect(resolved.sourceReference).toBe(mount.reference);
+      expect(resolved.plan.engine).toBe('direct');
+      expect(resolved.plan.candidateMode).toBe('FULL_PROXY');
+      expect(resolved.plan.proxy).toBe(true);
+      expect(resolved.plan.upstreamMode).toBe('direct-play');
+      expect(resolved.plan.representationId).toBe('source-1');
+      expect(resolved.plan.qualityChanged).toBe(false);
+      expect(JSON.stringify(resolved)).not.toContain('fixture-api-key');
+      expect(JSON.stringify(resolved)).not.toContain(FIXTURE_ORIGIN);
+
+      const playbackUrl = await page.evaluate(async (candidateUrl) => {
+        // Refresh the short-lived E2E access token through the normal API path
+        // before the media element requests the scoped gateway URL.
+        // @ts-ignore Vite serves application modules for the browser integration test.
+        const { apiFetch } = await import('/src/lib/api.ts');
+        await apiFetch('/api/auth/me');
+        const token = localStorage.getItem('zviewer-access-token');
+        if (!token) throw new Error('missing E2E access token');
+        return `${candidateUrl}${candidateUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
+      }, resolved.plan.candidateUrl ?? resolved.descriptor.finalUrl);
+      await page.evaluate((url) => {
+        const video = document.createElement('video');
+        video.muted = true;
+        video.playsInline = true;
+        video.src = url;
+        document.body.appendChild(video);
+        video.load();
+        void video.play();
+      }, playbackUrl);
+      const video = page.locator('video').last();
+      await expect.poll(() => video.evaluate((element: HTMLVideoElement) => element.readyState), { timeout: 15_000 }).toBeGreaterThanOrEqual(1);
+      await expect.poll(() => video.evaluate((element: HTMLVideoElement) => element.currentTime), { timeout: 15_000 }).toBeGreaterThan(0);
+
+      expect(resolved.plan.playbackSessionUrl).toBeTruthy();
+      await page.evaluate(async (sessionUrl) => {
+        // @ts-ignore Vite serves application modules for the browser integration test.
+        const {
+          startMediaPlaybackSession,
+          reportMediaPlaybackProgress,
+          stopMediaPlaybackSession,
+          cleanupMediaPlaybackSession,
+        } = await import('/src/modules/media/mediaApi.ts');
+        await startMediaPlaybackSession(sessionUrl);
+        await reportMediaPlaybackProgress(sessionUrl, 1.25, false);
+        await stopMediaPlaybackSession(sessionUrl, 1.25);
+        await cleanupMediaPlaybackSession(sessionUrl);
+      }, resolved.plan.playbackSessionUrl!);
+
+      const stats = (await (await page.request.get(`${FIXTURE_ORIGIN}/stats`)).json()) as Array<{
+        path: string;
+        method: string;
+        queryKeys?: string[];
+        hasMediaServerToken?: boolean;
+      }>;
+      const relevant = stats.filter((entry) =>
+        /\/Items\/fixture-movie\/PlaybackInfo|\/Videos\/fixture-movie\/stream|\/Sessions\/Playing|\/Videos\/ActiveEncodings/.test(entry.path));
+      expect(relevant.some((entry) => /\/Items\/fixture-movie\/PlaybackInfo/.test(entry.path) && entry.method === 'POST')).toBe(true);
+      expect(relevant.some((entry) => /\/Videos\/fixture-movie\/stream/.test(entry.path) && entry.method === 'GET')).toBe(true);
+      expect(relevant.some((entry) => entry.path.endsWith('/Sessions/Playing') && entry.method === 'POST')).toBe(true);
+      expect(relevant.some((entry) => entry.path.endsWith('/Sessions/Playing/Progress') && entry.method === 'POST')).toBe(true);
+      expect(relevant.some((entry) => entry.path.endsWith('/Sessions/Playing/Stopped') && entry.method === 'POST')).toBe(true);
+      expect(relevant.some((entry) => /\/Videos\/ActiveEncodings(?:\/Delete)?$/.test(entry.path))).toBe(true);
+      expect(relevant.every((entry) => entry.hasMediaServerToken === true)).toBe(true);
+      expect(relevant.every((entry) => !(entry.queryKeys ?? []).includes('api_key'))).toBe(true);
+    } finally {
+      await page.evaluate(async ({ provider, mountId }) => {
+        // @ts-ignore Vite serves application modules for the browser integration test.
+        const { apiFetch } = await import('/src/lib/api.ts');
+        await apiFetch(`/api/${provider}/mounts/${mountId}`, { method: 'DELETE' });
+      }, { provider, mountId: mount.mountId }).catch(() => undefined);
+    }
+  });
+}

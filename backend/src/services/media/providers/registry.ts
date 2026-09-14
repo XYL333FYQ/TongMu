@@ -7,6 +7,7 @@ import { ResolverNotApplicableError, type MediaDescriptor, type ResolverContext 
 import { legacyPlaybackClientProfile, type PlaybackClientProfileV1 } from '../playback-profile';
 import { LegacyResolverAdapter } from './legacy-resolver-adapter';
 import { FtpProvider, LocalFileProvider, OpenListProvider, WebDavProvider } from './storage-providers';
+import { EmbyProvider, JellyfinProvider } from './media-server-provider';
 import {
   assertProviderActive,
   providerActorForUser,
@@ -22,6 +23,8 @@ export function defaultProviderRegistry(): MediaProvider[] {
     new WebDavProvider(),
     new FtpProvider(),
     new OpenListProvider(),
+    new EmbyProvider(),
+    new JellyfinProvider(),
     new LegacyResolverAdapter({
       id: 'bilibili', sourceKinds: ['bilibili'], resolver: new BilibiliResolver(),
       credentialDependencies: [{ providerId: 'bilibili', owner: 'current-viewer', requirement: 'optional', scope: 'playback' }],
@@ -45,6 +48,8 @@ export class MediaProviderRegistry {
   }
 
   list(): MediaProvider[] { return [...this.providers.values()]; }
+
+  get(id: string): MediaProvider | undefined { return this.providers.get(id); }
 
   matching(input: string): MediaProvider[] {
     return this.list().filter((provider) => provider.canHandle(input));
@@ -95,6 +100,8 @@ export function providerContextFromResolverContext(context: ResolverContext): Pr
     roomId: context.roomId,
     movieId: context.movieId,
     sourceGeneration: context.sourceGeneration,
+    credentialOwnerId: context.credentialOwnerId,
+    qualityChangingTranscode: context.qualityChangingTranscode ?? 'disabled',
     signal: controller.signal,
     deadline: context.deadline ?? Date.now() + 30_000,
     profile: context.playbackClientProfile ?? legacyPlaybackClientProfile(),

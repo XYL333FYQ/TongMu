@@ -57,8 +57,6 @@ import {
 import { getActiveCliProxyUrl } from '@/modules/room/watch-together/movie-source-resolver'
 import { isInternalOpenListServer } from '@/modules/openlist/isInternal'
 import OpenListBrowser from '@/modules/openlist/OpenListBrowser'
-import { resolveEmby } from '@/modules/emby/embyApi'
-import { resolveJellyfin } from '@/modules/jellyfin/jellyfinApi'
 import MountBrowser from '@/modules/mounts/MountBrowser'
 import WebDAVBrowser from '@/modules/webdav/WebDAVBrowser'
 import ServerFilesBrowser from '@/modules/server-files/ServerFilesBrowser'
@@ -72,6 +70,7 @@ import { useSystemSettingsStore } from '@/store/systemSettingsStore'
 import { cn } from '@/lib/utils'
 import {
   resolveMediaInput,
+  stripPlaybackSessionCapabilities,
   toBilibiliResolvedSource,
   type ResolvedMedia,
 } from '@/modules/media/mediaApi'
@@ -79,6 +78,7 @@ import {
   buildServerFileStorageReference,
   buildStorageReference,
 } from '@/modules/media/storageReference'
+import { buildMediaServerReference, type MediaServerProviderId } from '@/modules/media/mediaServerReference'
 
 type SourceType =
   | 'bilibili'
@@ -122,6 +122,36 @@ function extractTitleFromUrl(url: string) {
 function normalizeMountPath(path: string): string {
   if (!path) return path
   return path.trim().replace(/^\/+/, '/')
+}
+
+function mediaServerMoviePayload(
+  provider: MediaServerProviderId,
+  mountId: number,
+  itemId: string,
+  resolved: ResolvedMedia,
+) {
+  const media = resolved.descriptor
+  const persistedPlan = { ...resolved.plan }
+  delete persistedPlan.playbackSessionUrl
+  return {
+    url: media.finalUrl,
+    title: media.title || extractTitleFromUrl(itemId),
+    source: provider,
+    sourceInput: buildMediaServerReference({ provider, mountId, itemId }),
+    mediaDescriptor: {
+      ...stripPlaybackSessionCapabilities(media),
+      playbackPlan: persistedPlan,
+    },
+    format: media.container,
+    audioUrl: media.audioUrl,
+    videoCodec: media.videoCodec,
+    audioCodec: media.audioCodec,
+    duration: media.duration,
+    // The provider candidate/profile contract owns direct-vs-gateway choice.
+    // Keep the legacy field false so old playback routes cannot bypass it.
+    directLink: false,
+    path: itemId,
+  }
 }
 
 function formatDuration(seconds: number): string {
@@ -647,41 +677,14 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
             })
             added++
           } else if (sourceType === 'emby') {
-            // Emby：解析播放信息，支持服务器转发（默认）或直链直连
-            const resolved = await resolveEmby(mountId, normalizedPath)
-            const title = resolved.title || extractTitleFromUrl(normalizedPath)
-            const mount = mounts.find((m) => m.id === mountId)
-            await addMovie(roomId, {
-              url:
-                embyDirectLink && resolved.directUrl
-                  ? resolved.directUrl
-                  : resolved.videoUrl,
-              title,
-              source: 'emby',
-              format: resolved.format,
-              duration: resolved.duration,
-              serverUrl: mount?.serverUrl,
-              path: normalizedPath,
-              directLink: embyDirectLink,
-            })
+            const sourceInput = buildMediaServerReference({ provider: 'emby', mountId, itemId: normalizedPath })
+            const resolved = await resolveMediaInput(sourceInput, { roomId })
+            await addMovie(roomId, mediaServerMoviePayload('emby', mountId, normalizedPath, resolved))
             added++
           } else if (sourceType === 'jellyfin') {
-            const resolved = await resolveJellyfin(mountId, normalizedPath)
-            const title = resolved.title || extractTitleFromUrl(normalizedPath)
-            const mount = mounts.find((m) => m.id === mountId)
-            await addMovie(roomId, {
-              url:
-                jellyfinDirectLink && resolved.directUrl
-                  ? resolved.directUrl
-                  : resolved.videoUrl,
-              title,
-              source: 'jellyfin',
-              format: resolved.format,
-              duration: resolved.duration,
-              serverUrl: mount?.serverUrl,
-              path: normalizedPath,
-              directLink: jellyfinDirectLink,
-            })
+            const sourceInput = buildMediaServerReference({ provider: 'jellyfin', mountId, itemId: normalizedPath })
+            const resolved = await resolveMediaInput(sourceInput, { roomId })
+            await addMovie(roomId, mediaServerMoviePayload('jellyfin', mountId, normalizedPath, resolved))
             added++
           }
         }
@@ -700,8 +703,6 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
       selectedMountId,
       sourceType,
       ftp.serverUrl,
-      embyDirectLink,
-      jellyfinDirectLink,
       mounts,
       addMovie,
     ]
@@ -1134,21 +1135,9 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           return
         }
         setResolveProgress('正在解析 Emby 条目...')
-        const resolved = await resolveEmby(mountId, itemId)
-        const mount = mounts.find((m) => m.id === mountId)
-        await addMovie(roomId, {
-          url:
-            embyDirectLink && resolved.directUrl
-              ? resolved.directUrl
-              : resolved.videoUrl,
-          title: resolved.title || extractTitleFromUrl(itemId),
-          source: 'emby',
-          format: resolved.format,
-          duration: resolved.duration,
-          serverUrl: mount?.serverUrl,
-          path: itemId,
-          directLink: embyDirectLink,
-        })
+        const sourceInput = buildMediaServerReference({ provider: 'emby', mountId, itemId })
+        const resolved = await resolveMediaInput(sourceInput, { roomId })
+        await addMovie(roomId, mediaServerMoviePayload('emby', mountId, itemId, resolved))
         resetForm()
         message.success('影片已添加')
       } else if (sourceType === 'jellyfin') {
@@ -1165,21 +1154,9 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           return
         }
         setResolveProgress('正在解析 Jellyfin 条目...')
-        const resolved = await resolveJellyfin(mountId, itemId)
-        const mount = mounts.find((m) => m.id === mountId)
-        await addMovie(roomId, {
-          url:
-            jellyfinDirectLink && resolved.directUrl
-              ? resolved.directUrl
-              : resolved.videoUrl,
-          title: resolved.title || extractTitleFromUrl(itemId),
-          source: 'jellyfin',
-          format: resolved.format,
-          duration: resolved.duration,
-          serverUrl: mount?.serverUrl,
-          path: itemId,
-          directLink: jellyfinDirectLink,
-        })
+        const sourceInput = buildMediaServerReference({ provider: 'jellyfin', mountId, itemId })
+        const resolved = await resolveMediaInput(sourceInput, { roomId })
+        await addMovie(roomId, mediaServerMoviePayload('jellyfin', mountId, itemId, resolved))
         resetForm()
         message.success('影片已添加')
       } else if (sourceType === 'server-files') {

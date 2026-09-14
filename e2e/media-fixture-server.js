@@ -5,6 +5,7 @@ const { createCipheriv } = require('node:crypto');
 const PORT = 3456;
 const key = Buffer.from('zviewer-e2e-key!');
 const iv = Buffer.alloc(16);
+const MEDIA_SERVER_TOKEN = 'fixture-api-key';
 const requests = [];
 let assets;
 
@@ -162,6 +163,114 @@ function sendText(req, res, body, contentType) {
   sendBuffer(req, res, Buffer.from(body), contentType);
 }
 
+function mediaServerPlaybackInfo() {
+  return {
+    PlaySessionId: 'fixture-provider-play-session',
+    MediaSources: [{
+      Id: 'source-1',
+      Name: 'Fixture Movie',
+      Path: '/fixture/movie.mp4',
+      Protocol: 'Http',
+      Container: 'mp4',
+      Size: assets.muxed.length,
+      Bitrate: 400000,
+      Width: 160,
+      Height: 90,
+      RunTimeTicks: 30000000,
+      SupportsDirectPlay: true,
+      SupportsDirectStream: true,
+      SupportsTranscoding: true,
+      DirectStreamPreservesQuality: true,
+      MediaStreams: [
+        { Index: 0, Type: 'Video', Codec: 'h264', DisplayTitle: 'Fixture Video' },
+        { Index: 1, Type: 'Audio', Codec: 'aac', Channels: 2, DisplayTitle: 'Fixture Audio' },
+        {
+          Index: 2,
+          Type: 'Subtitle',
+          Codec: 'srt',
+          Language: 'eng',
+          DisplayTitle: 'English',
+          IsExternal: true,
+          IsDefault: true,
+        },
+      ],
+    }],
+  };
+}
+
+function mediaServerAuthorized(req, res) {
+  const token = req.headers['x-emby-token'];
+  if (token !== MEDIA_SERVER_TOKEN) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ Message: 'fixture media-server token rejected' }));
+    return false;
+  }
+  return true;
+}
+
+async function handleMediaServerRequest(req, res, path) {
+  const apiPath = path.replace(/^\/emby(?=\/)/i, '');
+  const itemMatch = /^\/Items\/([^/]+)\/PlaybackInfo$/i.exec(apiPath);
+  const streamMatch = /^\/Videos\/([^/]+)\/stream$/i.exec(apiPath);
+  const transcodeMatch = /^\/Videos\/([^/]+)\/master\.m3u8$/i.exec(apiPath);
+  const subtitleMatch = /^\/Videos\/([^/]+)\/([^/]+)\/Subtitles\/(\d+)\/Stream(?:\.[^/]+)?$/i.exec(apiPath);
+  const isMediaServerPath = apiPath === '/Users/Me'
+    || apiPath === '/Users/authenticatebyname'
+    || apiPath === '/Sessions/Playing'
+    || apiPath === '/Sessions/Playing/Progress'
+    || apiPath === '/Sessions/Playing/Stopped'
+    || apiPath === '/Videos/ActiveEncodings/Delete'
+    || apiPath === '/Videos/ActiveEncodings'
+    || !!itemMatch || !!streamMatch || !!transcodeMatch || !!subtitleMatch;
+  if (!isMediaServerPath) return false;
+  if (!mediaServerAuthorized(req, res)) return true;
+
+  if (apiPath === '/Users/authenticatebyname' && req.method === 'POST') {
+    await readJson(req).catch(() => ({}));
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ AccessToken: MEDIA_SERVER_TOKEN, User: { Id: 'fixture-user', Name: 'Fixture User' } }));
+    return true;
+  }
+  if (apiPath === '/Users/Me' && req.method === 'GET') {
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ Id: 'fixture-user', Name: 'Fixture User', ServerId: 'fixture-server' }));
+    return true;
+  }
+  if (itemMatch && req.method === 'POST') {
+    await readJson(req).catch(() => ({}));
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify(mediaServerPlaybackInfo()));
+    return true;
+  }
+  if (streamMatch && streamMatch[1] === 'fixture-movie' && (req.method === 'GET' || req.method === 'HEAD')) {
+    sendBuffer(req, res, assets.muxed, 'video/mp4');
+    return true;
+  }
+  if (transcodeMatch && transcodeMatch[1] === 'fixture-movie' && (req.method === 'GET' || req.method === 'HEAD')) {
+    sendText(req, res, '#EXTM3U\n#EXT-X-ENDLIST\n', 'application/vnd.apple.mpegurl');
+    return true;
+  }
+  if (subtitleMatch && subtitleMatch[1] === 'fixture-movie' && subtitleMatch[2] === 'source-1' && (req.method === 'GET' || req.method === 'HEAD')) {
+    sendText(req, res, '1\n00:00:00,000 --> 00:00:01,000\nFixture subtitle\n', 'text/plain; charset=utf-8');
+    return true;
+  }
+  if (apiPath === '/Sessions/Playing' || apiPath === '/Sessions/Playing/Progress' || apiPath === '/Sessions/Playing/Stopped') {
+    if (req.method === 'POST') await readJson(req).catch(() => ({}));
+    res.writeHead(204);
+    res.end();
+    return true;
+  }
+  if (apiPath === '/Videos/ActiveEncodings/Delete' || apiPath === '/Videos/ActiveEncodings') {
+    if (req.method === 'POST') await readJson(req).catch(() => ({}));
+    res.writeHead(204);
+    res.end();
+    return true;
+  }
+  res.writeHead(404);
+  res.end('media-server fixture route not found');
+  return true;
+}
+
 function sendWebDavProperties(req, res, path, includeChildren) {
   const base = `http://127.0.0.1:${PORT}/dav`;
   const file = `${base}/movie.mp4`;
@@ -253,8 +362,17 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   if (!assets) { res.writeHead(503); res.end('fixture not configured'); return; }
-  const path = new URL(req.url, `http://127.0.0.1:${PORT}`).pathname;
-  requests.push({ path, method: req.method, range: req.headers.range || '' });
+  const requestUrl = new URL(req.url, `http://127.0.0.1:${PORT}`);
+  const path = requestUrl.pathname;
+  requests.push({
+    path,
+    method: req.method,
+    range: req.headers.range || '',
+    queryKeys: [...requestUrl.searchParams.keys()].sort(),
+    hasMediaServerToken: typeof req.headers['x-emby-token'] === 'string',
+  });
+
+  if (await handleMediaServerRequest(req, res, path)) return;
 
   if (path === '/dav/' || path === '/dav/movie.mp4') {
     if (req.method === 'PROPFIND') return sendWebDavProperties(req, res, path, path === '/dav/');

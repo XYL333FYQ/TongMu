@@ -28,6 +28,29 @@ export interface DrmInfo {
   reason?: string;
 }
 
+/** Credential-free facts that identify a provider representation for later refresh. */
+export interface MediaServerSourceMetadata {
+  providerReference: string;
+  provider: 'emby' | 'jellyfin';
+  itemId: string;
+  mediaSourceId: string;
+  representationId: string;
+  upstreamMode: 'direct-play' | 'direct-stream' | 'transcode';
+  qualityPreserved: boolean;
+  qualityChanged: boolean;
+  subtitles?: Array<{
+    index: number;
+    language?: string;
+    label?: string;
+    codec?: string;
+    embedded: boolean;
+    external: boolean;
+    forced: boolean;
+    default: boolean;
+    sourceReference: string;
+  }>;
+}
+
 /** Resolver、probe、planner 与播放器之间唯一的媒体事实对象。 */
 export interface MediaDescriptor {
   title?: string;
@@ -78,6 +101,8 @@ export interface MediaDescriptor {
       pages?: Array<{ page: number; cid: number; part: string; duration: number }>;
       currentPage?: number;
     };
+    emby?: MediaServerSourceMetadata;
+    jellyfin?: MediaServerSourceMetadata;
   };
   drm: DrmInfo;
   expiresAt?: number;
@@ -124,6 +149,8 @@ export interface ResolverContext {
   roomId?: string;
   movieId?: number;
   sourceGeneration?: number;
+  credentialOwnerId?: string;
+  qualityChangingTranscode?: 'disabled' | 'explicit';
   playbackClientProfile?: import('./playback-profile').PlaybackClientProfileV1;
   credentialOwnerPolicy?: import('./providers/types').ProviderCredentialOwner;
 }

@@ -34,8 +34,25 @@ export interface PlaybackViabilityResult {
 }
 
 function candidateQualityMatches(descriptor: MediaDescriptor, candidate: PlaybackCandidate): boolean {
+  // A provider transcode is a separately labelled representation. Its output
+  // quality is intentionally not compared with the source quality here; the
+  // provider only emits it when the request carries explicit opt-in policy.
+  if (candidate.qualityChanged) return true;
   if (descriptor.actualQuality === undefined || candidate.actualQuality === undefined) return true;
   return descriptor.actualQuality === candidate.actualQuality;
+}
+
+function capabilityFactsForCandidate(descriptor: MediaDescriptor, candidate: PlaybackCandidate) {
+  return capabilityFactsForDescriptor(
+    {
+      transport: candidate.transport,
+      container: candidate.container,
+      videoCodec: candidate.videoCodec ? String(candidate.videoCodec) : descriptor.videoCodec,
+      audioCodec: candidate.audioCodec ? String(candidate.audioCodec) : descriptor.audioCodec,
+    },
+    candidate.requiredPipelines,
+    candidate.exactCodecStrings,
+  );
 }
 
 function directUrlIsMixedContent(url: string, profile: PlaybackClientProfileV1, context: PlaybackViabilityContext): boolean {
@@ -50,11 +67,7 @@ function directUrlIsMixedContent(url: string, profile: PlaybackClientProfileV1, 
 }
 
 function capabilityReason(descriptor: MediaDescriptor, candidate: PlaybackCandidate): ViabilityReason {
-  const facts = capabilityFactsForDescriptor(
-    descriptor,
-    candidate.requiredPipelines,
-    candidate.exactCodecStrings,
-  );
+  const facts = capabilityFactsForCandidate(descriptor, candidate);
   if (facts.videoCodec === 'unknown' || facts.audioCodec === 'unknown') return 'exact-codec-mismatch';
   return 'unsupported-codec-tuple';
 }
@@ -77,11 +90,7 @@ export function filterPlaybackCandidates(
     if (descriptor.drm?.protected) reason = 'drm-protected';
     else if (!candidateQualityMatches(descriptor, candidate)) reason = 'quality-mismatch';
     else {
-      const facts = capabilityFactsForDescriptor(
-        descriptor,
-        candidate.requiredPipelines,
-        candidate.exactCodecStrings,
-      );
+      const facts = capabilityFactsForCandidate(descriptor, candidate);
       if (!profileSupportsCapability(profile, facts)) reason = capabilityReason(descriptor, candidate);
     }
 

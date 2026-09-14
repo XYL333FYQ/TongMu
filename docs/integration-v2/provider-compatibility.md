@@ -1,10 +1,10 @@
 # Phase 2 provider compatibility ledger
 
-This ledger is intentionally explicit about the boundary reached in Phase 2B.
+This ledger is intentionally explicit about the boundary reached in Phase 2C-1.
 The common provider contract now owns playback resolution for the four storage
-families in scope here. The remaining route-specific source families are still
-temporary adapters/gaps and are not counted as converged merely because they
-can still play media.
+families plus Emby and Jellyfin. Anime/catalog and live source families remain
+temporary adapters/gaps and are not counted as converged merely because they can
+still play media.
 
 ## Converged through the Media Core entrypoint
 
@@ -18,10 +18,12 @@ can still play media.
 | WebDAV | `webdav` | `WebDavProvider` -> public direct candidate only for an anonymous safe target, otherwise scoped gateway/proxy | saved mount owner; password remains server-private | AbortSignal/deadline reaches stat/fetch; configured private-mount boundary; shared ByteRange policy |
 | FTP | `ftp` | `FtpProvider` -> no browser direct candidate; scoped HTTP media gateway | saved mount owner; password remains server-private | REST seek capability is represented; socket/client/stream close on abort, timeout and disconnect |
 | OpenList/Alist | `openlist` | `OpenListProvider` -> visibility-classified temporary direct candidate or scoped proxy candidate | saved mount owner/source creator; API credential remains server-private | expiry is descriptor data and refresh is provider re-resolution; API cancellation and token cache remain server-side |
+| Emby | `emby` | stable `provider://emby` reference -> `EmbyProvider` -> private source, descriptor, candidates, viability, client planner | saved mount owner; API key/password remain server-private | provider start/progress/stop/cleanup through bounded generation-bound lifecycle; legacy facade retained |
+| Jellyfin | `jellyfin` | stable `provider://jellyfin` reference -> `JellyfinProvider` -> private source, descriptor, candidates, viability, client planner | saved mount owner; API key/password remain server-private | provider start/progress/stop/cleanup through bounded generation-bound lifecycle; legacy facade retained |
 
-The first four rows are native storage providers under the common contract;
-`LegacyResolverAdapter` remains only for the older Bilibili/direct/generic-web/
-BrowserResolver families. None of these paths copy credentials into
+The storage rows and the two media-server rows are native providers under the
+common contract; `LegacyResolverAdapter` remains only for the older
+Bilibili/direct/generic-web/BrowserResolver families. None of these paths copy credentials into
 `ProviderContext`, return a `PlaybackPlan`, or make the room DTO a
 provider-private object.
 
@@ -40,6 +42,8 @@ entrypoint and must not create a second server-side `PlaybackPlan`.
 | WebDAV | `/api/webdav/mounts`, `/mounts/:id/browse`, `/resolve` | `/proxy`, `/direct-url`, `/stream` | `storage://webdav` + `WebDavProvider` | safe anonymous public direct only; credentialed/private mounts use gateway | existing WebDAV ByteRange/proxy validation; old routes remain compatibility surfaces |
 | FTP | `/api/ftp/mounts`, `/mounts/:id/browse`, `/resolve` | `/proxy`, `/stream` | `storage://ftp` + `FtpProvider` | gateway only; no fake `ftp://` browser candidate | seek-capable REST reader when available; honest no-seek metadata; old routes retained |
 | OpenList/Alist | `/api/openlist/mounts`, `/mounts/:id/browse`, `/search` | `/resolve`, `/direct-url`, `/proxy`, `/stream` | `storage://openlist` + `OpenListProvider` | short-lived bearer URL only when public-target policy allows; otherwise gateway | provider fetch/expiry/refresh semantics; old routes retained |
+| Emby | `/api/emby/mounts`, `/mounts/:id/browse`, `/resolve` | `/proxy`, `/stream` and old resolve facade | `provider://emby` + `EmbyProvider` via `mediaApi` | provider credentials are never published; current frontend uses scoped Media Core gateway candidates | old routes remain for old records/browse-era clients; removal requires record migration and no consumers |
+| Jellyfin | `/api/jellyfin/mounts`, `/mounts/:id/browse`, `/resolve` | `/proxy`, `/stream` and old resolve facade | `provider://jellyfin` + `JellyfinProvider` via `mediaApi` | provider credentials are never published; current frontend uses scoped Media Core gateway candidates | old routes remain for old records/browse-era clients; removal requires record migration and no consumers |
 
 Removal condition for each legacy playback route: all stored records have been
 re-resolved through Media Core, the compatibility facade has had a documented
@@ -52,7 +56,6 @@ described as Phase 2-complete:
 
 | Source family | Current state | Required next step |
 | --- | --- | --- |
-| Emby/Jellyfin | legacy play URLs and client APIs | map direct-play/transcode/session lifecycle and profile filtering into the common contract |
 | AniSubs/Kazumi/anime sources | scraping/catalog routes | move extraction behind Safe Fetch and private-source redaction |
 | Live HLS/HTTP-FLV | player-specific live paths | add live provider candidates, refresh, disconnect and generation cleanup |
 
@@ -74,3 +77,15 @@ invent a second playback planner or publish provider credentials.
   handles, not a host browser's plan.
 - Bilibili requested, actual, source-maximum, and available-maximum quality
   remain distinct. CDN fallback may change origin, never representation quality.
+- Emby and Jellyfin direct play, same-quality direct stream/remux, and
+  quality-changing transcode are separate candidate facts. Provider transcode
+  candidates are emitted only for an explicit opt-in request; the default
+  resolver never silently lowers video quality for an unsupported codec.
+- Media-server sessions are sealed as opaque capabilities. The host player
+  binds them to actor, room/movie, provider, media source, and source
+  generation; progress is non-authoritative and cleanup is bounded,
+  idempotent, best effort, and stale-generation aware.
+- Existing Emby/Jellyfin movie rows are accepted through `media-movie:<id>`
+  compatibility refresh and upgraded to stable provider references after a
+  successful resolution. Temporary stream URLs are not persisted as the new
+  identity.

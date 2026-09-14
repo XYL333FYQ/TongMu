@@ -1,4 +1,4 @@
-import type { MediaDescriptor, PlaybackPlan } from './mediaApi'
+import type { MediaDescriptor, PlaybackPlan, PlaybackTransportCandidate } from './mediaApi'
 import {
   audioCodecFamily,
   isPlaybackClientProfile,
@@ -20,11 +20,7 @@ const CANDIDATE_ORDER = new Map([
   ['FULL_PROXY', 3],
 ])
 
-interface TransportCandidate {
-  mode: 'DIRECT' | 'MANIFEST_ASSISTED' | 'PARTIAL_PROXY' | 'FULL_PROXY'
-  url: string
-  audioUrl?: string
-}
+type TransportCandidate = PlaybackTransportCandidate
 
 function blocked(reason: string): PlaybackPlan {
   return {
@@ -108,29 +104,26 @@ function exactTokens(values?: string[]): string[] {
     .filter((token) => /^(?:avc1|avc3|hev1|hvc1|av01|vp0[89]|mp4a|opus|vorbis|ac-?3|ec-?3|dts|flac)(?:[.\d]|$)/.test(token))
 }
 
-function profileSupports(media: MediaDescriptor, profile: PlaybackClientProfileV1): boolean {
-  const transport = transportForMedia(media)
-  const container = media.container
+function candidateSupports(media: MediaDescriptor, candidate: TransportCandidate, profile: PlaybackClientProfileV1): boolean {
+  if (candidate.mode !== 'DIRECT' && !profile.supportsProviderProxy) return false
+  const transport = candidate.transport ?? transportForMedia(media)
+  const container = candidate.container ?? media.container
   if (container === 'unknown') return false
-  const video = videoFamily(media.videoCodec)
-  const audio = audioCodecFamily(media.audioCodec) as PlaybackAudioCodec | undefined
-  const exact = exactTokens([media.videoCodec, media.audioCodec])
+  const video = candidate.videoCodec ?? videoFamily(media.videoCodec)
+  const audio = candidate.audioCodec ?? audioCodecFamily(media.audioCodec) as PlaybackAudioCodec | undefined
+  const exact = candidate.exactCodecStrings ?? exactTokens([media.videoCodec, media.audioCodec])
+  const required = candidate.requiredPipelines ?? requiredPipelines(media)
   return profile.mediaCapabilities.some((capability) => {
     if (capability.transport !== transport || capability.container !== container) return false
-    if (!requiredPipelines(media).includes(capability.pipeline)) return false
+    if (!required.includes(capability.pipeline)) return false
     if (video && capability.videoCodec !== video) return false
     if (audio && capability.audioCodec !== audio) return false
     if (exact.length && capability.exactCodecStrings?.length) {
       const advertised = new Set(exactTokens(capability.exactCodecStrings))
-      if (!exact.every((token) => advertised.has(token))) return false
+      if (!exactTokens(exact).every((token) => advertised.has(token))) return false
     }
     return true
   })
-}
-
-function candidateSupports(media: MediaDescriptor, candidate: TransportCandidate, profile: PlaybackClientProfileV1): boolean {
-  if (candidate.mode !== 'DIRECT' && !profile.supportsProviderProxy) return false
-  return profileSupports(media, profile)
 }
 
 function planWithProfile(
@@ -143,48 +136,67 @@ function planWithProfile(
 
   const viable = candidates
     .filter((candidate) => candidateSupports(media, candidate, profile))
-    .sort((a, b) => (CANDIDATE_ORDER.get(a.mode) ?? 99) - (CANDIDATE_ORDER.get(b.mode) ?? 99))
+    .sort((a, b) => {
+      const routeOrder = (CANDIDATE_ORDER.get(a.mode) ?? 99) - (CANDIDATE_ORDER.get(b.mode) ?? 99)
+      if (routeOrder) return routeOrder
+      const aUpstream = a.upstreamMode === 'transcode' ? 2 : a.upstreamMode === 'direct-stream' ? 1 : 0
+      const bUpstream = b.upstreamMode === 'transcode' ? 2 : b.upstreamMode === 'direct-stream' ? 1 : 0
+      return aUpstream - bUpstream
+    })
   const selected = viable[0]
   if (!selected) return blocked('没有与当前容器、编解码器和播放管线同时匹配的候选路线')
 
   const proxy = selected.mode !== 'DIRECT'
-  if (media.transport === 'hls') {
+  const selectedTransport = selected.transport ?? transportForMedia(media)
+  const selectedContainer = selected.container ?? media.container
+  if (selectedTransport === 'hls') {
     return {
       engine: 'hls', mode: 'manifest', proxy, videoAction: 'direct', audioAction: 'direct',
       candidateUrl: selected.url, candidateMode: selected.mode,
-      reasons: [proxy ? '客户端选择可行的 HLS 中转候选' : '客户端选择可行的 HLS 直连候选'],
+      playbackSessionUrl: selected.playbackSessionUrl, upstreamMode: selected.upstreamMode,
+      representationId: selected.representationId, qualityChanged: selected.qualityChanged,
+      reasons: [selected.qualityChanged ? '客户端选择了显式授权的 Provider 转码表示' : proxy ? '客户端选择可行的 HLS 中转候选' : '客户端选择可行的 HLS 直连候选'],
     }
   }
-  if (media.transport === 'dash') {
+  if (selectedTransport === 'dash') {
     return {
       engine: 'dash', mode: 'manifest', proxy, videoAction: 'direct', audioAction: 'direct',
-      candidateUrl: selected.url, candidateMode: selected.mode, reasons: ['客户端选择可行的 DASH 候选'],
+      candidateUrl: selected.url, candidateMode: selected.mode, playbackSessionUrl: selected.playbackSessionUrl,
+      upstreamMode: selected.upstreamMode, representationId: selected.representationId, qualityChanged: selected.qualityChanged,
+      reasons: [selected.qualityChanged ? '客户端选择了显式授权的 Provider 转码表示' : '客户端选择可行的 DASH 候选'],
     }
   }
-  if (media.transport === 'flv') {
+  if (selectedTransport === 'flv') {
     return {
       engine: 'flv', mode: 'manifest', proxy, videoAction: 'direct', audioAction: 'direct',
-      candidateUrl: selected.url, candidateMode: selected.mode, reasons: ['客户端选择可行的 FLV 候选'],
+      candidateUrl: selected.url, candidateMode: selected.mode, playbackSessionUrl: selected.playbackSessionUrl,
+      upstreamMode: selected.upstreamMode, representationId: selected.representationId, qualityChanged: selected.qualityChanged,
+      reasons: [selected.qualityChanged ? '客户端选择了显式授权的 Provider 转码表示' : '客户端选择可行的 FLV 候选'],
     }
   }
 
-  const usesPlaysVideo = ['mkv', 'ts', 'avi', 'wmv'].includes(media.container) ||
-    (!!media.audioCodec && AUDIO_TRANSCODE_CODECS.has(media.audioCodec.toLowerCase()))
+  const selectedAudio = selected.audioCodec ?? audioCodecFamily(media.audioCodec) as PlaybackAudioCodec | undefined
+  const usesPlaysVideo = selected.requiredPipelines?.includes('playsvideo') === true ||
+    ['mkv', 'ts', 'avi', 'wmv'].includes(selectedContainer) ||
+    (!!selectedAudio && AUDIO_TRANSCODE_CODECS.has(selectedAudio.toLowerCase())) ||
+    selected.audioTranscoded === true
   if (usesPlaysVideo) {
     if (media.rangeSupported === false) return blocked('源站不支持 Range，playsvideo 无法保持同一媒体表示')
     const canPlay = profile.mediaCapabilities.some((capability) => capability.pipeline === 'playsvideo')
     if (!canPlay) return blocked('当前客户端没有可用的 playsvideo 管线')
     return {
-      engine: 'playsvideo', mode: AUDIO_TRANSCODE_CODECS.has(media.audioCodec?.toLowerCase() ?? '') ? 'audio-transcode' : 'remux',
-      proxy, videoAction: 'copy', audioAction: AUDIO_TRANSCODE_CODECS.has(media.audioCodec?.toLowerCase() ?? '') ? 'transcode-aac' : 'copy',
-      candidateUrl: selected.url, candidateMode: selected.mode,
-      reasons: ['客户端选择 playsvideo 兼容管线；表示和清晰度保持不变'],
+      engine: 'playsvideo', mode: selected.audioTranscoded || AUDIO_TRANSCODE_CODECS.has(media.audioCodec?.toLowerCase() ?? '') ? 'audio-transcode' : 'remux',
+      proxy, videoAction: 'copy', audioAction: selected.audioTranscoded || AUDIO_TRANSCODE_CODECS.has(media.audioCodec?.toLowerCase() ?? '') ? 'transcode-aac' : 'copy',
+      candidateUrl: selected.url, candidateMode: selected.mode, playbackSessionUrl: selected.playbackSessionUrl,
+      upstreamMode: selected.upstreamMode, representationId: selected.representationId, qualityChanged: selected.qualityChanged,
+      reasons: [selected.qualityChanged ? '客户端选择了显式授权的 Provider 转码表示' : '客户端选择 playsvideo 兼容管线；保持视频表示和清晰度'],
     }
   }
   return {
     engine: 'direct', mode: 'direct', proxy, videoAction: 'direct', audioAction: 'direct',
-    candidateUrl: selected.url, candidateMode: selected.mode,
-    reasons: [proxy ? '客户端选择可行的同质量中转候选' : '客户端选择可行的同质量直连候选'],
+    candidateUrl: selected.url, candidateMode: selected.mode, playbackSessionUrl: selected.playbackSessionUrl,
+    upstreamMode: selected.upstreamMode, representationId: selected.representationId, qualityChanged: selected.qualityChanged,
+    reasons: [selected.qualityChanged ? '客户端选择了显式授权的 Provider 转码表示' : proxy ? '客户端选择可行的同质量中转候选' : '客户端选择可行的同质量直连候选'],
   }
 }
 

@@ -10,8 +10,11 @@ Phase 2 has a working core checkpoint: the versioned client profile, server
 viability filter, client-owned planner path, provider contract/registry, and
 deterministic tamper coverage are implemented. Phase 2B additionally converges
 Local/server files, WebDAV, FTP, and OpenList/Alist playback resolution through
-the Media Core. Full Phase 2 remains open while Emby, Jellyfin, anime/catalog,
-and live routes are still documented temporary adapters or legacy surfaces.
+the Media Core. Phase 2C-1 now converges Emby and Jellyfin playback through the
+same path, including profile viability, private credentials, representation
+facts, and provider session cleanup. Full Phase 2 remains open while
+AniSubs/Kazumi/anime and live HLS/HTTP-FLV routes are still temporary adapters
+or legacy surfaces.
 
 Phase 1 restored the declared dependency baseline, closed the scoped credential and
 token-revocation P0/P1 defects, introduced the shared ByteRange core, and added a
@@ -46,9 +49,11 @@ These remote values identify the upstream state observed on 2026-09-13; they do 
 - The server owns secrets, authorization, source resolution, and safety/viability facts. The client owns the final `PlaybackPlan` choice.
 - Rooms share media facts/descriptors and source generation, not a device-specific playback plan.
 - Bilibili, Direct URL, Generic Web, and BrowserResolver are substantially integrated with the new core.
-- Emby, Jellyfin, anime/Kazumi/AniSubs paths, and some live paths still use
-  legacy-specific contracts or routes. Storage browse/manage APIs remain
-  provider-specific by design, while their new playback path is Media Core.
+- Emby and Jellyfin playback now use separate Media Core providers; their
+  browse/manage APIs and legacy playback routes remain compatibility surfaces.
+  Anime/Kazumi/AniSubs paths and some live paths still use legacy-specific
+  contracts or routes. Storage browse/manage APIs remain provider-specific by
+  design, while their new playback path is Media Core.
 - Safe Fetch and BrowserResolver provide meaningful SSRF and network-policy defenses, but every proxy/resolver path must continue to use the same policy boundary.
 - SQLite/config persistence remains rooted at `/app/config`; the root Docker entry retains Playwright/Chromium and `shm_size` expectations.
 
@@ -68,7 +73,7 @@ to do that work safely.
 
 ### P1 — high-priority integration and reliability gaps
 
-1. Emby, Jellyfin, anime/catalog, and live providers still bypass the common private-source/descriptor/candidate contract, so authorization, redaction, quality, and fallback rules are not uniformly enforced there.
+1. AniSubs/Kazumi/anime and live providers still bypass the common private-source/descriptor/candidate contract, so authorization, redaction, quality, and fallback rules are not uniformly enforced there.
 2. HLS rewriting is useful but untyped and lacks bounded manifest-resource protection comparable to SyncTV's mapper.
 3. DASH rewriting does not yet cover the full MPD surface needed for `SegmentBase`, representation indexes, bitstream-switching resources, `Location`, and xlink semantics.
 4. Realtime video and future music synchronization do not yet share a documented `RealtimeSyncCore`; sequence, generation, reconnect, host loss, request/ack, and stale-event rules are duplicated or incomplete.
@@ -177,6 +182,65 @@ Media Core descriptor; it is documented as compatibility debt, not a new path.
 - Local File has no provider credential. Legacy movie credential fields keep
   their existing compatibility transformer and are not used by new
   `storage://` references.
+
+## Phase 2C-1 Emby + Jellyfin convergence validation
+
+Phase 2C-1 is **COMPLETE within its scoped boundary**. This does not complete
+Phase 2 as a whole.
+
+- Emby and Jellyfin have separate `EmbyProvider` and `JellyfinProvider`
+  boundaries. Their saved identity is a credential-free
+  `provider://<provider>?mountId=...&itemId=...` reference; server URL, API
+  key/password, user identity, media-source data, upstream headers, and play
+  session identity remain sealed/private.
+- Playback follows Provider -> `PrivateMediaSource` -> public descriptor ->
+  candidate list -> server viability -> browser `PlaybackClientProfile` and
+  `localPlanner`. The server does not return or persist a final browser plan.
+- Direct Play, proven same-quality Direct Stream/remux, and quality-changing
+  Transcode are separate candidate facts. Provider video transcode is disabled
+  by default and only appears with an explicit opt-in flag. The existing
+  playsvideo compatibility route remains available for client-side remux/audio
+  compatibility.
+- Session start/progress/stop/cleanup uses sealed opaque capabilities and a
+  bounded coordinator. The host player reports provider progress separately
+  from room truth; generation replacement, abort, stale progress, duplicate
+  cleanup, provider failure, and room/source abandonment are covered.
+- Old Emby/Jellyfin rows can be refreshed through `media-movie:<id>` and are
+  upgraded to the stable provider reference after a successful resolution.
+  Browse, mount-management, and legacy proxy/resolve routes remain facades for
+  the compatibility window; the current add/play frontend uses `mediaApi`.
+
+### Phase 2C-1 validation
+
+| Check | Command | Result | Evidence / limitation |
+| --- | --- | ---: | --- |
+| Backend typecheck/build | `npm run build -w backend` | PASS | Separate Emby/Jellyfin clients/providers, gateway/session routes compile |
+| Backend tests | `npm test -w backend` | PASS with 1 skip | 78 passing, 1 Windows symlink-escape skip; 8 Phase 2C-1 provider/session tests pass |
+| Frontend tests | `npm test -w frontend` | PASS | 9/9 |
+| Frontend production build | `npm run build -w frontend` | PASS | Existing MediaBunny dynamic-import and large-chunk warnings remain |
+| Focused frontend lint | changed-file ESLint | BASELINE BLOCKED | Existing CRLF/Prettier, React Compiler/ref, and set-state-in-effect findings remain; no lint rule was weakened |
+| Chromium media fixture E2E | `npx playwright test e2e/media-playback.spec.ts --reporter=line` | PASS | 16/16, including Emby and Jellyfin fixture playback through `mediaApi`, Range/subtitle access, and session lifecycle calls |
+| Real Emby server | external account/server | NOT RUN | No real Emby server/account was supplied |
+| Real Jellyfin server | external account/server | NOT RUN | No real Jellyfin server/account was supplied |
+| Diff whitespace check | `git diff --check` | PASS | No whitespace errors |
+
+### Phase 2C-1 secret and quality boundary
+
+- **Encrypted now:** new `UserMount.password` and `UserMount.apiKey` writes use
+  the existing AES-256-GCM `SecretVault` transformer; media/session
+  capabilities are separately sealed server-side.
+- **Legacy readable:** existing non-envelope mount credentials remain readable
+  so old deployments continue to work; saving the row upgrades that value.
+- **Plaintext legacy remaining:** pre-existing mount rows that have not been
+  saved remain plaintext in the database. No destructive bulk migration was
+  attempted; this remains a Phase 6 debt.
+- **Quality invariant:** no unsupported codec or transport failure silently
+  requests a lower-quality provider video transcode. Lower-resolution or
+  codec-changing output is only represented as an explicit transcode
+  candidate; transport fallback and proven same-quality remux remain distinct.
+
+Overall Phase 2 remains **BLOCKED** by AniSubs/Kazumi/anime convergence and Live
+HLS/HTTP-FLV convergence, as expected for this checkpoint.
 
 ## Migration foundation boundary
 

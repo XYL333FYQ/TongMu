@@ -1,7 +1,12 @@
 import { useRoomStore } from '@/store/roomStore'
 import { registerMediaTransport } from '@/modules/media/transport'
 import { planPlayback } from '@/modules/media/localPlanner'
-import { browserCapabilities, type MediaDescriptor } from '@/modules/media/mediaApi'
+import {
+  resolveMediaInput,
+  stripPlaybackSessionCapabilities,
+  type MediaDescriptor,
+} from '@/modules/media/mediaApi'
+import { collectPlaybackClientProfile } from '@/modules/media/playbackProfile'
 /**
  * 影片播放源解析器（从 useWatchTogether.loadMovie 抽取）。
  *
@@ -25,7 +30,7 @@ import {
   buildAniSubsProxyUrl,
   needsAniSubsProxy,
 } from '@/modules/anisubs'
-import { resolveMediaInput, type ResolvedMedia } from '@/modules/media/mediaApi'
+import type { ResolvedMedia } from '@/modules/media/mediaApi'
 
 /** 房主刷新恢复时由后端返回的最近一次播放状态（源相关子集） */
 export interface RecoverySourceInfo {
@@ -81,6 +86,8 @@ export interface ResolvedMovieSource {
   noProxyFallback?: boolean
   /** Present only for the server-side Bilibili Media Core path. */
   mediaCore?: ResolvedMedia
+  /** Opaque provider-session capability; kept local to the host player. */
+  playbackSessionUrl?: string
 }
 
 export interface ResolveMovieSourceOptions {
@@ -95,6 +102,8 @@ export interface ResolveMovieSourceOptions {
   onProgress?: (step: string, message: string) => void
   /** Only the room host may centrally refresh shared signed handles. */
   canRefreshRoomMedia?: boolean
+  /** Generation of the host source currently being resolved. */
+  sourceGeneration?: number
 }
 
 const mediaCoreResolveCache = new Map<
@@ -113,9 +122,16 @@ export function isMediaCoreMovie(movie: Movie): boolean {
 async function resolveMediaCoreMovie(
   movie: Movie,
   roomId?: string,
-  canRefreshRoomMedia = false
+  canRefreshRoomMedia = false,
+  sourceGeneration?: number
 ): Promise<ResolvedMovieSource> {
   const stored = movie.mediaDescriptor ?? {}
+  const storedDescriptor = stored as unknown as MediaDescriptor
+  const isMediaServerDescriptor =
+    storedDescriptor.sourceType === 'emby' ||
+    storedDescriptor.sourceType === 'jellyfin' ||
+    movie.sourceType === 'emby' ||
+    movie.sourceType === 'jellyfin'
   const storedBilibili = (stored.sourceMetadata as
     | {
         bilibili?: {
@@ -126,12 +142,17 @@ async function resolveMediaCoreMovie(
       }
     | undefined)?.bilibili
   const storedExpiry = Number(stored.expiresAt ?? 0)
-  const storedPlan = planPlayback(stored as unknown as MediaDescriptor, browserCapabilities())
-  if (storedPlan.engine === 'blocked') throw new Error(storedPlan.reasons.join('；'))
-  registerMediaTransport(stored as unknown as MediaDescriptor)
-  if (storedExpiry > Date.now() + 60_000) {
+  const profile = await collectPlaybackClientProfile()
+  const storedPlan = planPlayback(storedDescriptor, profile, storedDescriptor.transportPlan?.candidates)
+  if (storedPlan.engine === 'blocked' && !(isMediaServerDescriptor && sourceGeneration !== undefined)) {
+    throw new Error(storedPlan.reasons.join('；'))
+  }
+  registerMediaTransport(storedDescriptor)
+  // A media-server session is bound to the resolved source generation. Re-resolve
+  // for a real host playback generation instead of reusing an old capability.
+  if (storedExpiry > Date.now() + 60_000 && !(isMediaServerDescriptor && sourceGeneration !== undefined)) {
     return {
-      sourceUrl: movie.url,
+      sourceUrl: storedPlan.candidateUrl ?? movie.url,
       audioUrl: movie.audioUrl,
       format: movie.format,
       videoCodec: movie.videoCodec,
@@ -145,6 +166,7 @@ async function resolveMediaCoreMovie(
       playsvideoEnabled:
         storedPlan?.engine === 'playsvideo' ||
         movie.playsvideoEnabled !== false,
+      playbackSessionUrl: storedPlan.playbackSessionUrl,
     }
   }
 
@@ -153,8 +175,13 @@ async function resolveMediaCoreMovie(
   }
 
   const cached = mediaCoreResolveCache.get(movie.id)
-  if (cached && cached.expiresAt > Date.now() + 60_000) {
-    return mapMediaCoreResult(cached.resolved, movie)
+  if (cached && cached.expiresAt > Date.now() + 60_000 && !(isMediaServerDescriptor && sourceGeneration !== undefined)) {
+    const replanned: ResolvedMedia = {
+      ...cached.resolved,
+      plan: planPlayback(cached.resolved.descriptor, profile, cached.resolved.descriptor.transportPlan?.candidates),
+      profile,
+    }
+    return mapMediaCoreResult(replanned, movie)
   }
   const bili = stored.sourceMetadata as
     | { bilibili?: { requestedQn?: number; preferMp4?: boolean } }
@@ -165,12 +192,13 @@ async function resolveMediaCoreMovie(
     movieId: movie.id,
     requestedQn: bili?.bilibili?.requestedQn ?? movie.currentQn,
     preferMp4: bili?.bilibili?.preferMp4 === true,
+    sourceGeneration,
   })
   if (roomId) {
     await useRoomStore.getState().updateMovie(roomId, movie.id, {
       url: resolved.descriptor.finalUrl,
       audioUrl: resolved.descriptor.audioUrl,
-      mediaDescriptor: { ...resolved.descriptor },
+      mediaDescriptor: { ...stripPlaybackSessionCapabilities(resolved.descriptor) },
       format: resolved.descriptor.container,
       videoCodec: resolved.descriptor.videoCodec,
       audioCodec: resolved.descriptor.audioCodec,
@@ -204,6 +232,7 @@ function mapMediaCoreResult(
     mkvFastPath: plan.engine === 'direct' && descriptor.container === 'mkv',
     playsvideoEnabled:
       plan.engine === 'playsvideo' || movie.playsvideoEnabled !== false,
+    playbackSessionUrl: plan.playbackSessionUrl,
   }
 }
 
@@ -334,7 +363,7 @@ function purgeBilibiliResolveCache(movieId: number): void {
 export async function resolveBilibiliOnline(
   movie: Movie,
   _onProgress?: (step: string, message: string) => void,
-  options?: { preferMp4?: boolean; forceRefresh?: boolean; roomId?: string }
+  options?: { preferMp4?: boolean; forceRefresh?: boolean; roomId?: string; sourceGeneration?: number }
 ): Promise<ResolvedMovieSource> {
   const parsePrefs = getBilibiliParseOptions(movie.id)
   const proxyUrl = parsePrefs.cliEnabled ? getActiveCliProxyUrl() : null
@@ -390,6 +419,7 @@ export async function resolveBilibiliOnline(
       requestedQn: movie.currentQn,
       preferMp4: effectivePreferMp4,
       cid: movie.cid,
+      sourceGeneration: options?.sourceGeneration,
     })
     resolvedSource = { ...mapMediaCoreResult(core, movie), mediaCore: core }
   }
@@ -488,11 +518,12 @@ export async function resolveMovieSource({
   recovery,
   onProgress,
   canRefreshRoomMedia,
+  sourceGeneration,
 }: ResolveMovieSourceOptions): Promise<ResolvedMovieSource> {
   // 新媒体核心创建的影片必须先走 descriptor/handle 路径。尤其是通过统一
   // 入口识别出的 B站 项目，其 movie.url 是句柄，绝不能交给旧 BV 解析器。
   if (isMediaCoreMovie(movie)) {
-    return resolveMediaCoreMovie(movie, roomId, canRefreshRoomMedia)
+    return resolveMediaCoreMovie(movie, roomId, canRefreshRoomMedia, sourceGeneration)
   }
 
   if (sourceType === 'bilibili') {
@@ -521,13 +552,41 @@ export async function resolveMovieSource({
         reusedRecoveryUrl: true,
       }
     }
-    return resolveBilibiliOnline(movie, onProgress, { roomId })
+    return resolveBilibiliOnline(movie, onProgress, { roomId, sourceGeneration })
   }
 
   if (sourceType === 'anime') {
     // ani-subs 番剧源：URL 短期有效，每次播放都通过 sourceMeta 重新解析
     // recovery 场景下也强制重新解析，因为旧 URL 大概率已过期
     return resolveAnimeOnline(movie)
+  }
+
+  if (sourceType === 'emby' || sourceType === 'jellyfin') {
+    // Legacy records used /api/{provider}/stream and stored a temporary URL.
+    // Re-resolve them through the host-authorized Media Core adapter so a
+    // viewer never sends a raw provider URL or credential to the browser.
+    if (roomId && !canRefreshRoomMedia) {
+      throw new Error('媒体服务器影片需要房主统一刷新后才能播放')
+    }
+    const core = await resolveMediaInput(`media-movie:${movie.id}`, {
+      roomId,
+      movieId: movie.id,
+      browserSniff: true,
+      sourceGeneration,
+    })
+    if (roomId) {
+      await useRoomStore.getState().updateMovie(roomId, movie.id, {
+        url: core.descriptor.finalUrl,
+        audioUrl: core.descriptor.audioUrl,
+        mediaDescriptor: { ...stripPlaybackSessionCapabilities(core.descriptor) },
+        sourceInput: core.sourceReference,
+        format: core.descriptor.container,
+        videoCodec: core.descriptor.videoCodec,
+        audioCodec: core.descriptor.audioCodec,
+        duration: core.descriptor.duration,
+      })
+    }
+    return mapMediaCoreResult(core, movie)
   }
 
   // 非 B站 源：直接使用影片记录字段（Movie 类型不含 headers，见 roomStore）

@@ -9,6 +9,7 @@ const ROOM_GRANT_TTL_MS = process.env.NODE_ENV === 'test' ? Number(process.env.M
 const SECRETS_FILE = path.join(CONFIG_DIR, 'jwt-secrets.json');
 
 export interface MediaHandleResource {
+  kind?: 'media' | 'session';
   url: string;
   scope: string;
   headers?: Record<string, string>;
@@ -20,6 +21,8 @@ export interface MediaHandleResource {
   /** Server-only gateway adapter data; sealed inside the handle. */
   providerId?: string;
   providerData?: Record<string, unknown>;
+  /** Server-private provider session binding, sealed with the handle. */
+  session?: import('./providers/media-server-types').MediaServerSessionBinding;
   targetPolicy?: import('../proxy/safe-fetch').ProxyTargetPolicy;
   trustedPrivateHosts?: string[];
   sourceGeneration?: number;

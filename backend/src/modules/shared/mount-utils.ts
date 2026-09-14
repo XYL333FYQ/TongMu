@@ -6,9 +6,9 @@
 import { AppDataSource } from '../../data-source';
 import { UserMount } from '../../entities/UserMount';
 
-/** 移除挂载对象的密码字段，返回安全的响应对象。 */
-export function stripPassword(mount: UserMount): Omit<UserMount, 'password'> {
-  const { password: _password, ...rest } = mount;
+/** 移除挂载对象的所有服务端凭据，返回安全的响应对象。 */
+export function stripPassword(mount: UserMount): Omit<UserMount, 'password' | 'apiKey'> {
+  const { password: _password, apiKey: _apiKey, ...rest } = mount;
   return rest;
 }
 

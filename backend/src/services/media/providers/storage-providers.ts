@@ -164,7 +164,7 @@ async function mountForReference(
   if (deps?.loadMount) return deps.loadMount(context, reference, type);
   const mount = await AppDataSource.getRepository(UserMount).findOneBy({
     id: mountId,
-    userId: currentUserId(context),
+    userId: currentUserId({ ...context, userId: context.credentialOwnerId ?? context.userId }),
     type,
   });
   if (!mount) throw new Error('无权访问该存储挂载');

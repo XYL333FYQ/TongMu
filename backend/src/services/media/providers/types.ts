@@ -2,6 +2,7 @@ import { fetchWithProxyPolicy } from '../../proxy/safe-fetch';
 import type { PlaybackClientProfileV1 } from '../playback-profile';
 import type { PrivateMediaSource, PlaybackCandidate } from '../protocol';
 import type { MediaDescriptor } from '../types';
+import type { MediaServerSessionBinding } from './media-server-types';
 
 export type ProviderActorKind = 'user' | 'guest' | 'system';
 export type ProviderCredentialOwner = 'current-viewer' | 'room-owner' | 'source-creator' | 'system' | 'none';
@@ -21,6 +22,10 @@ export interface ProviderContext {
   roomId?: string;
   movieId?: number;
   sourceGeneration?: number;
+  /** Credential owner resolved by the caller; never infer it from provider JSON. */
+  credentialOwnerId?: string;
+  /** Quality-changing provider transcode is opt-in and disabled by default. */
+  qualityChangingTranscode?: 'disabled' | 'explicit';
   signal: AbortSignal;
   deadline: number;
   profile: PlaybackClientProfileV1;
@@ -39,6 +44,10 @@ export interface ProviderResolution {
   privateSource: PrivateMediaSource;
   descriptor: MediaDescriptor;
   candidates: PlaybackCandidate[];
+  /** Stable credential-free identity after a provider selects a media source. */
+  sourceReference?: string;
+  /** Server-private session identity; never serialize this field. */
+  session?: MediaServerSessionBinding;
 }
 
 export interface ProviderAvailability {
@@ -57,6 +66,14 @@ export interface MediaProvider {
   availability(context: ProviderContext): Promise<ProviderAvailability> | ProviderAvailability;
   refresh?(context: ProviderContext, source: ProviderResolution): Promise<ProviderResolution>;
   cleanup?(context: ProviderContext, sourceGeneration: number): Promise<void>;
+  playbackSession?: ProviderPlaybackSessionLifecycle;
+}
+
+export interface ProviderPlaybackSessionLifecycle {
+  start(context: ProviderContext, session: MediaServerSessionBinding): Promise<void>;
+  progress(context: ProviderContext, session: MediaServerSessionBinding, position: number, paused: boolean): Promise<void>;
+  stop(context: ProviderContext, session: MediaServerSessionBinding, position: number): Promise<void>;
+  cleanup(context: ProviderContext, session: MediaServerSessionBinding): Promise<void>;
 }
 
 export function assertProviderActive(context: Pick<ProviderContext, 'signal' | 'deadline'>): void {

@@ -9,6 +9,8 @@ import {
 } from '../../services/media/protocol';
 import { AppDataSource } from '../../data-source';
 import { Movie } from '../../entities/Movie';
+import { Room } from '../../entities/Room';
+import { UserMount } from '../../entities/UserMount';
 import { Session } from '../../entities/Session';
 import { IsNull } from 'typeorm';
 import { Router } from 'express';
@@ -18,7 +20,9 @@ import { resolveMediaProvider } from '../../services/media/resolvers';
 import {
   validatePlaybackClientProfile,
   PlaybackProfileError,
+  audioCodecFamily,
   type PlaybackPipeline,
+  videoCodecFamily,
 } from '../../services/media/playback-profile';
 import { filterPlaybackCandidates } from '../../services/media/viability';
 import { issueMediaHandle, resolveMediaHandle, type MediaHandleResource } from '../../services/media/handles';
@@ -35,6 +39,10 @@ import {
 import { authenticateToken, extractAccessToken, verifyAccessToken } from '../../middleware/auth';
 import { authorizeRoomMediaGrant } from '../../services/media/room-access';
 import { pipeProviderMediaHandle } from '../../services/media/provider-gateway';
+import { mediaProviderRegistry, providerContextFromResolverContext } from '../../services/media/providers/registry';
+import { buildMediaServerReference } from '../../services/media/providers/media-server-reference';
+import { providerPlaybackSessionCoordinator } from '../../services/media/provider-playback-session';
+import { legacyPlaybackClientProfile } from '../../services/media/playback-profile';
 
 const router = Router();
 const canPublishTarget = (url: string) => canDirect({ finalUrl: url } as MediaDescriptor);
@@ -72,12 +80,21 @@ function candidateFacts(
     audioUrl,
     transport: providerCandidate?.transport ?? descriptor.transport,
     container: providerCandidate?.container ?? descriptor.container,
-    videoCodec: providerCandidate?.videoCodec,
-    audioCodec: providerCandidate?.audioCodec,
+    videoCodec: providerCandidate?.videoCodec ?? videoCodecFamily(descriptor.videoCodec),
+    audioCodec: providerCandidate?.audioCodec ?? audioCodecFamily(descriptor.audioCodec),
     actualQuality: providerCandidate?.actualQuality ?? descriptor.actualQuality,
     requiredPipelines: providerCandidate?.requiredPipelines ?? requiredPipelinesForDescriptor(descriptor),
     exactCodecStrings,
-    requiresCustomHeaders: providerCandidate?.requiresCustomHeaders ?? (mode === 'DIRECT' && Object.keys(descriptor.headers ?? {}).some((key) => !/^accept(?:-language)?$/i.test(key))),
+    // A gateway consumes upstream credentials on the server. Custom-header
+    // support is relevant only to a browser DIRECT candidate.
+    requiresCustomHeaders: mode === 'DIRECT' && (providerCandidate?.requiresCustomHeaders ?? Object.keys(descriptor.headers ?? {}).some((key) => !/^accept(?:-language)?$/i.test(key))),
+    representationId: providerCandidate?.representationId,
+    upstreamMode: providerCandidate?.upstreamMode,
+    qualityPreserved: providerCandidate?.qualityPreserved,
+    qualityChanged: providerCandidate?.qualityChanged,
+    audioTranscoded: providerCandidate?.audioTranscoded,
+    session: providerCandidate?.session,
+    qualityIdentity: providerCandidate?.qualityIdentity,
   };
 }
 
@@ -410,7 +427,7 @@ function optionalViewerId(req: AuthenticatedRequest): string {
 async function authorizedResource(req: AuthenticatedRequest): Promise<MediaHandleResource | undefined> {
   const grant = await authorizeRoomMediaGrant(roomGrantToken(req));
   const resource = resolveMediaHandle(String(req.params.id), optionalViewerId(req), grant);
-  const expectedGeneration = req.query.sourceGeneration;
+  const expectedGeneration = req.query.sourceGeneration ?? req.body?.sourceGeneration;
   if (resource?.sourceGeneration !== undefined &&
       (typeof expectedGeneration !== 'string' || expectedGeneration !== String(resource.sourceGeneration))) return undefined;
   return resource;
@@ -421,6 +438,96 @@ function withSourceGeneration(url: string, generation?: number): string {
   return `${url}${url.includes('?') ? '&' : '?'}sourceGeneration=${encodeURIComponent(String(generation))}`;
 }
 
+function issuePlaybackSessionCapability(
+  resource: Pick<MediaHandleResource, 'scope' | 'expiresAt' | 'sourceGeneration'>,
+  session: NonNullable<MediaHandleResource['session']>,
+): string {
+  const issued = issueMediaHandle({
+    kind: 'session',
+    // The URL is sealed and is never returned. It only satisfies the handle's
+    // structural invariant; session operations use the sealed binding below.
+    url: 'https://tongmu.invalid/provider-session',
+    scope: resource.scope,
+    providerId: session.providerId,
+    session,
+    sourceGeneration: resource.sourceGeneration,
+    expiresAt: resource.expiresAt,
+  });
+  return withSourceGeneration(`${issued.url}/session`, resource.sourceGeneration);
+}
+
+function sessionContextForRequest(
+  req: AuthenticatedRequest,
+  session: NonNullable<MediaHandleResource['session']>,
+): ReturnType<typeof providerContextFromResolverContext> {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  req.once('aborted', abort);
+  return providerContextFromResolverContext({
+    userId: userIdOf(req) || session.actorUserId || '',
+    roomId: session.roomId,
+    movieId: session.movieId,
+    sourceGeneration: session.sourceGeneration,
+    credentialOwnerId: session.credentialOwnerId,
+    signal: controller.signal,
+    deadline: Date.now() + 8_000,
+    playbackClientProfile: legacyPlaybackClientProfile(),
+    qualityChangingTranscode: 'disabled',
+  });
+}
+
+export function sessionActorIsCurrentUser(
+  session: Pick<NonNullable<MediaHandleResource['session']>, 'actorUserId'>,
+  userId: string,
+): boolean {
+  return Boolean(userId && session.actorUserId && session.actorUserId === userId);
+}
+
+async function handlePlaybackSessionRequest(
+  req: AuthenticatedRequest,
+  res: import('express').Response,
+  action: 'start' | 'progress' | 'stop' | 'cleanup',
+): Promise<void> {
+  const resource = await authorizedResource(req);
+  const session = resource?.session;
+  const provider = resource?.providerId ? mediaProviderRegistry.get(resource.providerId) : undefined;
+  if (!resource || resource.kind !== 'session' || !session || !provider?.playbackSession) {
+    res.status(403).json({ success: false, message: '媒体播放会话凭证无效' });
+    return;
+  }
+  if (!sessionActorIsCurrentUser(session, userIdOf(req))) {
+    res.status(403).json({ success: false, message: '只有创建该媒体会话的用户可以操作它' });
+    return;
+  }
+  const context = sessionContextForRequest(req, session);
+  try {
+    if (action === 'start') {
+      await providerPlaybackSessionCoordinator.start(provider, context, session);
+    } else if (action === 'progress') {
+      const position = Number(req.body?.position);
+      if (!Number.isFinite(position) || position < 0 || position > 7_200_000) {
+        res.status(400).json({ success: false, message: '播放进度无效' });
+        return;
+      }
+      await providerPlaybackSessionCoordinator.progress(provider, context, session, position, req.body?.paused === true);
+    } else if (action === 'stop') {
+      const position = Number(req.body?.position ?? 0);
+      await providerPlaybackSessionCoordinator.stop(provider, context, session, Number.isFinite(position) && position >= 0 ? position : 0);
+    } else {
+      await providerPlaybackSessionCoordinator.cleanup(provider, context, session);
+    }
+    res.json({ success: true });
+  } catch (error) {
+    if (action === 'cleanup') {
+      // Cleanup is intentionally best effort and must not block player/source
+      // replacement. The coordinator already makes it idempotent.
+      res.json({ success: true, cleanup: 'best-effort' });
+      return;
+    }
+    res.status(502).json({ success: false, message: redactMediaError(error) });
+  }
+}
+
 router.post('/media/resolve', authenticateToken, mediaResolveLimiter, async (req: AuthenticatedRequest, res) => {
   let input = typeof req.body?.input === 'string' ? req.body.input.trim() : '';
   let mediaMovieId: number | undefined;
@@ -428,7 +535,11 @@ router.post('/media/resolve', authenticateToken, mediaResolveLimiter, async (req
   const ownerId = userIdOf(req);
   const roomId = typeof req.body?.roomId === 'string' && req.body.roomId.trim()
     ? req.body.roomId.trim().slice(0, 128) : undefined;
+  let credentialOwnerId = ownerId;
+  let mediaMovie: Movie | undefined;
   if (roomId) {
+    const room = await AppDataSource.getRepository(Room).findOneBy({ roomId });
+    if (room?.ownerUserId) credentialOwnerId = String(room.ownerUserId);
     const grant = await authorizeRoomMediaGrant(roomGrantToken(req), roomId);
     const host = grant && await AppDataSource.getRepository(Session).findOneBy({ roomId, socketId: grant.socketId, role: 'sharer', endedAt: IsNull() });
     if (!host) { res.status(403).json({ success: false, message: '只有房主可以统一解析房间媒体' }); return; }
@@ -438,10 +549,30 @@ router.post('/media/resolve', authenticateToken, mediaResolveLimiter, async (req
     const movie = await AppDataSource.getRepository(Movie).findOneBy({ id: movieId });
     const grant = await authorizeRoomMediaGrant(roomGrantToken(req), roomId);
     const host = grant && await AppDataSource.getRepository(Session).findOneBy({ roomId: grant.roomId, socketId: grant.socketId, role: 'sharer', endedAt: IsNull() });
-    if (!movie || !host || movie.roomId !== roomId || !movie.sourceInput) {
+    if (!movie || !host || movie.roomId !== roomId) {
       res.status(403).json({ success: false, message: '只有当前房主可以刷新房间私有媒体源' }); return;
     }
-    input = movie.sourceInput;
+    mediaMovie = movie;
+    if (movie.sourceInput?.startsWith('provider://')) {
+      input = movie.sourceInput;
+    } else if ((movie.source === 'emby' || movie.source === 'jellyfin') && movie.path) {
+      const mounts = await AppDataSource.getRepository(UserMount).find({
+        where: { userId: Number(credentialOwnerId), type: movie.source },
+      });
+      const mount = mounts.find((item) => !!movie.serverUrl && item.serverUrl === movie.serverUrl);
+      if (!mount) {
+        res.status(403).json({ success: false, message: '旧媒体记录未找到其所属媒体服务器挂载' }); return;
+      }
+      input = buildMediaServerReference({ provider: movie.source, mountId: mount.id, itemId: movie.path });
+    } else if (movie.sourceInput?.trim()) {
+      // Existing non-media-server records (for example legacy direct URLs)
+      // keep their server-private source input for an authorized refresh.
+      // Emby/Jellyfin records are handled above so an expired provider URL
+      // cannot become a new long-lived source identity.
+      input = movie.sourceInput.trim();
+    } else {
+      res.status(403).json({ success: false, message: '媒体记录缺少稳定的 Provider 引用' }); return;
+    }
     mediaMovieId = movieId;
   }
   let profile: ReturnType<typeof validatePlaybackClientProfile>;
@@ -471,10 +602,11 @@ router.post('/media/resolve', authenticateToken, mediaResolveLimiter, async (req
       roomId,
       sourceGeneration: Number.isSafeInteger(req.body?.sourceGeneration) ? Number(req.body.sourceGeneration) : undefined,
       movieId: mediaMovieId,
+      credentialOwnerId,
+      qualityChangingTranscode: req.body?.allowQualityChangingTranscode === true ? 'explicit' : 'disabled',
       playbackClientProfile: profile,
     });
     const descriptor = providerResolution.descriptor;
-    const providerDirectCandidate = providerResolution.candidates.find((candidate) => candidate.mode === 'DIRECT');
     if (descriptor.drm.protected) {
       res.status(422).json({
         success: false,
@@ -487,85 +619,125 @@ router.post('/media/resolve', authenticateToken, mediaResolveLimiter, async (req
     const privateSource = providerResolution.privateSource;
     const providerId = privateSource.providerId;
     const providerData = privateSource.providerData;
+    if (mediaMovie && providerResolution.sourceReference && mediaMovie.sourceInput !== providerResolution.sourceReference) {
+      // Upgrade an old movie record to the stable provider/mount/item identity
+      // after a successful server-side resolution. No temporary URL is stored.
+      mediaMovie.sourceInput = providerResolution.sourceReference;
+      await AppDataSource.getRepository(Movie).save(mediaMovie);
+    }
     const requestedSourceGeneration = Number.isSafeInteger(req.body?.sourceGeneration)
       ? Number(req.body.sourceGeneration)
       : undefined;
     const trustedPrivateHosts = Array.isArray(providerData?.trustedPrivateHosts)
       ? providerData.trustedPrivateHosts.filter((value): value is string => typeof value === 'string')
       : undefined;
-    const targetPolicy = providerId === 'webdav' || providerId === 'openlist' ? 'trusted-private' as const : undefined;
-    const handleUrl = privateSource.finalUrl || descriptor.finalUrl;
+    const targetPolicy = providerId === 'webdav' || providerId === 'openlist' || providerId === 'emby' || providerId === 'jellyfin'
+      ? 'trusted-private' as const : undefined;
     const handleExpiresAt = descriptor.expiresAt && descriptor.expiresAt > Date.now()
       ? descriptor.expiresAt
       : undefined;
-    const videoHandle = issueMediaHandle({
-      url: handleUrl, scope, headers: privateSource.headers ?? descriptor.headers,
-      credentialOrigins: credentialOriginsFor(
-        handleUrl,
-        privateSource.headers ?? descriptor.headers,
-        privateSource.credentialOrigins ?? descriptor.credentialOrigins,
-      ),
-      contentType: descriptor.contentType,
-      // Magic handles octet-stream manifests; Bilibili's dual m4s "dash"
-      // descriptor deliberately has video/mp4 and must not be parsed as MPD XML.
-      rewriteManifest: shouldRewriteManifest(descriptor),
-      providerId,
-      providerData,
-      targetPolicy,
-      trustedPrivateHosts,
-      sourceGeneration: requestedSourceGeneration,
-      expiresAt: handleExpiresAt,
-    });
-    const audioHandle = descriptor.audioUrl ? issueMediaHandle({
-      url: descriptor.audioUrl, scope, headers: descriptor.headers, contentType: 'audio/mp4',
-      credentialOrigins: credentialOriginsFor(
-        descriptor.audioUrl,
-        descriptor.headers,
-        descriptor.credentialOrigins,
-      ),
-      expiresAt: videoHandle.expiresAt,
-      sourceGeneration: requestedSourceGeneration,
-    }) : undefined;
-    descriptor.expiresAt = videoHandle.expiresAt;
-    const providerDirect = providerDirectCandidate && canPublishTarget(providerDirectCandidate.url) &&
-      !providerDirectCandidate.requiresCustomHeaders;
-    const direct = !!providerDirect || (!providerId && canDirect(descriptor));
-    const privateCandidates: PlaybackCandidate[] = [
-      ...(direct ? [candidateFacts(
-        descriptor,
-        'DIRECT',
-        providerDirectCandidate?.url ?? descriptor.finalUrl,
-        providerDirectCandidate?.audioUrl ?? descriptor.audioUrl,
-        providerDirectCandidate,
-      )] : []),
-      ...(direct && shouldRewriteManifest(descriptor)
-        ? (['MANIFEST_ASSISTED', 'PARTIAL_PROXY'] as const).map((mode) => candidateFacts(
-          descriptor,
-          mode,
-          issueMediaHandle({
-            url: descriptor.finalUrl,
-            scope,
-            rewriteManifest: true,
-            transportMode: mode,
-            expiresAt: videoHandle.expiresAt,
-            providerId,
-            providerData,
-            targetPolicy,
-            trustedPrivateHosts,
-            sourceGeneration: requestedSourceGeneration,
-          }).url,
-          undefined,
-          providerDirectCandidate,
-        ))
-        : []),
-      candidateFacts(
+    const privateCandidates: PlaybackCandidate[] = [];
+    const sessionUrls = new Map<PlaybackCandidate, string | undefined>();
+    const providerCandidates = providerResolution.candidates.length
+      ? providerResolution.candidates
+      : [undefined];
+    let resolvedExpiry: number | undefined;
+    for (const providerCandidate of providerCandidates) {
+      const handleUrl = providerCandidate?.url || privateSource.finalUrl || descriptor.finalUrl;
+      const handleHeaders = privateSource.headers ?? descriptor.headers;
+      const handle = issueMediaHandle({
+        kind: 'media',
+        url: handleUrl,
+        scope,
+        headers: handleHeaders,
+        credentialOrigins: credentialOriginsFor(
+          handleUrl,
+          handleHeaders,
+          privateSource.credentialOrigins ?? descriptor.credentialOrigins,
+        ),
+        contentType: providerCandidate?.container === 'hls' ? 'application/vnd.apple.mpegurl' : descriptor.contentType,
+        // Magic handles octet-stream manifests; Bilibili's dual m4s "dash"
+        // descriptor deliberately has video/mp4 and must not be parsed as MPD XML.
+        rewriteManifest: providerCandidate
+          ? providerCandidate.transport === 'hls' || providerCandidate.transport === 'dash' || shouldRewriteManifest(descriptor)
+          : shouldRewriteManifest(descriptor),
+        providerId,
+        providerData,
+        session: providerCandidate?.session ?? providerResolution.session,
+        targetPolicy,
+        trustedPrivateHosts,
+        sourceGeneration: requestedSourceGeneration,
+        expiresAt: handleExpiresAt,
+      });
+      resolvedExpiry = handle.expiresAt;
+      const audioUrl = providerCandidate?.audioUrl || (!providerCandidate ? descriptor.audioUrl : undefined);
+      const audioHandle = audioUrl ? issueMediaHandle({
+        kind: 'media',
+        url: audioUrl,
+        scope,
+        headers: handleHeaders,
+        contentType: 'audio/mp4',
+        credentialOrigins: credentialOriginsFor(audioUrl, handleHeaders, privateSource.credentialOrigins ?? descriptor.credentialOrigins),
+        expiresAt: handle.expiresAt,
+        sourceGeneration: requestedSourceGeneration,
+      }) : undefined;
+      const session = providerCandidate?.session ?? providerResolution.session;
+      const sessionUrl = session && providerId && mediaProviderRegistry.get(providerId)?.playbackSession
+        ? issuePlaybackSessionCapability({ scope, expiresAt: handle.expiresAt, sourceGeneration: requestedSourceGeneration }, session)
+        : undefined;
+      const full = candidateFacts(
         descriptor,
         'FULL_PROXY',
-        withSourceGeneration(videoHandle.url, requestedSourceGeneration),
+        withSourceGeneration(handle.url, requestedSourceGeneration),
         audioHandle ? withSourceGeneration(audioHandle.url, requestedSourceGeneration) : undefined,
-        providerDirectCandidate,
-      ),
-    ];
+        providerCandidate,
+      );
+      sessionUrls.set(full, sessionUrl);
+
+      const candidateIsDirect = providerCandidate
+        ? providerCandidate.mode === 'DIRECT' && canPublishTarget(providerCandidate.url) && !providerCandidate.requiresCustomHeaders
+        : !providerId && canDirect(descriptor);
+      if (candidateIsDirect) {
+        const direct = candidateFacts(
+          descriptor,
+          'DIRECT',
+          providerCandidate?.url ?? descriptor.finalUrl,
+          providerCandidate?.audioUrl ?? descriptor.audioUrl,
+          providerCandidate,
+        );
+        privateCandidates.push(direct);
+        sessionUrls.set(direct, sessionUrl);
+        if (shouldRewriteManifest(descriptor) || providerCandidate?.transport === 'hls' || providerCandidate?.transport === 'dash') {
+          for (const mode of ['MANIFEST_ASSISTED', 'PARTIAL_PROXY'] as const) {
+            const assistedHandle = issueMediaHandle({
+              kind: 'media',
+              url: handleUrl,
+              scope,
+              rewriteManifest: true,
+              transportMode: mode,
+              headers: handleHeaders,
+              credentialOrigins: credentialOriginsFor(handleUrl, handleHeaders, privateSource.credentialOrigins ?? descriptor.credentialOrigins),
+              expiresAt: handle.expiresAt,
+              providerId,
+              providerData,
+              session,
+              targetPolicy,
+              trustedPrivateHosts,
+              sourceGeneration: requestedSourceGeneration,
+            });
+            const assisted = candidateFacts(descriptor, mode, withSourceGeneration(assistedHandle.url, requestedSourceGeneration), undefined, providerCandidate);
+            privateCandidates.push(assisted);
+            sessionUrls.set(assisted, sessionUrl);
+          }
+        }
+      }
+      // Keep the public candidate order compatible with the existing transport
+      // fallback contract: a browser-safe direct route is tried first, while
+      // the sealed gateway remains the same-quality fallback. Provider-only
+      // routes still emit the gateway candidate as their first route.
+      privateCandidates.push(full);
+    }
+    if (resolvedExpiry) descriptor.expiresAt = resolvedExpiry;
     const viability = filterPlaybackCandidates(descriptor, privateCandidates, profile, {
       pageProtocol: pageProtocolForRequest(req),
     });
@@ -580,8 +752,12 @@ router.post('/media/resolve', authenticateToken, mediaResolveLimiter, async (req
       return;
     }
     const transportPlan: TransportPlan = {
-      reason: direct ? '优先客户端直连；失败后保持同质量中转' : '源站需要私有请求头或私有 URL，使用中转',
-      candidates: viability.viable.map(publicTransportCandidate),
+      reason: viability.viable.some((candidate) => candidate.qualityChanged)
+        ? '仅在显式策略允许时提供标记为转码的不同媒体表示；其余候选保持原始质量'
+        : viability.viable.some((candidate) => candidate.mode === 'DIRECT')
+          ? '客户端按自身 profile 选择直连或同质量中转候选'
+          : '源站需要私有请求头或私有 URL，使用同质量中转',
+      candidates: viability.viable.map((candidate) => publicTransportCandidate(candidate, sessionUrls.get(candidate))),
     };
     const first = transportPlan.candidates[0];
 
@@ -596,6 +772,22 @@ router.post('/media/resolve', authenticateToken, mediaResolveLimiter, async (req
     clearTimeout(resolveTimer);
     req.off('aborted', abortResolve);
   }
+});
+
+router.post('/media/:id/session/start', authenticateToken, async (req: AuthenticatedRequest, res) => {
+  await handlePlaybackSessionRequest(req, res, 'start');
+});
+
+router.post('/media/:id/session/progress', authenticateToken, async (req: AuthenticatedRequest, res) => {
+  await handlePlaybackSessionRequest(req, res, 'progress');
+});
+
+router.post('/media/:id/session/stop', authenticateToken, async (req: AuthenticatedRequest, res) => {
+  await handlePlaybackSessionRequest(req, res, 'stop');
+});
+
+router.post('/media/:id/session/cleanup', authenticateToken, async (req: AuthenticatedRequest, res) => {
+  await handlePlaybackSessionRequest(req, res, 'cleanup');
 });
 
 router.get('/media/:id/asset', async (req: AuthenticatedRequest, res) => {
@@ -617,7 +809,7 @@ router.get('/media/:id/asset', async (req: AuthenticatedRequest, res) => {
 
 router.get('/media/:id', async (req: AuthenticatedRequest, res) => {
   const resource = await authorizedResource(req);
-  if (!resource) { res.status(403).json({ success: false, message: '媒体凭证无效或已过期' }); return; }
+  if (!resource || resource.kind === 'session') { res.status(403).json({ success: false, message: '媒体凭证无效或已过期' }); return; }
   if (!resource.rewriteManifest) {
     if (await pipeProviderMediaHandle(req, res, resource)) return;
     await proxyHttpUpstream(req, res, {

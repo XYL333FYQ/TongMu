@@ -7,8 +7,6 @@
 import {
   stripPassword,
   extractErrorMessage,
-  ensureHttpsProbe,
-  maybeUpgradeDirectUrl,
   probeForMountSave,
 } from '../modules/shared/mount-utils';
 import { Router, Request, Response } from 'express';
@@ -327,18 +325,13 @@ router.get('/resolve', async (req: AuthenticatedRequest, res: Response): Promise
     const format = needsAudioTranscode ? 'hls' : detectMediaFormat(source.Path ?? title);
     const transcodeQuery = needsAudioTranscode ? '&at=1' : '';
     const proxyUrl = `/api/jellyfin/proxy?mountId=${mountId}&path=${encodeURIComponent(itemId)}${transcodeQuery}`;
-    // 配置期探测的 HTTPS 能力：源站支持 TLS 时升级 http 直链为 https
-    // （浏览器直连零带宽）；否则保持 http，HTTPS 页面下走服务器代理
-    const directUrlRaw = needsAudioTranscode
-      ? `${session.client.baseUrl}/emby/Videos/${encodeURIComponent(itemId)}/main.m3u8?api_key=${session.token}&AudioCodec=aac&TranscodingMaxAudioChannels=2&VideoBitrate=8000000&AudioBitrate=192000`
-      : `${session.client.baseUrl}/emby/Videos/${encodeURIComponent(itemId)}/stream?static=true&api_key=${session.token}`;
-    const httpsDirect = await ensureHttpsProbe(mount);
-    const directUrl = maybeUpgradeDirectUrl(directUrlRaw, httpsDirect);
     res.json({
       success: true,
       title,
       videoUrl: proxyUrl,
-      directUrl,
+      // Keep the legacy proxy facade functional without exposing the
+      // Jellyfin token in a browser-visible direct URL.
+      directUrl: undefined,
       format,
       duration: 0,
       audioCodec,
