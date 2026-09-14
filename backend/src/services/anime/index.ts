@@ -4,6 +4,7 @@ import { createRssAnimeProvider } from './providers/rss';
 import { createThirdPartyAnimeProvider } from './providers/thirdParty';
 import { AppDataSource } from '../../data-source';
 import { SystemSettings } from '../../entities/SystemSettings';
+import { MAX_RULE_SOURCES, isSafeRuleUrl } from '../anisubs/rule-safety';
 
 export * from './types';
 
@@ -72,8 +73,8 @@ export async function buildAnimeProviders(
   };
 
   if (Array.isArray(config.rssSources)) {
-    for (const source of config.rssSources) {
-      if (source && source.id && source.url) {
+    for (const source of config.rssSources.slice(0, MAX_RULE_SOURCES)) {
+      if (source && source.id && isSafeRuleUrl(source.url)) {
         providers[`rss_${source.id}`] = createRssAnimeProvider(
           `rss_${source.id}`,
           source.name || `RSS: ${source.id}`,
@@ -84,8 +85,8 @@ export async function buildAnimeProviders(
   }
 
   if (Array.isArray(config.thirdPartySources)) {
-    for (const source of config.thirdPartySources) {
-      if (source && source.id) {
+    for (const source of config.thirdPartySources.slice(0, MAX_RULE_SOURCES)) {
+      if (source && source.id && (!source.baseUrl || isSafeRuleUrl(source.baseUrl))) {
         providers[`third_party_${source.id}`] = createThirdPartyAnimeProvider(
           `third_party_${source.id}`,
           source.name || `第三方: ${source.id}`,

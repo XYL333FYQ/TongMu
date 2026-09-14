@@ -80,18 +80,12 @@ export async function resolveKazumiEpisode(
   const data = (await res.json()) as {
     success: boolean
     message?: string
-    url?: string
-    headers?: Record<string, string>
-    format?: KazumiResolvedSource['format']
+    sourceReference?: string
   }
-  if (!res.ok || !data.success || !data.url) {
+  if (!res.ok || !data.success || !data.sourceReference) {
     throw new Error(data.message || '解析播放地址失败')
   }
-  return {
-    url: data.url,
-    headers: data.headers,
-    format: data.format,
-  }
+  return { sourceReference: data.sourceReference }
 }
 
 /**
@@ -107,7 +101,6 @@ export function buildKazumiProxyUrl(
   if (headers.Referer) params.set('referer', headers.Referer)
   if (headers['User-Agent']) params.set('userAgent', headers['User-Agent'])
   if (headers.Origin) params.set('origin', headers.Origin)
-  if (headers.Cookie) params.set('cookie', headers.Cookie)
   return `${getBaseUrl()}/proxy?${params.toString()}`
 }
 

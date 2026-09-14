@@ -33,12 +33,17 @@ export interface AniSubsPlaybackUrl {
   format?: AniSubsMediaFormat;
 }
 
+export interface AniSubsRequestContext {
+  signal?: AbortSignal;
+  deadline?: number;
+}
+
 /** 数据源提供者接口 */
 export interface AniSubsSourceProvider {
   name: string;
-  search(keyword: string): Promise<AniSubsSearchResult[]>;
-  getEpisodes(identifier: string): Promise<AniSubsEpisode[]>;
-  getPlaybackUrl(episode: AniSubsEpisode): Promise<AniSubsPlaybackUrl | null>;
+  search(keyword: string, context?: AniSubsRequestContext): Promise<AniSubsSearchResult[]>;
+  getEpisodes(identifier: string, context?: AniSubsRequestContext): Promise<AniSubsEpisode[]>;
+  getPlaybackUrl(episode: AniSubsEpisode, context?: AniSubsRequestContext): Promise<AniSubsPlaybackUrl | null>;
 }
 
 /** ani-subs 订阅 JSON 根结构 */

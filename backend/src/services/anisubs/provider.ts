@@ -11,6 +11,7 @@ import type {
   AniSubsSearchResult,
   AniSubsEpisode,
   AniSubsPlaybackUrl,
+  AniSubsRequestContext,
 } from './types';
 import {
   fetchHtml,
@@ -31,12 +32,12 @@ export function createWebSelectorProvider(
   return {
     name: displayName,
 
-    async search(keyword: string): Promise<AniSubsSearchResult[]> {
+    async search(keyword: string, context?: AniSubsRequestContext): Promise<AniSubsSearchResult[]> {
       const searchUrl = config.searchUrl.replace(
         /\{keyword\}/g,
         encodeURIComponent(keyword),
       );
-      const html = await fetchHtml(searchUrl, config.matchVideo?.cookies);
+      const html = await fetchHtml(searchUrl, config.matchVideo?.cookies, context);
       const subjects = parseSearchResults(html, config, searchUrl);
 
       // 去重并限制数量
@@ -55,9 +56,9 @@ export function createWebSelectorProvider(
         }));
     },
 
-    async getEpisodes(identifier: string): Promise<AniSubsEpisode[]> {
+    async getEpisodes(identifier: string, context?: AniSubsRequestContext): Promise<AniSubsEpisode[]> {
       const subjectUrl = identifier;
-      const html = await fetchHtml(subjectUrl, config.matchVideo?.cookies);
+      const html = await fetchHtml(subjectUrl, config.matchVideo?.cookies, context);
       const infos = parseEpisodes(html, config, subjectUrl);
 
       return infos.map((info) => ({
@@ -70,6 +71,7 @@ export function createWebSelectorProvider(
 
     async getPlaybackUrl(
       episode: AniSubsEpisode,
+      context?: AniSubsRequestContext,
     ): Promise<AniSubsPlaybackUrl | null> {
       const episodeUrl = episode.playbackParams.episodeUrl;
       if (typeof episodeUrl !== 'string' || !episodeUrl) {
@@ -78,7 +80,7 @@ export function createWebSelectorProvider(
       if (!config.matchVideo) {
         throw new Error('数据源未配置视频匹配规则');
       }
-      const result = await resolveVideoUrl(episodeUrl, config.matchVideo);
+      const result = await resolveVideoUrl(episodeUrl, config.matchVideo, context);
       if (!result) {
         return null;
       }
@@ -181,8 +183,8 @@ function parseAtomItems(xml: string): RssFeedItem[] {
   return items;
 }
 
-async function fetchFeedItems(url: string): Promise<RssFeedItem[]> {
-  const result = await fetchText(url, { headers: buildBrowserHeaders(url) });
+async function fetchFeedItems(url: string, context: AniSubsRequestContext = {}): Promise<RssFeedItem[]> {
+  const result = await fetchText(url, { headers: buildBrowserHeaders(url), ...context });
   if (isCloudflareBlocked(result)) {
     throw new Error(
       `该数据源被 Cloudflare 防护拦截 [${result.status}]，服务器无法直接访问`,
@@ -212,12 +214,12 @@ export function createRssProvider(
   return {
     name: displayName,
 
-    async search(keyword: string): Promise<AniSubsSearchResult[]> {
+    async search(keyword: string, context?: AniSubsRequestContext): Promise<AniSubsSearchResult[]> {
       // 支持 {keyword} 占位符的 RSS 搜索 URL（如 nyaa.land）
       const url = feedUrl.includes('{keyword}')
         ? feedUrl.replace(/\{keyword\}/g, encodeURIComponent(keyword))
         : feedUrl;
-      const items = await fetchFeedItems(url);
+      const items = await fetchFeedItems(url, context);
       const lower = keyword.toLowerCase();
       return items
         .filter(
@@ -234,8 +236,8 @@ export function createRssProvider(
         }));
     },
 
-    async getEpisodes(identifier: string): Promise<AniSubsEpisode[]> {
-      const items = await fetchFeedItems(feedUrl);
+    async getEpisodes(identifier: string, context?: AniSubsRequestContext): Promise<AniSubsEpisode[]> {
+      const items = await fetchFeedItems(feedUrl, context);
       const target = items.find((item) => item.link === identifier);
       if (!target) {
         throw new Error('未找到对应 RSS 条目');
@@ -245,17 +247,22 @@ export function createRssProvider(
           id: target.link,
           title: target.title,
           episodeNumber: 1,
-          playbackParams: {
-            url: target.enclosureUrl || target.link,
-          },
+          // Do not expose a potentially signed enclosure URL in the catalog
+          // DTO; resolve it again from the feed when playback starts.
+          playbackParams: {},
         },
       ];
     },
 
     async getPlaybackUrl(
       episode: AniSubsEpisode,
+      context?: AniSubsRequestContext,
     ): Promise<AniSubsPlaybackUrl | null> {
-      const url = episode.playbackParams.url;
+      let url = episode.playbackParams.url;
+      if (typeof url !== 'string' || !url) {
+        const items = await fetchFeedItems(feedUrl, context);
+        url = items.find((item) => item.link === episode.id)?.enclosureUrl || '';
+      }
       if (typeof url !== 'string' || !url) {
         throw new Error('缺少 RSS 条目播放地址');
       }

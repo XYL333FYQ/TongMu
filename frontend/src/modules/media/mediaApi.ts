@@ -69,6 +69,10 @@ export interface MediaDescriptor {
   audioUrl?: string
   transport: 'direct' | 'hls' | 'dash' | 'flv'
   container: MediaFormat
+  isLive?: boolean
+  liveKind?: 'hls' | 'http-flv'
+  seekable?: boolean
+  reconnect?: 'same-source' | 'provider-refresh'
   contentType?: string
   contentLength?: number
   rangeSupported?: boolean
@@ -151,6 +155,19 @@ export function stripPlaybackSessionCapabilities(descriptor: MediaDescriptor): M
       }),
     },
   }
+}
+
+/** Persist provider facts and safe expiry facts; signed handles and host plans are request-scoped. */
+export function stripTransientMediaDescriptor(descriptor: MediaDescriptor): Record<string, unknown> {
+  const persisted: Record<string, unknown> = { ...descriptor }
+  persisted.input = ''
+  persisted.originalUrl = ''
+  persisted.finalUrl = ''
+  delete persisted.audioUrl
+  delete persisted.transportPlan
+  delete persisted.headers
+  delete persisted.credentialOrigins
+  return persisted
 }
 
 export interface ResolvedMedia {
@@ -243,6 +260,7 @@ export async function resolveMediaInput(
     success?: boolean
     message?: string
     descriptor?: MediaDescriptor
+    sourceReference?: string
     viability?: { removed?: Array<{ mode: string; reason: string }> }
   }>(response, {})
   if (!response.ok || !data.success || !data.descriptor) {
@@ -256,7 +274,8 @@ export async function resolveMediaInput(
     },
     plan: planPlayback(data.descriptor, profile, data.descriptor.transportPlan?.candidates),
     profile,
-    sourceReference: data.descriptor.sourceMetadata?.emby?.providerReference
+    sourceReference: data.sourceReference
+      ?? data.descriptor.sourceMetadata?.emby?.providerReference
       ?? data.descriptor.sourceMetadata?.jellyfin?.providerReference,
   }
   registerMediaTransport(result.descriptor)

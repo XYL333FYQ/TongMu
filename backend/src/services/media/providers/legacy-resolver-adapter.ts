@@ -70,9 +70,14 @@ export class LegacyResolverAdapter implements MediaProvider {
       deadline: context.deadline,
       roomId: context.roomId,
       sourceGeneration: context.sourceGeneration,
+      requestedQn: context.requestedQn,
+      preferMp4: context.preferMp4,
+      page: context.page,
+      cid: context.cid,
       playbackClientProfile: context.profile,
     };
-    const descriptor = await this.resolver.resolve(this.normalizeInput(input), resolverContext);
+    const resolved = await this.resolver.resolve(this.normalizeInput(input), resolverContext);
+    const descriptor = resolved;
     assertProviderActive(context);
     const candidates: PlaybackCandidate[] = [{
       mode: 'DIRECT',

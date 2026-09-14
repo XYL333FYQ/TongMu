@@ -78,11 +78,13 @@ comparison; no recursive reference-tree re-audit was performed.
 - Core implemented: `PlaybackClientProfileV1` validation/fingerprint and real
   browser feature collection; server-only viability filtering; client-owned
   local planning; provider context/registry/credential-dependency contract.
-- Core resolver adapters currently cover Bilibili, direct URL, generic web, and
-  BrowserResolver. WebDAV, FTP, OpenList, Emby, Jellyfin, local files,
-  AniSubs/Kazumi/anime, and live routes remain explicit temporary adapters or
-  legacy paths. See `provider-compatibility.md`.
-- Therefore the Phase 2 exit criteria are not yet marked complete.
+- Core resolver adapters now cover Bilibili, direct URL, generic web,
+  BrowserResolver, storage, Emby/Jellyfin, AniSubs/Kazumi/anime, and public
+  HLS/HTTP-FLV live inputs. Catalog routes and managed live ingest remain
+  compatibility/deferred surfaces. See `provider-compatibility.md`.
+- Phase 2 exit criteria are complete within this provider-convergence scope;
+  Phase 3 manifest/resource typing and Phase 6 migration/release gates remain
+  separate.
 
 **Phase 1 implementation status**
 
@@ -97,7 +99,9 @@ Add `PlaybackClientProfile` and server viability filtering while keeping `Playba
 
 **Why now**
 
-The new core already protects Bilibili/direct/generic/browser inputs, but WebDAV, FTP, OpenList, Emby, Jellyfin, server files, AniSubs/Kazumi/anime and live sources still use route-specific URL/proxy DTOs. Player and security work cannot become uniform while this split remains.
+The new core protects all currently playable source families. Catalog/listing
+routes remain provider-specific by design, while playback enters the common
+contract so later player and security work has one source boundary.
 
 **Dependencies**
 

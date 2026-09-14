@@ -1,10 +1,10 @@
 # Phase 2 provider compatibility ledger
 
-This ledger is intentionally explicit about the boundary reached in Phase 2C-1.
-The common provider contract now owns playback resolution for the four storage
-families plus Emby and Jellyfin. Anime/catalog and live source families remain
-temporary adapters/gaps and are not counted as converged merely because they can
-still play media.
+This ledger is intentionally explicit about the boundary reached in Phase 2C-2.
+The common provider contract owns playback resolution for storage, media-server,
+anime-source, Bilibili compatibility, and public HLS/HTTP-FLV live families.
+Catalog/browse routes remain provider-specific compatibility surfaces; managed
+live publishing and Phase 3 manifest work are explicitly deferred.
 
 ## Converged through the Media Core entrypoint
 
@@ -20,8 +20,13 @@ still play media.
 | OpenList/Alist | `openlist` | `OpenListProvider` -> visibility-classified temporary direct candidate or scoped proxy candidate | saved mount owner/source creator; API credential remains server-private | expiry is descriptor data and refresh is provider re-resolution; API cancellation and token cache remain server-side |
 | Emby | `emby` | stable `provider://emby` reference -> `EmbyProvider` -> private source, descriptor, candidates, viability, client planner | saved mount owner; API key/password remain server-private | provider start/progress/stop/cleanup through bounded generation-bound lifecycle; legacy facade retained |
 | Jellyfin | `jellyfin` | stable `provider://jellyfin` reference -> `JellyfinProvider` -> private source, descriptor, candidates, viability, client planner | saved mount owner; API key/password remain server-private | provider start/progress/stop/cleanup through bounded generation-bound lifecycle; legacy facade retained |
+| AniSubs | `anisubs` | stable `provider://anisubs` episode reference -> server-side rule/provider resolution -> private descriptor and candidate | current viewer only for optional provider material | Safe Fetch, deadline/cancellation, optional bounded BrowserResolver fallback; volatile URL refresh on each resolve |
+| Kazumi | `kazumi` | stable `provider://kazumi` episode reference -> server-side rule/provider resolution -> private descriptor and candidate | current viewer only for optional provider material | Safe Fetch, deadline/cancellation, volatile URL refresh on each resolve |
+| Configured anime sources | `anime` | stable `provider://anime` reference -> RSS/third-party/Bilibili bangumi adapter -> private descriptor and candidate | current viewer, optional | Safe Fetch for catalog/rule requests; Bilibili bangumi uses the common resolver/profile path |
+| Public HLS live | `live` | HLS URL or `live://hls` -> explicit live descriptor/candidate -> direct or scoped gateway | none unless source headers are required | `isLive`/non-seekable facts, profile `liveTransports`, gateway abort on disconnect |
+| Public HTTP-FLV live | `live` | FLV URL or `live://flv` -> explicit live descriptor/candidate -> direct or scoped gateway | none unless source headers are required | flv.js live mode, profile `liveTransports`, gateway abort on disconnect |
 
-The storage rows and the two media-server rows are native providers under the
+The storage, media-server, anime, and live rows are native providers under the
 common contract; `LegacyResolverAdapter` remains only for the older
 Bilibili/direct/generic-web/BrowserResolver families. None of these paths copy credentials into
 `ProviderContext`, return a `PlaybackPlan`, or make the room DTO a
@@ -49,18 +54,18 @@ Removal condition for each legacy playback route: all stored records have been
 re-resolved through Media Core, the compatibility facade has had a documented
 release window, and the old route has no remaining frontend or API consumers.
 
-## Temporary adapters / remaining convergence work
+## Compatibility surfaces / remaining work
 
-The following families still have route-specific contracts and must not be
-described as Phase 2-complete:
+The following surfaces remain deliberately outside the Phase 2 playable-source
+convergence boundary:
 
 | Source family | Current state | Required next step |
 | --- | --- | --- |
-| AniSubs/Kazumi/anime sources | scraping/catalog routes | move extraction behind Safe Fetch and private-source redaction |
-| Live HLS/HTTP-FLV | player-specific live paths | add live provider candidates, refresh, disconnect and generation cleanup |
+| AniSubs/Kazumi/anime catalog routes | search/source/episode listing remains provider-specific | keep DTO bounds and Safe Fetch; playback must continue through Media Core |
+| Managed RTMP/WHIP/WHEP ingest | no complete publisher lifecycle in current product | defer until a concrete live-publishing trigger and end-to-end lifecycle tests exist |
 
-Until those migrations land, `backend/src/routes/*` for the remaining families
-is the documented temporary compatibility surface. New playback resolution
+`backend/src/routes/{anisubs,kazumi,animeSources}.ts` remains a documented
+catalog/compatibility surface. New playback resolution
 must enter `frontend/src/modules/media/mediaApi.ts`; no new UI route should
 invent a second playback planner or publish provider credentials.
 
@@ -89,3 +94,12 @@ invent a second playback planner or publish provider credentials.
   compatibility refresh and upgraded to stable provider references after a
   successful resolution. Temporary stream URLs are not persisted as the new
   identity.
+- Anime episode references are likewise credential-free and stable; RSS
+  enclosure URLs, signed stream URLs, cookies, and provider headers are
+  rediscovered server-side and never become the room identity.
+- Public live HLS/HTTP-FLV sources carry explicit live facts and are filtered by
+  the request profile's `liveTransports`; an unknown duration is not converted
+  into a finite VOD duration and gateway disconnect aborts upstream streaming.
+- Bilibili DASH exact codec strings are matched as one video/audio tuple at the
+  requested quality. A profile mismatch is an explicit unavailable result, not
+  an implicit lower-quality fallback.

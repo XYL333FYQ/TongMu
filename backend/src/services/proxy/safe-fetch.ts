@@ -85,6 +85,10 @@ const lookupAll: LookupAll = (hostname) => dns.lookup(hostname, { all: true, ver
 
 export async function assertPublicUrl(rawUrl: string, lookup: LookupAll = lookupAll): Promise<URL> {
   const parsed = validateProxyUrl(rawUrl);
+  // The local E2E fixture is explicitly configured by the test runner. Keep
+  // this narrow exception aligned with fetchWithProxyPolicy's test-only
+  // fixture policy so provider-level validation can exercise the real path.
+  if (isExplicitE2eFixture(parsed)) return parsed;
   assertLiteralHostIsPublic(parsed);
   const hostname = normalizeHostname(parsed.hostname);
   if (!isIP(hostname)) {

@@ -29,7 +29,7 @@ export const flvEngine: PlayerEngine = {
       {
         type: 'flv',
         url: targetUrl,
-        isLive: false,
+        isLive: source.isLive === true,
         cors: true,
       },
       {

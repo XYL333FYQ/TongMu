@@ -12,6 +12,7 @@ import { useRoomStore, type Movie } from '@/store/roomStore'
 import { filterQualitiesByVip, getBilibiliUserInfo } from '@/modules/bilibili/bilibiliApi'
 import {
   resolveMediaInput,
+  stripTransientMediaDescriptor,
   toBilibiliResolvedSource,
   type ResolvedMedia,
 } from '@/modules/media/mediaApi'
@@ -188,10 +189,7 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
           ? {
               url: mediaCore.descriptor.finalUrl,
               sourceInput: movie.sourceInput || movie.url,
-              mediaDescriptor: {
-                ...mediaCore.descriptor,
-                playbackPlan: mediaCore.plan,
-              },
+              mediaDescriptor: stripTransientMediaDescriptor(mediaCore.descriptor),
             }
           : {}),
         audioUrl: resolved.audioUrl,
@@ -310,10 +308,7 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
           ? {
               url: mediaCore.descriptor.finalUrl,
               sourceInput: movie.sourceInput || movie.url,
-              mediaDescriptor: {
-                ...mediaCore.descriptor,
-                playbackPlan: mediaCore.plan,
-              },
+              mediaDescriptor: stripTransientMediaDescriptor(mediaCore.descriptor),
             }
           : {}),
         audioUrl: resolved.audioUrl,

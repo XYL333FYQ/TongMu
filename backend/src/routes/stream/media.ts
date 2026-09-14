@@ -763,6 +763,7 @@ router.post('/media/resolve', authenticateToken, mediaResolveLimiter, async (req
 
     res.json({
       success: true,
+      sourceReference: providerResolution.sourceReference,
       descriptor: { ...toPublicDescriptor(descriptor, first.url, first.audioUrl), transportPlan },
       viability: { removed: viability.removed },
     });

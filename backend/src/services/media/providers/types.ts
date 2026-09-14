@@ -29,6 +29,10 @@ export interface ProviderContext {
   signal: AbortSignal;
   deadline: number;
   profile: PlaybackClientProfileV1;
+  requestedQn?: number;
+  preferMp4?: boolean;
+  page?: number;
+  cid?: number;
   credentialOwnerPolicy: ProviderCredentialOwner;
   safeFetch: typeof fetchWithProxyPolicy;
 }

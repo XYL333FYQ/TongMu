@@ -38,6 +38,7 @@ export interface WatchTogetherState {
   format?: VideoFormat
   videoCodec?: string
   audioCodec?: string
+  isLive?: boolean
   cid?: number
   isPlaying: boolean
   currentTime: number

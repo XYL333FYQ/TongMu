@@ -409,6 +409,14 @@ const server = http.createServer(async (req, res) => {
     return sendBuffer(req, res, assets.muxed, 'video/mp4');
   }
 
+  if (path === '/anime/feed.xml' && (req.method === 'GET' || req.method === 'HEAD')) {
+    const episodeUrl = `http://127.0.0.1:${PORT}/anime/episode-1`;
+    const mediaUrl = `http://127.0.0.1:${PORT}/normal.mp4?token=fixture-anime-token`;
+    return sendText(req, res,
+      `<?xml version="1.0"?><rss version="2.0"><channel><title>TongMu fixture anime</title><item><title>Fixture Anime 01</title><link>${episodeUrl}</link><description>Media Core fixture episode</description><enclosure url="${mediaUrl}" type="video/mp4" /></item></channel></rss>`,
+      'application/rss+xml; charset=utf-8');
+  }
+
   if (path === '/normal.mp4' || path === '/extensionless') return sendBuffer(req, res, assets.muxed, 'video/mp4');
   if (path === '/hls/master.m3u8') return sendText(req, res,
     `#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-STREAM-INF:BANDWIDTH=500000,CODECS="${assets.muxedVideoCodec},mp4a.40.2"\nvariant\n`,

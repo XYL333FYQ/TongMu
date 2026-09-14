@@ -159,6 +159,7 @@ function toPlayerSource(
     format: state.format,
     videoCodec: state.videoCodec,
     audioCodec: state.audioCodec,
+    isLive: state.isLive,
     headers: state.headers,
     // MKV 快速路径：原生友好编码跳过重封装管线直接原生播放
     // （原生失败由 usePlayerSource 自动回退 playsvideo 管线）

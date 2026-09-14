@@ -33,12 +33,17 @@ export interface KazumiPlaybackUrl {
   format?: KazumiMediaFormat;
 }
 
+export interface KazumiRequestContext {
+  signal?: AbortSignal;
+  deadline?: number;
+}
+
 /** 数据源提供者接口 */
 export interface KazumiSourceProvider {
   name: string;
-  search(keyword: string): Promise<KazumiSearchResult[]>;
-  getEpisodes(identifier: string): Promise<KazumiEpisode[]>;
-  getPlaybackUrl(episode: KazumiEpisode): Promise<KazumiPlaybackUrl | null>;
+  search(keyword: string, context?: KazumiRequestContext): Promise<KazumiSearchResult[]>;
+  getEpisodes(identifier: string, context?: KazumiRequestContext): Promise<KazumiEpisode[]>;
+  getPlaybackUrl(episode: KazumiEpisode, context?: KazumiRequestContext): Promise<KazumiPlaybackUrl | null>;
 }
 
 /** Kazumi 规则 JSON 结构 */

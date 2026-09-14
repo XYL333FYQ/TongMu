@@ -14,6 +14,7 @@ import type {
 import { createWebSelectorProvider, createRssProvider } from './provider';
 import { proxyGitHubUrl } from '../../utils/githubCdn';
 import { fetchText } from './httpClient';
+import { MAX_RULE_RESULTS, isBoundedRuleText, isSafeRuleUrl } from './rule-safety';
 // 本地 fallback 订阅（当 sub.creamycake.org 被 Cloudflare TLS 拦截时使用）
 import defaultCss1 from './default-css1.json';
 import defaultBt1 from './default-bt1.json';
@@ -43,9 +44,10 @@ function getLocalFallback(url: string): AniSubsSubscription | null {
 export async function fetchSubscription(
   url: string,
 ): Promise<AniSubsSubscription> {
+  if (!isSafeRuleUrl(url)) throw new Error('ani-subs 订阅 URL 必须是无凭证的 HTTP/HTTPS 地址');
   const proxiedUrl = proxyGitHubUrl(url);
   try {
-    // 使用 fetchText（带 PowerShell fallback）而非原生 fetch，
+    // 使用统一的 SSRF-safe fetchText，而非原生 fetch，
     // 解决 Cloudflare TLS 指纹拦截问题
     const result = await fetchText(proxiedUrl, {
       headers: {
@@ -85,7 +87,7 @@ function buildProviderFromMediaSource(
 
   if (source.factoryId === 'rss' && source.arguments.searchConfig) {
     const searchUrl = source.arguments.searchConfig.searchUrl;
-    if (searchUrl) {
+    if (isSafeRuleUrl(searchUrl)) {
       return { id, provider: createRssProvider(id, name, searchUrl) };
     }
   }
@@ -114,7 +116,8 @@ export function buildProvidersFromSubscription(
   const providers: Record<string, AniSubsSourceProvider> = {};
   const sources = subscription.exportedMediaSourceDataList?.mediaSources || [];
 
-  sources.forEach((source, index) => {
+  sources.slice(0, MAX_RULE_RESULTS).forEach((source, index) => {
+    if (!source || typeof source !== 'object' || !isBoundedRuleText(source.arguments?.name)) return;
     const result = buildProviderFromMediaSource(source, index);
     if (result) {
       providers[result.id] = result.provider;

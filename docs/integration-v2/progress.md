@@ -4,7 +4,7 @@
 
 This file is the persistent checkpoint for the TongMu V2 integration program. Phase 0 is an audit and design phase only: no product code, dependency, database, configuration, CI, or reference source was changed.
 
-Current state: **Phase 1 implementation is complete within its approved scope; the Phase 6 migration/release gate remains intentionally open.**
+Current state: **Phase 2 implementation is complete within its approved Media Core scope; the Phase 6 migration/release gate remains intentionally open.**
 
 Phase 2 has a working core checkpoint: the versioned client profile, server
 viability filter, client-owned planner path, provider contract/registry, and
@@ -12,9 +12,11 @@ deterministic tamper coverage are implemented. Phase 2B additionally converges
 Local/server files, WebDAV, FTP, and OpenList/Alist playback resolution through
 the Media Core. Phase 2C-1 now converges Emby and Jellyfin playback through the
 same path, including profile viability, private credentials, representation
-facts, and provider session cleanup. Full Phase 2 remains open while
-AniSubs/Kazumi/anime and live HLS/HTTP-FLV routes are still temporary adapters
-or legacy surfaces.
+facts, and provider session cleanup. Phase 2C-2 now converges AniSubs, Kazumi,
+configured anime sources, public HLS/HTTP-FLV live inputs, and Bilibili DASH
+exact codec/profile filtering through the same Media Core entrypoint. Provider-
+specific catalog/browse routes remain compatibility surfaces; Phase 3 manifest
+typing and Phase 6 release/migration work remain open.
 
 Phase 1 restored the declared dependency baseline, closed the scoped credential and
 token-revocation P0/P1 defects, introduced the shared ByteRange core, and added a
@@ -51,9 +53,10 @@ These remote values identify the upstream state observed on 2026-09-13; they do 
 - Bilibili, Direct URL, Generic Web, and BrowserResolver are substantially integrated with the new core.
 - Emby and Jellyfin playback now use separate Media Core providers; their
   browse/manage APIs and legacy playback routes remain compatibility surfaces.
-  Anime/Kazumi/AniSubs paths and some live paths still use legacy-specific
-  contracts or routes. Storage browse/manage APIs remain provider-specific by
-  design, while their new playback path is Media Core.
+  Anime/Kazumi/AniSubs catalog paths and live publishing/ingest remain
+  provider-specific compatibility surfaces. Their playable source resolution
+  now enters Media Core; storage browse/manage APIs remain provider-specific by
+  design.
 - Safe Fetch and BrowserResolver provide meaningful SSRF and network-policy defenses, but every proxy/resolver path must continue to use the same policy boundary.
 - SQLite/config persistence remains rooted at `/app/config`; the root Docker entry retains Playwright/Chromium and `shm_size` expectations.
 
@@ -73,8 +76,8 @@ to do that work safely.
 
 ### P1 — high-priority integration and reliability gaps
 
-1. AniSubs/Kazumi/anime and live providers still bypass the common private-source/descriptor/candidate contract, so authorization, redaction, quality, and fallback rules are not uniformly enforced there.
-2. HLS rewriting is useful but untyped and lacks bounded manifest-resource protection comparable to SyncTV's mapper.
+1. HLS rewriting is useful but untyped and lacks bounded manifest-resource protection comparable to SyncTV's mapper; this is a Phase 3 hardening item.
+2. Live publishing/ingest lifecycle (RTMP/WHIP/WHEP) remains outside public HLS/HTTP-FLV source convergence and is explicitly deferred.
 3. DASH rewriting does not yet cover the full MPD surface needed for `SegmentBase`, representation indexes, bitstream-switching resources, `Location`, and xlink semantics.
 4. Realtime video and future music synchronization do not yet share a documented `RealtimeSyncCore`; sequence, generation, reconnect, host loss, request/ack, and stale-event rules are duplicated or incomplete.
 5. Voice lifecycle and identity handling are weaker than the current ZViewer implementation, especially 48 kHz/frame consistency, same-user replacement, ghost cleanup, pending-source disposal, and moderator/root invariants.
@@ -98,7 +101,7 @@ to do that work safely.
 - [x] Phase 0 — record capability-level decisions in the adoption matrix.
 - [x] Phase 0 — define target architecture and executable implementation phases.
 - [x] Phase 1 — security and correctness foundation: secret boundary, credentials, Range, migration foundation, baseline restoration, updater/CI safety stopgap.
-- [ ] Phase 2 — Media Core + Provider convergence.
+- [x] Phase 2 — Media Core + Provider convergence.
 - [ ] Phase 3 — Manifest / Proxy / Slice Cache.
 - [ ] Phase 4 — Player / Subtitle / Voice.
 - [ ] Phase 5 — `RealtimeSyncCore` / Permissions / Together Listen.
@@ -144,6 +147,7 @@ environment-dependent.
 | Backend tests | `npm test -w backend` | PASS | 65/65, including V1 profile, viability, provider context, route-boundary, and repeated tamper coverage |
 | Frontend tests | `npm test -w frontend` | PASS | 8/8, including tuple matching, empty profile, collector bounds, and stable fingerprint |
 | Frontend production build | `npm run build -w frontend` | PASS | Existing MediaBunny dynamic-import and large-chunk warnings remain |
+| Frontend ESLint | `npm run lint -w frontend` | BASELINE BLOCKED | Existing repository/vendor formatting and rule/plugin findings; the full run reported 7,193 problems and the focused changed-file run reported 4,246, with no lint rule weakened |
 | Chromium media E2E | `npm run test:e2e -- --reporter=dot` | PASS | 13/13; real direct/HLS/DASH, room grants, fallback, private DTO, mobile overflow, and real V1 browser collector |
 | Diff whitespace check | `git diff --check` | PASS | Only Git's existing LF/CRLF normalization warnings were reported |
 
@@ -239,8 +243,65 @@ Phase 2 as a whole.
   codec-changing output is only represented as an explicit transcode
   candidate; transport fallback and proven same-quality remux remain distinct.
 
-Overall Phase 2 remains **BLOCKED** by AniSubs/Kazumi/anime convergence and Live
-HLS/HTTP-FLV convergence, as expected for this checkpoint.
+Overall Phase 2 is now **COMPLETE within the Media Core/provider-convergence
+scope**. Phase 3 manifest/resource hardening and Phase 6 migration/release gates
+remain intentionally open.
+
+## Phase 2C-2 Anime, live, and Bilibili convergence validation
+
+Phase 2C-2 is **COMPLETE within the Phase 2 Media Core boundary**. The
+catalog/search routes remain provider-specific, but playable source resolution
+is now centralized.
+
+- AniSubs, Kazumi, and configured anime sources use bounded stable
+  `provider://` references. Temporary media URLs and provider headers are
+  resolved server-side into `PrivateMediaSource` and `MediaDescriptor`; the
+  room stores provider facts only.
+- AniSubs/rule/catalog HTTP requests use the SSRF-safe Safe Fetch policy with
+  bounded bodies, deadlines, cancellation, and optional BrowserResolver
+  fallback. Compatibility `/resolve` routes return only a stable reference.
+- Public HLS and HTTP-FLV inputs use an explicit live provider. Live facts
+  (`isLive`, transport kind, non-seekable/unknown duration, reconnect policy)
+  flow to the frontend; flv.js receives `isLive` instead of assuming VOD.
+  Managed RTMP/WHIP/WHEP publishing remains deferred.
+- Bilibili DASH selection now filters the requested quality by the complete
+  video/audio RFC6381 tuple and the request-scoped client profile. If the
+  requested quality has no supported tuple, resolution fails; it never silently
+  selects a lower quality.
+- Persisted room/movie descriptors remove signed URLs, headers, opaque session
+  capabilities, transport plans, and host-specific playback plans; a bounded
+  numeric `expiresAt` fact may remain so the client can trigger re-resolution.
+
+### Phase 2C-2 validation
+
+| Check | Command | Result | Evidence / limitation |
+| --- | --- | ---: | --- |
+| Backend build/typecheck | `npm run build -w backend` | PASS | Anime/live providers, profile propagation, and route DTOs compile |
+| Backend lint | `npm run lint -w backend` | PASS | TypeScript no-emit check passes for the final Phase 2C-2 tree |
+| Backend tests | `npm test -w backend` | PASS with 1 skip | 83 passing, 1 Windows symlink-escape skip; exact-codec/reference/live and bounded-rule tests pass |
+| Frontend tests | `npm test -w frontend` | PASS | 9/9 |
+| Frontend production build | `npm run build -w frontend` | PASS | Existing MediaBunny dynamic-import and large-chunk warnings remain |
+| Focused frontend lint | changed-file ESLint | BASELINE BLOCKED | 4,254 problems (4,253 errors, 1 warning), predominantly existing Prettier/CRLF and repository/vendor rule findings; no lint rule was weakened |
+| Provider playback bypass audit | `rg` source audit | PASS | Anime/Kazumi selection uses `resolveMediaInput`; no new raw URL/header persistence |
+| Diff whitespace check | `git diff --check` | PASS | Only existing Git LF/CRLF normalization warnings |
+| Chromium media fixture E2E | `npm run test:e2e -- --reporter=dot` | PASS | 18/18, including the 16-test baseline plus anime-provider reference playback and credentialed live-HLS gateway playback; after the final episode-DTO redaction, the two new Anime/Live scenarios were rerun as a focused 2/2; expected auth-refresh and inspector diagnostics remain in logs |
+| Real anime provider accounts | external sources | NOT RUN | No stable external account/feed fixture was supplied |
+| Real public HLS/HTTP-FLV source | external source | NOT RUN | No stable external stream was supplied; Chromium fixture covers HLS, while real HTTP-FLV decode is not run because the fixture/browser environment does not provide a stable FLV live source |
+| Docker/ffmpeg/live ingest | host tools | NOT RUN | Docker and ffmpeg are unavailable; managed ingest is deferred |
+
+### Phase 2 closure audit
+
+- Target-2 provider registry rows are converged: storage, Emby/Jellyfin,
+  Bilibili compatibility, AniSubs/Kazumi/anime, and public HLS/HTTP-FLV live
+  sources all enter the common provider contract.
+- Target-2 quality/security rows are converged: source generation and abort
+  guards remain in the resolve/gateway path; public DTOs redact provider
+  credentials; the client still owns final planning; transport fallback keeps
+  representation identity.
+- The remaining matrix items are explicitly Phase 3 manifest/resource typing,
+  Phase 4 player lifetime hardening, Phase 5 product/realtime UX, managed live
+  publishing, or Phase 6 migration/release work. They are not hidden as Phase
+  2 provider gaps.
 
 ## Migration foundation boundary
 

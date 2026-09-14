@@ -3,9 +3,10 @@ import { registerMediaTransport } from '@/modules/media/transport'
 import { planPlayback } from '@/modules/media/localPlanner'
 import {
   resolveMediaInput,
-  stripPlaybackSessionCapabilities,
+  stripTransientMediaDescriptor,
   type MediaDescriptor,
 } from '@/modules/media/mediaApi'
+import { buildAnimeProviderReference, stripTransientAnimeDescriptor } from '@/modules/media/animeReference'
 import { collectPlaybackClientProfile } from '@/modules/media/playbackProfile'
 /**
  * 影片播放源解析器（从 useWatchTogether.loadMovie 抽取）。
@@ -25,11 +26,6 @@ import { useCliAgentStore } from '@/store/cliAgentStore'
 import { getBilibiliParseOptions } from '@/modules/bilibili/parseOptions'
 import type { QualityOption } from './resolveSource'
 import { buildServerFileProxyUrl } from '@/modules/server-files/serverFilesApi'
-import {
-  resolveAniSubsEpisode,
-  buildAniSubsProxyUrl,
-  needsAniSubsProxy,
-} from '@/modules/anisubs'
 import type { ResolvedMedia } from '@/modules/media/mediaApi'
 
 /** 房主刷新恢复时由后端返回的最近一次播放状态（源相关子集） */
@@ -58,6 +54,7 @@ export interface ResolvedMovieSource {
   format?: MediaFormat
   videoCodec?: string
   audioCodec?: string
+  isLive?: boolean
   cid?: number
   duration: number
   currentQn?: number
@@ -142,15 +139,22 @@ async function resolveMediaCoreMovie(
       }
     | undefined)?.bilibili
   const storedExpiry = Number(stored.expiresAt ?? 0)
+  const volatileProvider = ['anime', 'anisubs', 'kazumi'].includes(
+    String(storedDescriptor.sourceType ?? storedDescriptor.resolver ?? '').toLowerCase(),
+  )
   const profile = await collectPlaybackClientProfile()
   const storedPlan = planPlayback(storedDescriptor, profile, storedDescriptor.transportPlan?.candidates)
-  if (storedPlan.engine === 'blocked' && !(isMediaServerDescriptor && sourceGeneration !== undefined)) {
+  // Persisted Media Core descriptors deliberately omit request-scoped URLs
+  // and plans. A blocked plan here can therefore mean only "needs refresh",
+  // not that the source is inherently unplayable; the canonical sourceInput
+  // below is still available for the host to resolve again.
+  if (storedPlan.engine === 'blocked' && !movie.sourceInput && !volatileProvider && !(isMediaServerDescriptor && sourceGeneration !== undefined)) {
     throw new Error(storedPlan.reasons.join('；'))
   }
   registerMediaTransport(storedDescriptor)
   // A media-server session is bound to the resolved source generation. Re-resolve
   // for a real host playback generation instead of reusing an old capability.
-  if (storedExpiry > Date.now() + 60_000 && !(isMediaServerDescriptor && sourceGeneration !== undefined)) {
+  if (!volatileProvider && storedExpiry > Date.now() + 60_000 && !(isMediaServerDescriptor && sourceGeneration !== undefined)) {
     return {
       sourceUrl: storedPlan.candidateUrl ?? movie.url,
       audioUrl: movie.audioUrl,
@@ -175,7 +179,7 @@ async function resolveMediaCoreMovie(
   }
 
   const cached = mediaCoreResolveCache.get(movie.id)
-  if (cached && cached.expiresAt > Date.now() + 60_000 && !(isMediaServerDescriptor && sourceGeneration !== undefined)) {
+  if (!volatileProvider && cached && cached.expiresAt > Date.now() + 60_000 && !(isMediaServerDescriptor && sourceGeneration !== undefined)) {
     const replanned: ResolvedMedia = {
       ...cached.resolved,
       plan: planPlayback(cached.resolved.descriptor, profile, cached.resolved.descriptor.transportPlan?.candidates),
@@ -196,9 +200,13 @@ async function resolveMediaCoreMovie(
   })
   if (roomId) {
     await useRoomStore.getState().updateMovie(roomId, movie.id, {
-      url: resolved.descriptor.finalUrl,
-      audioUrl: resolved.descriptor.audioUrl,
-      mediaDescriptor: { ...stripPlaybackSessionCapabilities(resolved.descriptor) },
+      url: volatileProvider ? (resolved.sourceReference ?? movie.sourceInput ?? movie.url) : resolved.descriptor.finalUrl,
+      audioUrl: volatileProvider ? undefined : resolved.descriptor.audioUrl,
+      mediaDescriptor: {
+        ...(volatileProvider
+          ? stripTransientAnimeDescriptor(resolved.descriptor)
+          : stripTransientMediaDescriptor(resolved.descriptor)),
+      },
       format: resolved.descriptor.container,
       videoCodec: resolved.descriptor.videoCodec,
       audioCodec: resolved.descriptor.audioCodec,
@@ -224,7 +232,8 @@ function mapMediaCoreResult(
     format: descriptor.container,
     videoCodec: descriptor.videoCodec,
     audioCodec: descriptor.audioCodec,
-    duration: descriptor.duration ?? movie.duration ?? 0,
+    isLive: descriptor.isLive,
+    duration: descriptor.isLive ? 0 : descriptor.duration ?? movie.duration ?? 0,
     cid: bilibili?.cid ?? movie.cid,
     currentQn: bilibili?.actualQn ?? descriptor.actualQuality ?? movie.currentQn,
     acceptQuality: bilibili?.availableQualities ?? movie.acceptQuality,
@@ -443,30 +452,19 @@ export async function resolveBilibiliOnline(
  * @throws sourceMeta 缺失或解析失败时抛错
  */
 export async function resolveAnimeOnline(
-  movie: Movie
+  movie: Movie,
+  roomId?: string,
+  sourceGeneration?: number,
 ): Promise<ResolvedMovieSource> {
   if (!movie.sourceMeta) {
     throw new Error('番剧源元数据缺失，请重新添加该番剧')
   }
 
   const { sourceId, episode } = movie.sourceMeta
-  const resolved = await resolveAniSubsEpisode(sourceId, episode)
-
-  // 防盗链处理：若返回 headers，走后端代理 URL
-  const finalUrl = needsAniSubsProxy(resolved.url, resolved.headers)
-    ? buildAniSubsProxyUrl(resolved.url, resolved.headers)
-    : resolved.url
-
-  return {
-    sourceUrl: finalUrl,
-    audioUrl: undefined,
-    format: resolved.format as MediaFormat | undefined,
-    videoCodec: undefined,
-    audioCodec: undefined,
-    duration: movie.duration ?? 0,
-    headers: undefined,
-    reusedRecoveryUrl: false,
-  }
+  const providerFamily = movie.sourceType === 'kazumi' ? 'kazumi' : 'anisubs'
+  const sourceInput = buildAnimeProviderReference(providerFamily, sourceId, episode)
+  const resolved = await resolveMediaInput(sourceInput, { roomId, sourceGeneration })
+  return { ...mapMediaCoreResult(resolved, movie), mediaCore: resolved }
 }
 
 /**
@@ -555,10 +553,10 @@ export async function resolveMovieSource({
     return resolveBilibiliOnline(movie, onProgress, { roomId, sourceGeneration })
   }
 
-  if (sourceType === 'anime') {
+  if (sourceType === 'anime' || sourceType === 'kazumi') {
     // ani-subs 番剧源：URL 短期有效，每次播放都通过 sourceMeta 重新解析
     // recovery 场景下也强制重新解析，因为旧 URL 大概率已过期
-    return resolveAnimeOnline(movie)
+    return resolveAnimeOnline(movie, roomId, sourceGeneration)
   }
 
   if (sourceType === 'emby' || sourceType === 'jellyfin') {
@@ -578,7 +576,7 @@ export async function resolveMovieSource({
       await useRoomStore.getState().updateMovie(roomId, movie.id, {
         url: core.descriptor.finalUrl,
         audioUrl: core.descriptor.audioUrl,
-        mediaDescriptor: { ...stripPlaybackSessionCapabilities(core.descriptor) },
+        mediaDescriptor: stripTransientMediaDescriptor(core.descriptor),
         sourceInput: core.sourceReference,
         format: core.descriptor.container,
         videoCodec: core.descriptor.videoCodec,

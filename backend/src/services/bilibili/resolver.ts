@@ -29,6 +29,7 @@ import {
   setCachedVideoInfo,
 } from './cache';
 import { redactMediaError, redactMediaUrl } from '../media/redact';
+import type { PlaybackClientProfileV1 } from '../media/playback-profile';
 
 export interface ResolveProgress {
   status: 'parsing' | 'done' | 'error';
@@ -99,6 +100,8 @@ export interface ResolveOptions {
    * - 用于 CLI 代理场景：前端已知目标分集的 cid，直接传入而无需先查 page 序号
    */
   cid?: number;
+  /** Request-scoped DASH tuple capabilities; never persisted as provider state. */
+  playbackClientProfile?: PlaybackClientProfileV1;
   /**
    * 跳过 CDN 健康检查（advisory HEAD + bounded Range GET）。
    * - false/undefined（默认）：播放场景需要选择可达 URL，执行有界探测
@@ -390,7 +393,7 @@ async function requestMp4Compatibility(
 export async function resolveBilibiliVideo(
   opts: ResolveOptions,
 ): Promise<ResolveResult> {
-  const { url: rawUrl, cookie, qn, codec, onProgress, preferMp4, page, cid, skipCdnCheck } = opts;
+  const { url: rawUrl, cookie, qn, codec, onProgress, preferMp4, page, cid, skipCdnCheck, playbackClientProfile } = opts;
 
   // 短链展开：b23.tv 等分享短链 302 到完整视频地址（可能带 ?p=N 分集参数）
   const url = await expandBilibiliShortLink(rawUrl);
@@ -514,7 +517,12 @@ export async function resolveBilibiliVideo(
 
   // 播放地址（使用 effectiveCid 对应的分集 cid 请求 playurl）
   emit('playurl', '正在获取播放地址...');
-  const playUrl = await getPlayUrl(info.bvid, effectiveCid, cookie, { qn: requestedQn, codec, isVip });
+  const playUrl = await getPlayUrl(info.bvid, effectiveCid, cookie, {
+    qn: requestedQn,
+    codec,
+    isVip,
+    playbackProfile: playbackClientProfile,
+  });
   if (!playUrl) throw new ResolveError('源站未返回可播放媒体，请检查账号权限', 'NO_PERMISSION');
   if (qn !== undefined && playUrl.currentQn !== qn) {
     throw new ResolveError(`请求 ${qualityLabel(qn)}，源站实际只返回 ${qualityLabel(playUrl.currentQn)}；请检查账号、授权或主动选择其他清晰度`, 'QUALITY_UNAVAILABLE');

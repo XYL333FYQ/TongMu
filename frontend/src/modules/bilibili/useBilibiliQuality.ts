@@ -8,7 +8,7 @@ import { safePlay } from '@/modules/sync-playback/safePlay'
 import { getBilibiliParseOptions } from './parseOptions'
 import { extractBvid, resolveBilibiliViaCli } from './cliApi'
 import { getActiveCliProxyUrl } from '@/modules/room/watch-together/movie-source-resolver'
-import { resolveMediaInput } from '@/modules/media/mediaApi'
+import { resolveMediaInput, stripTransientMediaDescriptor } from '@/modules/media/mediaApi'
 import { redactMediaError } from '@/modules/player/services/media-redaction'
 
 function qualitiesEqual(a: QualityOption[], b: QualityOption[]): boolean {
@@ -221,10 +221,7 @@ export function useBilibiliQuality(ctx: BilibiliQualityContext) {
             url: mediaCore.descriptor.finalUrl,
             audioUrl: mediaCore.descriptor.audioUrl,
             sourceInput: movie.sourceInput || movie.url,
-            mediaDescriptor: {
-              ...mediaCore.descriptor,
-              playbackPlan: mediaCore.plan,
-            },
+            mediaDescriptor: stripTransientMediaDescriptor(mediaCore.descriptor),
             format: mediaCore.descriptor.container,
             videoCodec: mediaCore.descriptor.videoCodec,
             audioCodec: mediaCore.descriptor.audioCodec,

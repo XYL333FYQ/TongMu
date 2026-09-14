@@ -10,6 +10,7 @@ import type {
   KazumiSearchResult,
   KazumiEpisode,
   KazumiPlaybackUrl,
+  KazumiRequestContext,
 } from './types';
 import {
   fetchHtml,
@@ -22,6 +23,7 @@ import {
   toAbsoluteUrl,
   resolveVideoUrl,
 } from './scraper';
+import { MAX_RULE_RESULTS } from '../anisubs/rule-safety';
 
 interface EpisodeInfo {
   id: string;
@@ -38,7 +40,7 @@ export function createKazumiProvider(
   return {
     name: rule.name,
 
-    async search(keyword: string): Promise<KazumiSearchResult[]> {
+    async search(keyword: string, context?: KazumiRequestContext): Promise<KazumiSearchResult[]> {
       const searchUrl = rule.searchURL.replace(
         /@keyword/g,
         encodeURIComponent(keyword),
@@ -46,6 +48,7 @@ export function createKazumiProvider(
       const html = await fetchHtml(searchUrl, {
         userAgent: rule.userAgent,
         referer: rule.referer || rule.baseURL,
+        ...context,
       });
       const doc = parseHtmlDocument(html);
       const baseUrl = resolveBaseUrl(searchUrl);
@@ -53,7 +56,7 @@ export function createKazumiProvider(
       const listNodes = selectXPath(doc, rule.searchList);
       const results: KazumiSearchResult[] = [];
 
-      for (const node of listNodes) {
+      for (const node of listNodes.slice(0, MAX_RULE_RESULTS)) {
         const nameNodes = selectXPath(node as Node, rule.searchName);
         const resultNodes = selectXPath(node as Node, rule.searchResult);
         const title = extractText(nameNodes[0]);
@@ -83,11 +86,12 @@ export function createKazumiProvider(
         .slice(0, 20);
     },
 
-    async getEpisodes(identifier: string): Promise<KazumiEpisode[]> {
+    async getEpisodes(identifier: string, context?: KazumiRequestContext): Promise<KazumiEpisode[]> {
       const subjectUrl = identifier;
       const html = await fetchHtml(subjectUrl, {
         userAgent: rule.userAgent,
         referer: rule.referer || rule.baseURL,
+        ...context,
       });
       const doc = parseHtmlDocument(html);
       const baseUrl = resolveBaseUrl(subjectUrl);
@@ -95,9 +99,11 @@ export function createKazumiProvider(
       const roadNodes = selectXPath(doc, rule.chapterRoads);
       const episodes: EpisodeInfo[] = [];
 
-      for (const road of roadNodes) {
+      for (const road of roadNodes.slice(0, MAX_RULE_RESULTS)) {
+        if (episodes.length >= MAX_RULE_RESULTS) break;
         const resultNodes = selectXPath(road as Node, rule.chapterResult);
-        for (const node of resultNodes) {
+        for (const node of resultNodes.slice(0, MAX_RULE_RESULTS)) {
+          if (episodes.length >= MAX_RULE_RESULTS) break;
           const title = extractText(node);
           const url = toAbsoluteUrl(
             extractAttr(node, 'href') || extractText(node),
@@ -114,7 +120,7 @@ export function createKazumiProvider(
         }
       }
 
-      return episodes.map((info) => ({
+      return episodes.slice(0, MAX_RULE_RESULTS).map((info) => ({
         id: info.id,
         title: info.title,
         episodeNumber: info.episodeNumber || 1,
@@ -124,12 +130,13 @@ export function createKazumiProvider(
 
     async getPlaybackUrl(
       episode: KazumiEpisode,
+      context?: KazumiRequestContext,
     ): Promise<KazumiPlaybackUrl | null> {
       const episodeUrl = episode.playbackParams.episodeUrl;
       if (typeof episodeUrl !== 'string' || !episodeUrl) {
         throw new Error('缺少剧集页面地址');
       }
-      const result = await resolveVideoUrl(episodeUrl, rule);
+      const result = await resolveVideoUrl(episodeUrl, rule, context);
       if (!result) {
         return null;
       }

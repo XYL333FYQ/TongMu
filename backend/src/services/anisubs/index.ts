@@ -10,6 +10,7 @@ import type { AniSubsSourceProvider, AniSubsEpisode } from './types';
 import { fetchSubscription, buildProvidersFromSubscription } from './subscription';
 import { AppDataSource } from '../../data-source';
 import { SystemSettings } from '../../entities/SystemSettings';
+import { MAX_RULE_SOURCES } from './rule-safety';
 
 export * from './types';
 
@@ -68,10 +69,10 @@ export async function buildProviders(
   const urls =
     Array.isArray(config.aniSubsSubscriptions) &&
     config.aniSubsSubscriptions.length > 0
-      ? config.aniSubsSubscriptions
+      ? config.aniSubsSubscriptions.slice(0, MAX_RULE_SOURCES)
       : DEFAULT_ANI_SUBS_SUBSCRIPTIONS;
 
-  console.log(`[anisubs] buildProviders: urls =`, urls);
+  console.log(`[anisubs] buildProviders: ${urls.length} subscription URL(s)`);
 
   for (const url of urls) {
     if (!url || typeof url !== 'string') continue;

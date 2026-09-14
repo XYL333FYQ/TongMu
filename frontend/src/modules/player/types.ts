@@ -66,6 +66,7 @@ export interface PlayerSource {
   videoCodec?: string
   /** 音频编码（仅 MSE 引擎用于构造 MIME） */
   audioCodec?: string
+  isLive?: boolean
   /** 防盗链 headers（由后端 resolve 返回，走代理时使用） */
   headers?: Record<string, string>
   /**

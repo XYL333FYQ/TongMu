@@ -9,12 +9,14 @@ import type { KazumiRule, KazumiSourceProvider } from './types';
 import { createKazumiProvider } from './provider';
 import { proxyGitHubUrl } from '../../utils/githubCdn';
 import { fetchText } from '../anisubs/httpClient';
+import { isBoundedRuleText, isSafeRuleUrl, MAX_RULE_SOURCES } from '../anisubs/rule-safety';
 
 const DEFAULT_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
 /** 获取 Kazumi 规则 JSON（经 PowerShell fallback 绕过 TLS 拦截） */
 export async function fetchKazumiRule(url: string): Promise<KazumiRule> {
+  if (!isSafeRuleUrl(url)) throw new Error('规则 URL 必须是无凭证的 HTTP/HTTPS 地址');
   const proxiedUrl = proxyGitHubUrl(url);
   const result = await fetchText(proxiedUrl, {
     headers: {
@@ -33,8 +35,12 @@ export async function fetchKazumiRule(url: string): Promise<KazumiRule> {
   } catch {
     throw new Error('规则 JSON 解析失败');
   }
-  if (!data.name || !data.baseURL || !data.searchURL) {
+  if (typeof data.name !== 'string' || !data.name || data.name.length > 256 ||
+      !isSafeRuleUrl(data.baseURL) || !isSafeRuleUrl(data.searchURL)) {
     throw new Error('规则格式不正确（缺少 name/baseURL/searchURL）');
+  }
+  for (const value of [data.searchList, data.searchName, data.searchResult, data.chapterRoads, data.chapterResult]) {
+    if (!isBoundedRuleText(value)) throw new Error('规则选择器过长或无效');
   }
   return data;
 }
@@ -45,9 +51,9 @@ export async function buildProvidersFromRules(
 ): Promise<Record<string, KazumiSourceProvider>> {
   const providers: Record<string, KazumiSourceProvider> = {};
 
-  for (let index = 0; index < ruleUrls.length; index++) {
+  for (let index = 0; index < Math.min(ruleUrls.length, MAX_RULE_SOURCES); index++) {
     const url = ruleUrls[index];
-    if (!url || typeof url !== 'string') continue;
+    if (!isSafeRuleUrl(url)) continue;
     try {
       const rule = await fetchKazumiRule(url);
       // 使用 index 保证唯一性，名称仅用于显示

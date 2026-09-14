@@ -80,18 +80,12 @@ export async function resolveAniSubsEpisode(
   const data = (await res.json()) as {
     success: boolean
     message?: string
-    url?: string
-    headers?: Record<string, string>
-    format?: AniSubsResolvedSource['format']
+    sourceReference?: string
   }
-  if (!res.ok || !data.success || !data.url) {
+  if (!res.ok || !data.success || !data.sourceReference) {
     throw new Error(data.message || '解析播放地址失败')
   }
-  return {
-    url: data.url,
-    headers: data.headers,
-    format: data.format,
-  }
+  return { sourceReference: data.sourceReference }
 }
 
 /**
@@ -111,7 +105,6 @@ export function buildAniSubsProxyUrl(
   if (headers.Referer) params.set('referer', headers.Referer)
   if (headers['User-Agent']) params.set('userAgent', headers['User-Agent'])
   if (headers.Origin) params.set('origin', headers.Origin)
-  if (headers.Cookie) params.set('cookie', headers.Cookie)
   return `/api/stream/anisubs/proxy?${params.toString()}`
 }
 

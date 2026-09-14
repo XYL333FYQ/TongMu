@@ -23,6 +23,11 @@ import {
 } from '../services/kazumi';
 import { proxyHttpUpstream } from '../services/proxy';
 import { isInternalServerUrl } from '../services/network-utils';
+import {
+  buildAnimeProviderReference,
+  sanitizeAnimePlaybackParams,
+} from '../services/media/providers/anime-provider';
+import { createAnimeRouteRequestContext } from './anime-request-context';
 
 const router = Router();
 
@@ -52,7 +57,6 @@ router.get('/proxy', async (req: AuthenticatedRequest, res: Response) => {
       referer: typeof q.referer === 'string' ? q.referer : undefined,
       origin: typeof q.origin === 'string' ? q.origin : undefined,
       userAgent: typeof q.userAgent === 'string' ? q.userAgent : undefined,
-      cookie: typeof q.cookie === 'string' ? q.cookie : undefined,
     },
     cors: 'wildcard',
     logTag: 'kazumi',
@@ -97,8 +101,9 @@ router.get('/search', async (req: AuthenticatedRequest, res: Response) => {
     return;
   }
 
+  const requestContext = createAnimeRouteRequestContext(req);
   try {
-    const results = await provider.search(keyword.trim());
+    const results = await provider.search(keyword.trim(), requestContext);
     res.json({ success: true, results });
   } catch (err) {
     console.error('[kazumi] search error:', err);
@@ -106,6 +111,8 @@ router.get('/search', async (req: AuthenticatedRequest, res: Response) => {
       success: false,
       message: err instanceof Error ? err.message : '搜索失败',
     });
+  } finally {
+    requestContext.cleanup();
   }
 });
 
@@ -130,15 +137,24 @@ router.get('/episodes', async (req: AuthenticatedRequest, res: Response) => {
     return;
   }
 
+  const requestContext = createAnimeRouteRequestContext(req);
   try {
-    const episodes = await provider.getEpisodes(identifier.trim());
-    res.json({ success: true, episodes });
+    const episodes = await provider.getEpisodes(identifier.trim(), requestContext);
+    res.json({
+      success: true,
+      episodes: episodes.map((episode) => ({
+        ...episode,
+        playbackParams: sanitizeAnimePlaybackParams(episode.playbackParams),
+      })),
+    });
   } catch (err) {
     console.error('[kazumi] episodes error:', err);
     res.status(502).json({
       success: false,
       message: err instanceof Error ? err.message : '获取集数失败',
     });
+  } finally {
+    requestContext.cleanup();
   }
 });
 
@@ -165,25 +181,11 @@ router.post('/resolve', async (req: AuthenticatedRequest, res: Response) => {
 
   const normalized = normalizeEpisode(episode);
 
-  try {
-    const result = await provider.getPlaybackUrl(normalized);
-    if (!result) {
-      res.status(404).json({ success: false, message: '无法解析播放地址' });
-      return;
-    }
-    res.json({
-      success: true,
-      url: result.url,
-      headers: result.headers,
-      format: result.format,
-    });
-  } catch (err) {
-    console.error('[kazumi] resolve error:', err);
-    res.status(502).json({
-      success: false,
-      message: err instanceof Error ? err.message : '解析播放地址失败',
-    });
-  }
+  res.json({
+    success: true,
+    sourceReference: buildAnimeProviderReference('kazumi', source.trim(), normalized),
+    message: '播放地址由统一 Media Core 在实际播放时解析',
+  });
 });
 
 export default router;

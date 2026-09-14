@@ -8,6 +8,7 @@
 import { load } from 'cheerio';
 import type { AniSubsSearchConfig, AniSubsMediaFormat } from './types';
 import { fetchText, type FetchTextResult } from './httpClient';
+import { compileRuleRegex, isBoundedRuleText, MAX_RULE_RESULTS } from './rule-safety';
 
 const DEFAULT_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
@@ -106,13 +107,14 @@ export function resolveBaseUrl(url: string): string {
 export async function fetchHtml(
   url: string,
   cookies?: string,
+  requestContext: { signal?: AbortSignal; deadline?: number } = {},
 ): Promise<string> {
   const headers = buildBrowserHeaders(
     url,
     cookies ? { Cookie: cookies } : undefined,
   );
 
-  const result = await fetchText(url, { headers });
+  const result = await fetchText(url, { headers, ...requestContext });
 
   if (isCloudflareBlocked(result)) {
     throw new Error(
@@ -134,7 +136,8 @@ export function extractEpisodeNumber(name: string, pattern?: string): number {
     return m ? Number(m[1]) : 0;
   }
   try {
-    const re = new RegExp(pattern, 'i');
+    const re = compileRuleRegex(pattern);
+    if (!re) throw new Error('规则集数正则不安全或过长');
     const m = name.match(re);
     if (m?.groups?.ep) {
       const n = Number(m.groups.ep);
@@ -153,13 +156,18 @@ export function matchChannelName(name: string, pattern?: string): boolean {
   try {
     if (pattern.startsWith('(?!')) {
       const end = pattern.indexOf(')');
+      if (end < 0) return true;
       const inner = pattern.slice(3, end);
       const rest = pattern.slice(end + 1);
-      if (new RegExp(inner, 'i').test(name)) return false;
+      const negative = compileRuleRegex(inner);
+      if (!negative) return true;
+      if (negative.test(name)) return false;
       if (!rest) return true;
-      return new RegExp(rest, 'i').test(name);
+      const positive = compileRuleRegex(rest);
+      return positive ? positive.test(name) : true;
     }
-    return new RegExp(pattern, 'i').test(name);
+    const re = compileRuleRegex(pattern);
+    return re ? re.test(name) : true;
   } catch {
     return true;
   }
@@ -198,8 +206,9 @@ function selectSubjectLinksA(
   selector: string,
   baseUrl: string,
 ): SubjectLink[] {
+  if (!isBoundedRuleText(selector)) return [];
   const results: SubjectLink[] = [];
-  $(selector).each((_idx: number, el: unknown) => {
+    $(selector).slice(0, MAX_RULE_RESULTS).each((_idx: number, el: unknown) => {
     const $el = $(asCheerioInput(el));
     const title = $el.text().trim();
     let url = $el.attr('href') || '';
@@ -220,12 +229,13 @@ function selectSubjectLinksIndexed(
   linksSelector: string,
   baseUrl: string,
 ): SubjectLink[] {
+  if (!isBoundedRuleText(namesSelector) || !isBoundedRuleText(linksSelector)) return [];
   const names: string[] = [];
-  $(namesSelector).each((_idx: number, el: unknown) => {
+    $(namesSelector).slice(0, MAX_RULE_RESULTS).each((_idx: number, el: unknown) => {
     names.push($(asCheerioInput(el)).text().trim());
   });
   const links: string[] = [];
-  $(linksSelector).each((_idx: number, el: unknown) => {
+    $(linksSelector).slice(0, MAX_RULE_RESULTS).each((_idx: number, el: unknown) => {
     links.push($(asCheerioInput(el)).attr('href') || '');
   });
   return names
@@ -252,7 +262,7 @@ export function parseSearchResults(
       $,
       config.selectorSubjectFormatA.selectLists,
       baseUrl,
-    );
+    ).slice(0, MAX_RULE_RESULTS);
   }
 
   if (formatId === 'indexed' && config.selectorSubjectFormatIndexed) {
@@ -261,7 +271,7 @@ export function parseSearchResults(
       config.selectorSubjectFormatIndexed.selectNames,
       config.selectorSubjectFormatIndexed.selectLinks,
       baseUrl,
-    );
+    ).slice(0, MAX_RULE_RESULTS);
   }
 
   return [];
@@ -276,14 +286,18 @@ function extractEpisodesIndexGrouped(
   >,
   baseUrl: string,
 ): EpisodeInfo[] {
+  if (!isBoundedRuleText(channelConfig.selectChannelNames) ||
+      !isBoundedRuleText(channelConfig.selectEpisodeLists) ||
+      !isBoundedRuleText(channelConfig.selectEpisodesFromList) ||
+      (channelConfig.selectEpisodeLinksFromList !== undefined && !isBoundedRuleText(channelConfig.selectEpisodeLinksFromList))) return [];
   const episodes: EpisodeInfo[] = [];
   const channelNames: string[] = [];
 
-  $(channelConfig.selectChannelNames).each((_idx: number, el: unknown) => {
+  $(channelConfig.selectChannelNames).slice(0, MAX_RULE_RESULTS).each((_idx: number, el: unknown) => {
     channelNames.push($(asCheerioInput(el)).text().trim());
   });
 
-  const episodeLists = $(channelConfig.selectEpisodeLists);
+  const episodeLists = $(channelConfig.selectEpisodeLists).slice(0, MAX_RULE_RESULTS);
   episodeLists.each((listIdx: number, listEl: unknown) => {
     const channelName = channelNames[listIdx] || '';
     if (!matchChannelName(channelName, channelConfig.matchChannelName)) {
@@ -292,7 +306,8 @@ function extractEpisodesIndexGrouped(
 
     $(asCheerioInput(listEl))
       .find(channelConfig.selectEpisodesFromList)
-      .each((_idx: number, epEl: unknown) => {
+        .slice(0, MAX_RULE_RESULTS)
+        .each((_idx: number, epEl: unknown) => {
         const $ep = $(asCheerioInput(epEl));
         const title = $ep.text().trim();
         let url = $ep.attr('href') || '';
@@ -316,7 +331,7 @@ function extractEpisodesIndexGrouped(
       });
   });
 
-  return episodes;
+  return episodes.slice(0, MAX_RULE_RESULTS);
 }
 
 function extractEpisodesNoChannel(
@@ -324,8 +339,10 @@ function extractEpisodesNoChannel(
   config: NonNullable<AniSubsSearchConfig['selectorChannelFormatNoChannel']>,
   baseUrl: string,
 ): EpisodeInfo[] {
+  if (!isBoundedRuleText(config.selectEpisodes) ||
+      (config.selectEpisodeLinks !== undefined && !isBoundedRuleText(config.selectEpisodeLinks))) return [];
   const episodes: EpisodeInfo[] = [];
-  $(config.selectEpisodes).each((_idx: number, el: unknown) => {
+  $(config.selectEpisodes).slice(0, MAX_RULE_RESULTS).each((_idx: number, el: unknown) => {
     const $ep = $(asCheerioInput(el));
     const title = $ep.text().trim();
     let url = $ep.attr('href') || '';
@@ -344,7 +361,7 @@ function extractEpisodesNoChannel(
       url: toAbsoluteUrl(url, baseUrl),
     });
   });
-  return episodes;
+  return episodes.slice(0, MAX_RULE_RESULTS);
 }
 
 /** 解析主体详情页 HTML，返回集数列表 */
@@ -395,7 +412,8 @@ function findVideoUrl(
   config: NonNullable<AniSubsSearchConfig['matchVideo']>,
   pageUrl: string,
 ): VideoMatchResult | null {
-  const regex = new RegExp(config.matchVideoUrl, 'gi');
+  const regex = compileRuleRegex(config.matchVideoUrl, 'gi');
+  if (!regex) return null;
   const match = regex.exec(html);
   if (!match) return null;
 
@@ -426,18 +444,20 @@ function findVideoUrl(
 export async function resolveVideoUrl(
   episodeUrl: string,
   config: NonNullable<AniSubsSearchConfig['matchVideo']>,
+  requestContext: { signal?: AbortSignal; deadline?: number } = {},
 ): Promise<VideoMatchResult | null> {
-  const html = await fetchHtml(episodeUrl, config.cookies);
+  const html = await fetchHtml(episodeUrl, config.cookies, requestContext);
   let result = findVideoUrl(html, config, episodeUrl);
   if (result) return result;
 
   if (config.enableNestedUrl && config.matchNestedUrl) {
     try {
-      const nestedRe = new RegExp(config.matchNestedUrl, 'gi');
+      const nestedRe = compileRuleRegex(config.matchNestedUrl, 'gi');
+      if (!nestedRe) return null;
       const nestedMatch = nestedRe.exec(html);
       if (nestedMatch?.[0]) {
         const nestedUrl = toAbsoluteUrl(nestedMatch[0], episodeUrl);
-        const nestedHtml = await fetchHtml(nestedUrl, config.cookies);
+        const nestedHtml = await fetchHtml(nestedUrl, config.cookies, requestContext);
         result = findVideoUrl(nestedHtml, config, nestedUrl);
         if (result) return result;
       }

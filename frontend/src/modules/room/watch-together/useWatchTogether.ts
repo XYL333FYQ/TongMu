@@ -55,6 +55,7 @@ import {
   reportMediaPlaybackProgress,
   stopMediaPlaybackSession,
   cleanupMediaPlaybackSession,
+  stripTransientMediaDescriptor,
 } from '@/modules/media/mediaApi'
 
 export type SourceType =
@@ -569,6 +570,7 @@ export function useWatchTogether({
         audioUrl?: string
         videoCodec?: string
         audioCodec?: string
+        isLive?: boolean
         headers?: Record<string, string>
         duration?: number
       }
@@ -585,6 +587,7 @@ export function useWatchTogether({
         format: source.format as MediaFormat | undefined,
         videoCodec: source.videoCodec,
         audioCodec: source.audioCodec,
+        isLive: source.isLive,
         isPlaying: true,
         currentTime: 0,
         playbackRate: watchTogether.playbackRate,
@@ -816,10 +819,7 @@ export function useWatchTogether({
                   url: resolved.sourceUrl,
                   audioUrl: resolved.audioUrl,
                   sourceInput: movie.sourceInput || movie.url,
-                  mediaDescriptor: {
-                    ...resolved.mediaCore.descriptor,
-                    playbackPlan: resolved.mediaCore.plan,
-                  },
+                  mediaDescriptor: stripTransientMediaDescriptor(resolved.mediaCore.descriptor),
                 }
               : {}),
             acceptQuality: newState.acceptQuality,
@@ -1179,6 +1179,7 @@ export function useWatchTogether({
         format: r.format,
         videoCodec: r.videoCodec,
         audioCodec: r.audioCodec,
+        isLive: r.isLive,
         cid: r.cid,
         // Movie 类型不含 headers 字段，recovery 时从 initialPlayback.headers 获取，
         // 确保 ani-subs 等依赖防盗链的源在刷新恢复后仍能正确 MSE attach。
@@ -1529,6 +1530,7 @@ export function useWatchTogether({
       audioUrl?: string
       videoCodec?: string
       audioCodec?: string
+      isLive?: boolean
       headers?: Record<string, string>
       duration?: number
       /** 影片级浏览器播放引擎（playsvideo）开关：false 时强制原生直连播放 */
@@ -1551,6 +1553,7 @@ export function useWatchTogether({
         format: params.format,
         videoCodec: params.videoCodec,
         audioCodec: params.audioCodec,
+        isLive: params.isLive,
         isPlaying: true,
         currentTime: 0,
         playbackRate: watchTogether.playbackRate,
@@ -1587,6 +1590,7 @@ export function useWatchTogether({
               audioUrl: params.audioUrl,
               videoCodec: params.videoCodec,
               audioCodec: params.audioCodec,
+              isLive: params.isLive,
               headers: params.headers,
               duration: params.duration,
             },

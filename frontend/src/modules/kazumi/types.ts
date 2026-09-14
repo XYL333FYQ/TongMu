@@ -33,7 +33,5 @@ export interface KazumiEpisode {
 
 /** 解析后的播放地址 */
 export interface KazumiResolvedSource {
-  url: string
-  headers?: Record<string, string>
-  format?: KazumiMediaFormat
+  sourceReference: string
 }

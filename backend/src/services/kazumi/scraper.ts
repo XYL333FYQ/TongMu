@@ -9,6 +9,7 @@ import * as xpath from 'xpath';
 import { parseDocument } from 'htmlparser2';
 import { render } from 'dom-serializer';
 import { fetchText } from '../anisubs/httpClient';
+import { isBoundedRuleText, MAX_RULE_RESULTS } from '../anisubs/rule-safety';
 import type { KazumiMediaFormat, KazumiRule } from './types';
 
 const DEFAULT_USER_AGENT =
@@ -36,7 +37,7 @@ export function resolveBaseUrl(url: string): string {
 /** 获取 HTML 页面内容（经 PowerShell fallback 绕过 TLS 拦截） */
 export async function fetchHtml(
   url: string,
-  options: { userAgent?: string; referer?: string } = {},
+  options: { userAgent?: string; referer?: string; signal?: AbortSignal; deadline?: number } = {},
 ): Promise<string> {
   const headers: Record<string, string> = {
     'User-Agent': options.userAgent || DEFAULT_USER_AGENT,
@@ -46,7 +47,7 @@ export async function fetchHtml(
   if (options.referer) {
     headers.Referer = options.referer;
   }
-  const result = await fetchText(url, { headers });
+  const result = await fetchText(url, { headers, signal: options.signal, deadline: options.deadline });
   if (!result.ok) {
     throw new Error(
       `请求失败 [${result.status}]: ${url}${result.error ? ` (${result.error})` : ''}`,
@@ -77,9 +78,10 @@ export function selectXPath(
   doc: unknown,
   expression: string,
 ): xpath.SelectedValue[] {
-  if (!expression) return [];
+  if (!isBoundedRuleText(expression) || !expression) return [];
   try {
-    return xpath.select(expression, doc as Node) as xpath.SelectedValue[];
+    const selected = xpath.select(expression, doc as Node) as xpath.SelectedValue[];
+    return Array.isArray(selected) ? selected.slice(0, MAX_RULE_RESULTS) : [];
   } catch (err) {
     console.error('[kazumi] xpath select error:', expression, err);
     return [];
@@ -134,10 +136,12 @@ export function detectMediaFormat(url: string): KazumiMediaFormat {
 export async function resolveVideoUrl(
   episodeUrl: string,
   rule: KazumiRule,
+  requestContext: { signal?: AbortSignal; deadline?: number } = {},
 ): Promise<{ url: string; format?: KazumiMediaFormat } | null> {
   const html = await fetchHtml(episodeUrl, {
     userAgent: rule.userAgent,
     referer: rule.referer || rule.baseURL,
+    ...requestContext,
   });
 
   const absolute = (url: string) => toAbsoluteUrl(url, resolveBaseUrl(episodeUrl));
@@ -181,6 +185,7 @@ export async function resolveVideoUrl(
       const iframeHtml = await fetchHtml(iframeUrl, {
         userAgent: rule.userAgent,
         referer: episodeUrl,
+        ...requestContext,
       });
       for (const pattern of videoPatterns) {
         const matches = [...iframeHtml.matchAll(pattern)];

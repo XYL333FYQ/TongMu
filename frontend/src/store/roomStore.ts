@@ -78,6 +78,7 @@ export interface Movie {
   audioUrl?: string
   videoCodec?: string
   audioCodec?: string
+  isLive?: boolean
   /** 媒体容器格式。FTP/WebDAV/OpenList 可能返回 mkv/avi 等浏览器不支持的格式。 */
   format?: MediaFormat
   quality?: string
@@ -181,6 +182,7 @@ export interface PreviewPlayRequest {
   audioUrl?: string
   videoCodec?: string
   audioCodec?: string
+  isLive?: boolean
   headers?: Record<string, string>
   duration?: number
   /** 影片级浏览器播放引擎（playsvideo）开关：false 时强制原生直连播放 */

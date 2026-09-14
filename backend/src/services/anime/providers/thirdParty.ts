@@ -3,7 +3,9 @@ import {
   AnimeSearchResult,
   AnimeEpisode,
   AnimePlaybackUrl,
+  AnimeRequestContext,
 } from '../types';
+import { fetchText } from '../../anisubs/httpClient';
 
 interface ThirdPartyEndpointConfig {
   searchUrl?: string;
@@ -34,6 +36,7 @@ function interpolateUrl(
 async function thirdPartyFetch<T>(
   url: string,
   config: ThirdPartyEndpointConfig,
+  context: AnimeRequestContext = {},
 ): Promise<T> {
   const headers: Record<string, string> = {
     'User-Agent': DEFAULT_USER_AGENT,
@@ -44,11 +47,11 @@ async function thirdPartyFetch<T>(
     headers.Authorization = `Bearer ${config.authToken}`;
   }
 
-  const res = await fetch(url, { headers });
+  const res = await fetchText(url, { headers, ...context });
   if (!res.ok) {
-    throw new Error(`第三方数据源请求失败 [${res.status}]: ${url}`);
+    throw new Error(`第三方数据源请求失败 [${res.status}]: ${url}${res.error ? ` (${res.error})` : ''}`);
   }
-  return res.json() as Promise<T>;
+  return JSON.parse(res.body) as T;
 }
 
 function normalizeSearchResults(
@@ -106,14 +109,14 @@ export function createThirdPartyAnimeProvider(
   return {
     name,
 
-    async search(keyword: string): Promise<AnimeSearchResult[]> {
+    async search(keyword: string, context?: AnimeRequestContext): Promise<AnimeSearchResult[]> {
       const endpoints = config.endpoints || {};
       const urlTemplate = endpoints.searchUrl || `${config.baseUrl}/search`;
       const url = urlTemplate.includes('{keyword}')
         ? interpolateUrl(urlTemplate, { keyword })
         : `${urlTemplate}?keyword=${encodeURIComponent(keyword)}`;
 
-      const data = await thirdPartyFetch<unknown>(url, endpoints);
+      const data = await thirdPartyFetch<unknown>(url, endpoints, context);
       const list =
         data && typeof data === 'object' && Array.isArray((data as Record<string, unknown>).data)
           ? (data as Record<string, unknown>).data
@@ -121,7 +124,7 @@ export function createThirdPartyAnimeProvider(
       return normalizeSearchResults(list, sourceId);
     },
 
-    async getEpisodes(identifier: string): Promise<AnimeEpisode[]> {
+    async getEpisodes(identifier: string, context?: AnimeRequestContext): Promise<AnimeEpisode[]> {
       const endpoints = config.endpoints || {};
       const urlTemplate =
         endpoints.episodesUrl || `${config.baseUrl}/episodes/{id}`;
@@ -129,7 +132,7 @@ export function createThirdPartyAnimeProvider(
         ? interpolateUrl(urlTemplate, { id: identifier })
         : `${urlTemplate}?id=${encodeURIComponent(identifier)}`;
 
-      const data = await thirdPartyFetch<unknown>(url, endpoints);
+      const data = await thirdPartyFetch<unknown>(url, endpoints, context);
       const list =
         data && typeof data === 'object' && Array.isArray((data as Record<string, unknown>).data)
           ? (data as Record<string, unknown>).data
@@ -137,7 +140,7 @@ export function createThirdPartyAnimeProvider(
       return normalizeEpisodes(list);
     },
 
-    async getPlaybackUrl(episode: AnimeEpisode): Promise<AnimePlaybackUrl | null> {
+    async getPlaybackUrl(episode: AnimeEpisode, context?: AnimeRequestContext): Promise<AnimePlaybackUrl | null> {
       const endpoints = config.endpoints || {};
       const urlTemplate =
         endpoints.resolveUrl || `${config.baseUrl}/resolve/{id}`;
@@ -145,7 +148,7 @@ export function createThirdPartyAnimeProvider(
         ? interpolateUrl(urlTemplate, { id: episode.id })
         : `${urlTemplate}?id=${encodeURIComponent(episode.id)}`;
 
-      const data = await thirdPartyFetch<unknown>(url, endpoints);
+      const data = await thirdPartyFetch<unknown>(url, endpoints, context);
       if (data && typeof data === 'object') {
         const payload = data as Record<string, unknown>;
         const urlValue = payload.url || payload.playUrl || payload.videoUrl;

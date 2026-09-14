@@ -9,6 +9,11 @@ import {
   AnimeEpisode,
 } from '../services/anime';
 import { proxyHttpUpstream } from '../services/proxy';
+import {
+  buildAnimeProviderReference,
+  sanitizeAnimePlaybackParams,
+} from '../services/media/providers/anime-provider';
+import { createAnimeRouteRequestContext } from './anime-request-context';
 
 const router = Router();
 
@@ -21,14 +26,12 @@ router.use(authenticateToken);
  *   referer   可选，自定义 Referer
  *   userAgent 可选，自定义 User-Agent
  *   origin    可选，自定义 Origin
- *   cookie    可选，自定义 Cookie
  */
 router.get('/proxy', async (req: AuthenticatedRequest, res: Response) => {
   const url = req.query.url;
   const referer = req.query.referer;
   const userAgent = req.query.userAgent;
   const origin = req.query.origin;
-  const cookie = req.query.cookie;
 
   if (typeof url !== 'string' || !url.trim()) {
     res.status(400).json({ success: false, message: '缺少 url 参数' });
@@ -42,7 +45,6 @@ router.get('/proxy', async (req: AuthenticatedRequest, res: Response) => {
       userAgent: typeof userAgent === 'string' ? userAgent : undefined,
       referer: typeof referer === 'string' ? referer : undefined,
       origin: typeof origin === 'string' ? origin : undefined,
-      cookie: typeof cookie === 'string' ? cookie : undefined,
     },
     cors: 'wildcard',
     logTag: 'animeSources',
@@ -81,8 +83,9 @@ router.get('/search', async (req: AuthenticatedRequest, res: Response) => {
     return;
   }
 
+  const requestContext = createAnimeRouteRequestContext(req);
   try {
-    const results = await provider.search(keyword.trim());
+    const results = await provider.search(keyword.trim(), requestContext);
     res.json({ success: true, results });
   } catch (err) {
     console.error('[animeSources] search error:', err);
@@ -90,6 +93,8 @@ router.get('/search', async (req: AuthenticatedRequest, res: Response) => {
       success: false,
       message: err instanceof Error ? err.message : '搜索番剧数据源失败',
     });
+  } finally {
+    requestContext.cleanup();
   }
 });
 
@@ -113,15 +118,24 @@ router.get('/episodes', async (req: AuthenticatedRequest, res: Response) => {
     return;
   }
 
+  const requestContext = createAnimeRouteRequestContext(req);
   try {
-    const episodes = await provider.getEpisodes(identifier.trim());
-    res.json({ success: true, episodes });
+    const episodes = await provider.getEpisodes(identifier.trim(), requestContext);
+    res.json({
+      success: true,
+      episodes: episodes.map((episode) => ({
+        ...episode,
+        playbackParams: sanitizeAnimePlaybackParams(episode.playbackParams),
+      })),
+    });
   } catch (err) {
     console.error('[animeSources] episodes error:', err);
     res.status(502).json({
       success: false,
       message: err instanceof Error ? err.message : '获取集数列表失败',
     });
+  } finally {
+    requestContext.cleanup();
   }
 });
 
@@ -155,29 +169,11 @@ router.post('/resolve', async (req: AuthenticatedRequest, res: Response) => {
         : {},
   };
 
-  try {
-    const result = await provider.getPlaybackUrl(normalized);
-    if (!result) {
-      res.status(404).json({ success: false, message: '无法解析播放地址' });
-      return;
-    }
-    res.json({
-      success: true,
-      url: result.url,
-      headers: result.headers,
-      format: result.format,
-      audioUrl: result.audioUrl,
-      videoCodec: result.videoCodec,
-      audioCodec: result.audioCodec,
-      duration: result.duration,
-    });
-  } catch (err) {
-    console.error('[animeSources] resolve error:', err);
-    res.status(502).json({
-      success: false,
-      message: err instanceof Error ? err.message : '解析播放地址失败',
-    });
-  }
+  res.json({
+    success: true,
+    sourceReference: buildAnimeProviderReference('anime', source.trim(), normalized),
+    message: '播放地址由统一 Media Core 在实际播放时解析',
+  });
 });
 
 export default router;

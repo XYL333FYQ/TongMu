@@ -44,9 +44,14 @@ export interface AnimePlaybackUrl {
   duration?: number;
 }
 
+export interface AnimeRequestContext {
+  signal?: AbortSignal;
+  deadline?: number;
+}
+
 export interface AnimeSourceProvider {
   name: string;
-  search(keyword: string): Promise<AnimeSearchResult[]>;
-  getEpisodes(identifier: string): Promise<AnimeEpisode[]>;
-  getPlaybackUrl(episode: AnimeEpisode): Promise<AnimePlaybackUrl | null>;
+  search(keyword: string, context?: AnimeRequestContext): Promise<AnimeSearchResult[]>;
+  getEpisodes(identifier: string, context?: AnimeRequestContext): Promise<AnimeEpisode[]>;
+  getPlaybackUrl(episode: AnimeEpisode, context?: AnimeRequestContext): Promise<AnimePlaybackUrl | null>;
 }

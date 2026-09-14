@@ -1,4 +1,5 @@
 export type MediaTransport = 'direct' | 'hls' | 'dash' | 'flv';
+export type LiveKind = 'hls' | 'http-flv';
 
 export type MediaContainer =
   | 'mp4'
@@ -62,6 +63,12 @@ export interface MediaDescriptor {
   audioUrl?: string;
   transport: MediaTransport;
   container: MediaContainer;
+  /** Live facts are explicit; live sources never pretend to be finite VOD. */
+  isLive?: boolean;
+  liveKind?: LiveKind;
+  seekable?: boolean;
+  dvrWindowSeconds?: number;
+  reconnect?: 'same-source' | 'provider-refresh';
   contentType?: string;
   contentLength?: number;
   rangeSupported?: boolean;

@@ -19,6 +19,7 @@ export class BilibiliResolver implements SourceResolver {
       url: input, userId: context.userId, cookie: context.cookie,
       qn: context.requestedQn, preferMp4: context.preferMp4,
       page: context.page, cid: context.cid,
+      playbackClientProfile: context.playbackClientProfile,
     });
     if (context.signal?.aborted) throw new Error('bilibili resolution cancelled');
     return {

@@ -89,6 +89,7 @@ export function filterPlaybackCandidates(
     let reason: ViabilityReason | undefined;
     if (descriptor.drm?.protected) reason = 'drm-protected';
     else if (!candidateQualityMatches(descriptor, candidate)) reason = 'quality-mismatch';
+    else if (descriptor.isLive && (candidate.transport === 'hls' || candidate.transport === 'flv') && !profile.liveTransports.includes(candidate.transport)) reason = 'unsupported-transport';
     else {
       const facts = capabilityFactsForCandidate(descriptor, candidate);
       if (!profileSupportsCapability(profile, facts)) reason = capabilityReason(descriptor, candidate);

@@ -24,16 +24,10 @@ import { message } from '@/components/ui/message'
 import { useRoomStore } from '@/store/roomStore'
 import { AniSubsSelector } from '@/modules/anisubs/AniSubsSelector'
 import {
-  resolveAniSubsEpisode,
-  buildAniSubsProxyUrl,
-  needsAniSubsProxy,
   type AniSubsEpisode,
 } from '@/modules/anisubs'
 import { KazumiSelector } from '@/modules/kazumi/KazumiSelector'
 import {
-  resolveKazumiEpisode,
-  buildKazumiProxyUrl,
-  needsKazumiProxy,
   type KazumiEpisode,
 } from '@/modules/kazumi'
 import {
@@ -70,7 +64,7 @@ import { useSystemSettingsStore } from '@/store/systemSettingsStore'
 import { cn } from '@/lib/utils'
 import {
   resolveMediaInput,
-  stripPlaybackSessionCapabilities,
+  stripTransientMediaDescriptor,
   toBilibiliResolvedSource,
   type ResolvedMedia,
 } from '@/modules/media/mediaApi'
@@ -79,6 +73,7 @@ import {
   buildStorageReference,
 } from '@/modules/media/storageReference'
 import { buildMediaServerReference, type MediaServerProviderId } from '@/modules/media/mediaServerReference'
+import { buildAnimeProviderReference, stripTransientAnimeDescriptor } from '@/modules/media/animeReference'
 
 type SourceType =
   | 'bilibili'
@@ -131,17 +126,12 @@ function mediaServerMoviePayload(
   resolved: ResolvedMedia,
 ) {
   const media = resolved.descriptor
-  const persistedPlan = { ...resolved.plan }
-  delete persistedPlan.playbackSessionUrl
   return {
     url: media.finalUrl,
     title: media.title || extractTitleFromUrl(itemId),
     source: provider,
     sourceInput: buildMediaServerReference({ provider, mountId, itemId }),
-    mediaDescriptor: {
-      ...stripPlaybackSessionCapabilities(media),
-      playbackPlan: persistedPlan,
-    },
+    mediaDescriptor: stripTransientMediaDescriptor(media),
     format: media.container,
     audioUrl: media.audioUrl,
     videoCodec: media.videoCodec,
@@ -406,13 +396,9 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
 
       setLoading(true)
       try {
-        const resolved = await resolveAniSubsEpisode(sourceId, episode)
-
-        // 防盗链处理：若返回 headers（Referer/UA 等），走后端代理 URL
-        // 浏览器无法为 video.src 设置 Referer/UA，必须代理
-        const finalUrl = needsAniSubsProxy(resolved.url, resolved.headers)
-          ? buildAniSubsProxyUrl(resolved.url, resolved.headers)
-          : resolved.url
+        const sourceInput = buildAnimeProviderReference('anisubs', sourceId, episode)
+        const resolved = await resolveMediaInput(sourceInput, { roomId })
+        const finalUrl = resolved.plan.candidateUrl ?? resolved.descriptor.finalUrl
 
         // 1. 触发实时预览播放（通过 store 解耦 useWatchTogether）
         //    代理 URL 已包含防盗链信息，无需再传 headers
@@ -420,7 +406,11 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           url: finalUrl,
           title,
           sourceType: 'anime',
-          format: resolved.format,
+          format: resolved.descriptor.container,
+          audioUrl: resolved.descriptor.audioUrl,
+          videoCodec: resolved.descriptor.videoCodec,
+          audioCodec: resolved.descriptor.audioCodec,
+          duration: resolved.descriptor.duration,
           playsvideoEnabled,
         })
 
@@ -430,15 +420,16 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
         //    播放时（含刷新恢复）通过 sourceMeta 重新解析获取最新地址。
         //    url 字段存储 sourceId 作为标识，便于调试和日志追踪。
         void addMovie(roomId, {
-          url: `anisubs://${sourceId}/${episode.id}`,
+          url: sourceInput,
           title,
           source: 'anime',
-          format: resolved.format,
-          sourceMeta: {
-            sourceId,
-            episode,
-            originalTitle: title,
-          },
+          sourceInput,
+          mediaDescriptor: stripTransientAnimeDescriptor(resolved.descriptor),
+          format: resolved.descriptor.container,
+          audioUrl: undefined,
+          videoCodec: resolved.descriptor.videoCodec,
+          audioCodec: resolved.descriptor.audioCodec,
+          duration: resolved.descriptor.duration,
         })
           .then(() => fetchMovies(roomId))
           .catch((err) => {
@@ -479,25 +470,33 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
 
       setLoading(true)
       try {
-        const resolved = await resolveKazumiEpisode(sourceId, episode)
-
-        const finalUrl = needsKazumiProxy(resolved.url, resolved.headers)
-          ? buildKazumiProxyUrl(resolved.url, resolved.headers)
-          : resolved.url
+        const sourceInput = buildAnimeProviderReference('kazumi', sourceId, episode)
+        const resolved = await resolveMediaInput(sourceInput, { roomId })
+        const finalUrl = resolved.plan.candidateUrl ?? resolved.descriptor.finalUrl
 
         setPendingPreviewPlay({
           url: finalUrl,
           title,
           sourceType: 'kazumi',
-          format: resolved.format,
+          format: resolved.descriptor.container,
+          audioUrl: resolved.descriptor.audioUrl,
+          videoCodec: resolved.descriptor.videoCodec,
+          audioCodec: resolved.descriptor.audioCodec,
+          duration: resolved.descriptor.duration,
           playsvideoEnabled,
         })
 
         void addMovie(roomId, {
-          url: finalUrl,
+          url: sourceInput,
           title,
           source: 'kazumi',
-          format: resolved.format,
+          sourceInput,
+          mediaDescriptor: stripTransientAnimeDescriptor(resolved.descriptor),
+          format: resolved.descriptor.container,
+          audioUrl: undefined,
+          videoCodec: resolved.descriptor.videoCodec,
+          audioCodec: resolved.descriptor.audioCodec,
+          duration: resolved.descriptor.duration,
         })
           .then(() => fetchMovies(roomId))
           .catch((err) => {
@@ -647,7 +646,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
                 title: media.title || extractTitleFromUrl(normalizedPath),
                 source: sourceType,
                 sourceInput,
-                mediaDescriptor: { ...media, playbackPlan: resolved.plan },
+                mediaDescriptor: stripTransientMediaDescriptor(media),
                 format: media.container,
                 duration: media.duration,
                 serverUrl: mount?.serverUrl,
@@ -669,7 +668,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
               title: media.title || extractTitleFromUrl(normalizedPath),
               source: 'ftp',
               sourceInput,
-              mediaDescriptor: { ...media, playbackPlan: resolved.plan },
+              mediaDescriptor: stripTransientMediaDescriptor(media),
               format: media.container,
               duration: media.duration,
               serverUrl: mount?.serverUrl,
@@ -735,7 +734,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
             title: media.title || extractTitleFromUrl(normalizedPath),
             source: 'server-files',
             sourceInput,
-            mediaDescriptor: { ...media, playbackPlan: resolved.plan },
+            mediaDescriptor: stripTransientMediaDescriptor(media),
             format: media.container,
             path: normalizedPath,
             duration: media.duration ?? undefined,
@@ -1000,10 +999,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           source: 'bilibili',
           sourceInput: serverMedia ? url.trim() : undefined,
           mediaDescriptor: serverMedia
-            ? {
-                ...serverMedia.descriptor,
-                playbackPlan: serverMedia.plan,
-              }
+            ? stripTransientMediaDescriptor(serverMedia.descriptor)
             : undefined,
           audioUrl: serverMedia?.descriptor.audioUrl || resolvedMovie.audioUrl,
           format: resolvedMovie.format,
@@ -1038,10 +1034,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           title,
           source: media.sourceType,
           sourceInput: url.trim(),
-          mediaDescriptor: {
-            ...media,
-            playbackPlan: resolved.plan,
-          },
+          mediaDescriptor: stripTransientMediaDescriptor(media),
           format: media.container,
           audioUrl: media.audioUrl,
           videoCodec: media.videoCodec,
@@ -1080,7 +1073,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           title: media.title || extractTitleFromUrl(mountPath),
           source: sourceType,
           sourceInput,
-          mediaDescriptor: { ...media, playbackPlan: resolved.plan },
+          mediaDescriptor: stripTransientMediaDescriptor(media),
           format: media.container,
           duration: media.duration,
           serverUrl: mount?.serverUrl,
@@ -1113,7 +1106,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           title: media.title || extractTitleFromUrl(ftp.path.trim()),
           source: 'ftp',
           sourceInput,
-          mediaDescriptor: { ...media, playbackPlan: resolved.plan },
+          mediaDescriptor: stripTransientMediaDescriptor(media),
           format: media.container,
           duration: media.duration,
           serverUrl: mount?.serverUrl,
@@ -1173,7 +1166,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           title: media.title || extractTitleFromUrl(serverFilePath.trim()),
           source: 'server-files',
           sourceInput,
-          mediaDescriptor: { ...media, playbackPlan: resolved.plan },
+          mediaDescriptor: stripTransientMediaDescriptor(media),
           format: media.container,
           path: serverFilePath.trim(),
           duration: media.duration ?? undefined,

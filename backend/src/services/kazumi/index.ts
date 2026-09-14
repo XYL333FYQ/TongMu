@@ -10,6 +10,7 @@ import type { KazumiSourceProvider, KazumiEpisode } from './types';
 import { buildProvidersFromRules } from './ruleLoader';
 import { AppDataSource } from '../../data-source';
 import { SystemSettings } from '../../entities/SystemSettings';
+import { MAX_RULE_SOURCES } from '../anisubs/rule-safety';
 
 export * from './types';
 
@@ -66,10 +67,10 @@ export async function buildProviders(
   // 数据库中可能存了空的 kazumiRules: []，需判断非空才使用
   const urls =
     Array.isArray(config.kazumiRules) && config.kazumiRules.length > 0
-      ? config.kazumiRules
+      ? config.kazumiRules.slice(0, MAX_RULE_SOURCES)
       : DEFAULT_KAZUMI_RULES;
 
-  console.log(`[kazumi] buildProviders: urls =`, urls);
+  console.log(`[kazumi] buildProviders: ${urls.length} rule URL(s)`);
 
   const providers = await buildProvidersFromRules(urls);
 

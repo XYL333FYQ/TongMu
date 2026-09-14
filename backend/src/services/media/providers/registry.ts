@@ -8,6 +8,8 @@ import { legacyPlaybackClientProfile, type PlaybackClientProfileV1 } from '../pl
 import { LegacyResolverAdapter } from './legacy-resolver-adapter';
 import { FtpProvider, LocalFileProvider, OpenListProvider, WebDavProvider } from './storage-providers';
 import { EmbyProvider, JellyfinProvider } from './media-server-provider';
+import { LiveProvider } from './live-provider';
+import { AnimeProvider, AniSubsProvider, KazumiProvider } from './anime-provider';
 import {
   assertProviderActive,
   providerActorForUser,
@@ -25,6 +27,10 @@ export function defaultProviderRegistry(): MediaProvider[] {
     new OpenListProvider(),
     new EmbyProvider(),
     new JellyfinProvider(),
+    new AniSubsProvider(),
+    new KazumiProvider(),
+    new AnimeProvider('anime'),
+    new LiveProvider(),
     new LegacyResolverAdapter({
       id: 'bilibili', sourceKinds: ['bilibili'], resolver: new BilibiliResolver(),
       credentialDependencies: [{ providerId: 'bilibili', owner: 'current-viewer', requirement: 'optional', scope: 'playback' }],
@@ -105,6 +111,10 @@ export function providerContextFromResolverContext(context: ResolverContext): Pr
     signal: controller.signal,
     deadline: context.deadline ?? Date.now() + 30_000,
     profile: context.playbackClientProfile ?? legacyPlaybackClientProfile(),
+    requestedQn: context.requestedQn,
+    preferMp4: context.preferMp4,
+    page: context.page,
+    cid: context.cid,
     credentialOwnerPolicy: context.credentialOwnerPolicy ?? (context.roomId ? 'room-owner' : 'current-viewer'),
     safeFetch: fetchWithProxyPolicy,
   };

@@ -134,13 +134,7 @@ export async function getAnimeEpisodes(
 }
 
 export interface ResolvedAnimeSource {
-  url: string
-  headers?: Record<string, string>
-  format?: MediaFormat
-  audioUrl?: string
-  videoCodec?: string
-  audioCodec?: string
-  duration?: number
+  sourceReference: string
 }
 
 export async function resolveAnimeEpisode(
@@ -157,26 +151,12 @@ export async function resolveAnimeEpisode(
   const data = await safeJson<{
     success: boolean
     message?: string
-    url?: string
-    headers?: Record<string, string>
-    format?: MediaFormat
-    audioUrl?: string
-    videoCodec?: string
-    audioCodec?: string
-    duration?: number
+    sourceReference?: string
   }>(res, { success: false })
-  if (!res.ok || !data.success || !data.url) {
+  if (!res.ok || !data.success || !data.sourceReference) {
     throw new Error(data.message || '解析番剧播放地址失败')
   }
-  return {
-    url: data.url,
-    headers: data.headers,
-    format: data.format,
-    audioUrl: data.audioUrl,
-    videoCodec: data.videoCodec,
-    audioCodec: data.audioCodec,
-    duration: data.duration,
-  }
+  return { sourceReference: data.sourceReference }
 }
 
 /**
@@ -192,7 +172,6 @@ export function buildAnimeProxyUrl(
   if (headers.Referer) params.set('referer', headers.Referer)
   if (headers['User-Agent']) params.set('userAgent', headers['User-Agent'])
   if (headers.Origin) params.set('origin', headers.Origin)
-  if (headers.Cookie) params.set('cookie', headers.Cookie)
   return `${getApiUrl()}/api/stream/anime/proxy?${params.toString()}`
 }
 

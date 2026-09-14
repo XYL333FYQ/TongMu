@@ -5,6 +5,12 @@ import {
   DEFAULT_QN,
 } from './permission';
 import { redactMediaError } from '../media/redact';
+import {
+  audioCodecFamily,
+  profileSupportsCapability,
+  videoCodecFamily,
+  type PlaybackClientProfileV1,
+} from '../media/playback-profile';
 
 export interface DashMediaTrack {
   baseUrl: string;
@@ -84,12 +90,21 @@ export interface GetPlayUrlOptions {
    * - undefined：默认接口，DASH m4s 流有防盗链，需服务器代理注入 Referer。
    */
   platform?: 'html5';
+  /** Request-scoped client tuple capabilities; used only for DASH representation selection. */
+  playbackProfile?: PlaybackClientProfileV1;
 }
 
 export class NoPermissionError extends Error {
   constructor(message = '无权限播放，可能需要登录或大会员') {
     super(message);
     this.name = 'NoPermissionError';
+  }
+}
+
+export class CodecUnavailableError extends Error {
+  constructor(message = '请求清晰度没有符合当前播放能力的 DASH 编码组合') {
+    super(message);
+    this.name = 'CodecUnavailableError';
   }
 }
 
@@ -187,6 +202,21 @@ function normalizeDashMedia(track: RawDashMedia): DashMediaTrack {
   };
 }
 
+function dashPairSupported(
+  profile: PlaybackClientProfileV1,
+  video: DashMediaTrack,
+  audio?: DashMediaTrack,
+): boolean {
+  return profileSupportsCapability(profile, {
+    transport: 'dash',
+    container: 'dash',
+    videoCodec: videoCodecFamily(video.codecs),
+    audioCodec: audio ? audioCodecFamily(audio.codecs) : undefined,
+    exactCodecStrings: [video.codecs, audio?.codecs].filter((value): value is string => !!value),
+    requiredPipelines: ['mse', 'managed-mse'],
+  });
+}
+
 function buildAcceptQuality(
   acceptQuality: number[] | undefined,
   acceptDescription: RawAcceptDescription[] | undefined,
@@ -220,6 +250,7 @@ export function normalizePlayUrlData(
   data?: RawPlayUrlData,
   requestedQn?: number,
   codec?: string,
+  playbackProfile?: PlaybackClientProfileV1,
 ): BilibiliPlayUrlResult | null {
   if (!data) return null;
 
@@ -258,12 +289,26 @@ export function normalizePlayUrlData(
     const allTracks = data.dash.video.map(normalizeDashMedia);
     const matchedQnTracks = allTracks.filter((t) => t.id === qn);
     if (!matchedQnTracks.length) throw new Error(`源站未返回实际清晰度 ${qn} 对应的 DASH representation`);
-    const tracksToSort = matchedQnTracks;
+    let tracksToSort = matchedQnTracks;
+    let audioTracks = sortByBandwidthDesc(data.dash.audio?.map(normalizeDashMedia));
+    if (playbackProfile) {
+      const supportedVideo = matchedQnTracks.filter((video) =>
+        audioTracks.length > 0
+          ? audioTracks.some((audio) => dashPairSupported(playbackProfile, video, audio))
+          : dashPairSupported(playbackProfile, video),
+      );
+      const supportedAudio = audioTracks.filter((audio) =>
+        supportedVideo.some((video) => dashPairSupported(playbackProfile, video, audio)),
+      );
+      if (!supportedVideo.length || (audioTracks.length > 0 && !supportedAudio.length)) {
+        throw new CodecUnavailableError();
+      }
+      tracksToSort = supportedVideo;
+      audioTracks = supportedAudio;
+    }
 
     const video = sortDashTracks(tracksToSort, codec);
-    const audio = sortByBandwidthDesc(
-      data.dash.audio?.map(normalizeDashMedia),
-    );
+    const audio = audioTracks;
     console.log(
       '[bilibili-playurl] 选定 bestVideo: id=%d bandwidth=%d codecs=%s (实际 qn=%d, 过滤后 %d 条匹配轨道)',
       video[0]?.id,
@@ -346,7 +391,7 @@ async function getPlayUrlWbi(
     { cookie },
   );
 
-  const result = normalizePlayUrlData(res.data, effectiveQn, options?.codec);
+  const result = normalizePlayUrlData(res.data, effectiveQn, options?.codec, options?.playbackProfile);
   return result;
 }
 
@@ -382,7 +427,7 @@ async function getPlayUrlLegacy(
     { cookie },
   );
 
-  const result = normalizePlayUrlData(res.data, effectiveQn, options?.codec);
+  const result = normalizePlayUrlData(res.data, effectiveQn, options?.codec, options?.playbackProfile);
   return result;
 }
 

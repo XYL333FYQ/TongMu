@@ -3,7 +3,9 @@ import {
   AnimeSearchResult,
   AnimeEpisode,
   AnimePlaybackUrl,
+  AnimeRequestContext,
 } from '../types';
+import { fetchText } from '../../anisubs/httpClient';
 
 interface RssConfig {
   url: string;
@@ -112,19 +114,20 @@ function parseAtomItems(xml: string): FeedItem[] {
   return items;
 }
 
-async function fetchFeedItems(url: string): Promise<FeedItem[]> {
-  const res = await fetch(url, {
+async function fetchFeedItems(url: string, context: AnimeRequestContext = {}): Promise<FeedItem[]> {
+  const res = await fetchText(url, {
     headers: {
       'User-Agent': DEFAULT_USER_AGENT,
       Accept: 'application/rss+xml,application/atom+xml,application/xml;q=0.9,*/*;q=0.8',
     },
+    ...context,
   });
 
   if (!res.ok) {
-    throw new Error(`RSS 订阅请求失败 [${res.status}]: ${url}`);
+    throw new Error(`RSS 订阅请求失败 [${res.status}]: ${url}${res.error ? ` (${res.error})` : ''}`);
   }
 
-  const xml = await res.text();
+  const xml = res.body;
   if (!xml || !xml.trim()) {
     throw new Error('RSS 订阅返回为空');
   }
@@ -143,8 +146,8 @@ export function createRssAnimeProvider(
   return {
     name: config.name || displayName || `RSS: ${sourceId}`,
 
-    async search(keyword: string): Promise<AnimeSearchResult[]> {
-      const items = await fetchFeedItems(config.url);
+    async search(keyword: string, context?: AnimeRequestContext): Promise<AnimeSearchResult[]> {
+      const items = await fetchFeedItems(config.url, context);
       const lower = keyword.toLowerCase();
       return items
         .filter(
@@ -162,8 +165,8 @@ export function createRssAnimeProvider(
         }));
     },
 
-    async getEpisodes(identifier: string): Promise<AnimeEpisode[]> {
-      const items = await fetchFeedItems(config.url);
+    async getEpisodes(identifier: string, context?: AnimeRequestContext): Promise<AnimeEpisode[]> {
+      const items = await fetchFeedItems(config.url, context);
       const target = items.find((item) => item.link === identifier);
       if (!target) {
         throw new Error('未找到对应 RSS 条目');
@@ -173,16 +176,19 @@ export function createRssAnimeProvider(
           id: target.link,
           title: target.title,
           episodeNumber: 1,
-          playbackParams: {
-            url: target.enclosureUrl || target.link,
-            title: target.title,
-          },
+          // The enclosure may be a short-lived signed URL. Keep the catalog
+          // DTO stable; getPlaybackUrl re-reads the feed when it resolves.
+          playbackParams: { title: target.title },
         },
       ];
     },
 
-    async getPlaybackUrl(episode: AnimeEpisode): Promise<AnimePlaybackUrl | null> {
-      const url = episode.playbackParams.url;
+    async getPlaybackUrl(episode: AnimeEpisode, context?: AnimeRequestContext): Promise<AnimePlaybackUrl | null> {
+      let url = episode.playbackParams.url;
+      if (typeof url !== 'string' || !url) {
+        const items = await fetchFeedItems(config.url, context);
+        url = items.find((item) => item.link === episode.id)?.enclosureUrl || '';
+      }
       if (typeof url !== 'string' || !url) {
         throw new Error('缺少 RSS 条目播放地址');
       }

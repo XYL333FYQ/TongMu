@@ -196,6 +196,39 @@ async function loginRoot(page: Page): Promise<void> {
   await expect(page.getByText("已连接", { exact: true })).toBeVisible();
 }
 
+async function configureAnimeFixture(page: Page): Promise<string> {
+  return page.evaluate(async (fixtureOrigin) => {
+    // @ts-ignore Vite serves application modules for the browser integration test.
+    const { apiFetch } = await import('/src/lib/api.ts');
+    const response = await apiFetch('/api/admin/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        autoDeleteInactiveRooms: true,
+        autoDeleteAfterHours: 24,
+        dataSourceConfig: {
+          rssSources: [{
+            id: 'phase2c2-fixture',
+            name: 'Phase 2C-2 Fixture RSS',
+            url: `${fixtureOrigin}/anime/feed.xml`,
+          }],
+        },
+      }),
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.success) throw new Error(JSON.stringify(payload));
+    // @ts-ignore Vite serves application modules for the browser integration test.
+    const { buildAnimeProviderReference } = await import('/src/modules/media/animeReference.ts');
+    const episodeId = `${fixtureOrigin}/anime/episode-1`;
+    return buildAnimeProviderReference('anime', 'rss_phase2c2-fixture', {
+      id: episodeId,
+      title: 'Fixture Anime 01',
+      episodeNumber: 1,
+      playbackParams: { episodeUrl: episodeId },
+    });
+  }, FIXTURE_ORIGIN);
+}
+
 type MediaServerProvider = 'emby' | 'jellyfin';
 
 async function createMediaServerMount(
@@ -344,7 +377,7 @@ async function addAndPlay(
   const input = page.getByPlaceholder(/影片网页、MP4\/MKV/).last();
   await input.fill(url);
   await page.getByRole("button", { name: "添加", exact: true }).last().click();
-  await expect(page.getByText(/Resolver: direct-url/).last()).toBeVisible();
+  await expect(page.getByText(/Resolver: (?:direct-url|live)/).last()).toBeVisible();
   await expect(page.getByText(engine).last()).toBeVisible();
   const title = decodeURIComponent(new URL(url).pathname.split('/').pop()!);
   await page.getByText(title, { exact: true }).last().locator('../..').getByRole('button', { name: '播放', exact: true }).click();
@@ -577,6 +610,123 @@ test("real HLS master, extensionless child playlist, AES key, and fMP4 segment p
   );
 });
 
+test('anime provider reference resolves through Media Core and plays through its proxy candidate', async ({ page }) => {
+  await loginRoot(page);
+  const reference = await configureAnimeFixture(page);
+  const episodeDto = await page.evaluate(async ({ fixtureOrigin }) => {
+    // @ts-ignore Vite serves application modules for the browser integration test.
+    const { apiFetch } = await import('/src/lib/api.ts');
+    const response = await apiFetch(
+      `/api/stream/anime/episodes?source=rss_phase2c2-fixture&identifier=${encodeURIComponent(`${fixtureOrigin}/anime/episode-1`)}`,
+    );
+    return response.json();
+  }, { fixtureOrigin: FIXTURE_ORIGIN });
+  expect(JSON.stringify(episodeDto)).not.toContain('fixture-anime-token');
+  const resolved = await page.evaluate(async (sourceInput) => {
+    // @ts-ignore Vite serves application modules for the browser integration test.
+    const { resolveMediaInput } = await import('/src/modules/media/mediaApi.ts');
+    const result = await resolveMediaInput(sourceInput);
+    return {
+      descriptor: result.descriptor,
+      plan: result.plan,
+      sourceReference: result.sourceReference,
+    };
+  }, reference);
+
+  expect(resolved.descriptor.resolver).toBe('anime');
+  expect(resolved.descriptor.sourceType).toBe('anime');
+  expect(resolved.sourceReference).toBe(reference);
+  expect(resolved.plan.engine).toBe('direct');
+  expect(resolved.plan.candidateMode).toBe('FULL_PROXY');
+  expect(resolved.plan.proxy).toBe(true);
+  expect(JSON.stringify(resolved)).not.toContain('fixture-anime-token');
+
+  const playbackUrl = await page.evaluate(async (candidateUrl) => {
+    // @ts-ignore Vite serves application modules for the browser integration test.
+    const { apiFetch } = await import('/src/lib/api.ts');
+    await apiFetch('/api/auth/me');
+    const token = localStorage.getItem('zviewer-access-token');
+    if (!token) throw new Error('missing E2E access token');
+    return `${candidateUrl}${candidateUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
+  }, resolved.plan.candidateUrl ?? resolved.descriptor.finalUrl);
+  await page.evaluate((url) => {
+    const video = document.createElement('video');
+    video.id = 'phase2c2-anime-video';
+    video.muted = true;
+    video.playsInline = true;
+    video.src = url;
+    document.body.appendChild(video);
+    video.load();
+    void video.play();
+  }, playbackUrl);
+  const video = page.locator('#phase2c2-anime-video');
+  await expect.poll(() => video.evaluate((element: HTMLVideoElement) => element.readyState), { timeout: 15_000 }).toBeGreaterThanOrEqual(1);
+  await expect.poll(() => video.evaluate((element: HTMLVideoElement) => element.currentTime), { timeout: 15_000 }).toBeGreaterThan(0);
+
+  const stats = (await (await page.request.get(`${FIXTURE_ORIGIN}/stats`)).json()) as Array<{ path: string; queryKeys?: string[] }>;
+  expect(stats.some((entry) => entry.path === '/anime/feed.xml')).toBe(true);
+  expect(stats.some((entry) => entry.path === '/normal.mp4' && (entry.queryKeys ?? []).includes('token'))).toBe(true);
+});
+
+test('credentialed Live HLS resolves as live and attaches through the existing HLS gateway', async ({ page }) => {
+  await loginRoot(page);
+  const liveInput = `live://hls?url=${encodeURIComponent(`${FIXTURE_ORIGIN}/hls/master.m3u8?token=fixture-live-token`)}`;
+  const resolved = await page.evaluate(async (sourceInput) => {
+    // @ts-ignore Vite serves application modules for the browser integration test.
+    const { resolveMediaInput } = await import('/src/modules/media/mediaApi.ts');
+    const result = await resolveMediaInput(sourceInput);
+    return { descriptor: result.descriptor, plan: result.plan };
+  }, liveInput);
+
+  expect(resolved.descriptor.resolver).toBe('live');
+  expect(resolved.descriptor.sourceType).toBe('live');
+  expect(resolved.descriptor.isLive).toBe(true);
+  expect(resolved.descriptor.liveKind).toBe('hls');
+  expect(resolved.descriptor.duration).toBeUndefined();
+  expect(resolved.descriptor.seekable).toBe(false);
+  expect(resolved.descriptor.reconnect).toBe('same-source');
+  expect(resolved.plan.engine).toBe('hls');
+  expect(resolved.plan.candidateMode).toBe('FULL_PROXY');
+  expect(resolved.plan.proxy).toBe(true);
+  expect(JSON.stringify(resolved)).not.toContain('fixture-live-token');
+
+  const playbackUrl = await page.evaluate(async (candidateUrl) => {
+    // @ts-ignore Vite serves application modules for the browser integration test.
+    const { apiFetch } = await import('/src/lib/api.ts');
+    await apiFetch('/api/auth/me');
+    const token = localStorage.getItem('zviewer-access-token');
+    if (!token) throw new Error('missing E2E access token');
+    return `${candidateUrl}${candidateUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
+  }, resolved.plan.candidateUrl ?? resolved.descriptor.finalUrl);
+  await page.evaluate(() => {
+    const video = document.createElement('video');
+    video.id = 'phase2c2-live-video';
+    video.muted = true;
+    video.playsInline = true;
+    document.body.appendChild(video);
+  });
+  await page.evaluate(async (url) => {
+    // @ts-ignore Vite serves application modules for the browser integration test.
+    const { hlsEngine } = await import('/src/modules/player/engines/hls-engine.ts');
+    const video = document.querySelector('#phase2c2-live-video') as HTMLVideoElement;
+    const attached = await hlsEngine.attach(video, { url, format: 'hls', isLive: true });
+    (window as unknown as { phase2c2LiveCleanup?: () => void }).phase2c2LiveCleanup = attached.cleanup;
+    video.muted = true;
+    await video.play();
+  }, playbackUrl);
+  const video = page.locator('#phase2c2-live-video');
+  await expect.poll(() => video.evaluate((element: HTMLVideoElement) => element.readyState), { timeout: 20_000 }).toBeGreaterThanOrEqual(1);
+  await expect.poll(() => video.evaluate((element: HTMLVideoElement) => element.currentTime), { timeout: 20_000 }).toBeGreaterThan(0);
+  await page.evaluate(() => {
+    (window as unknown as { phase2c2LiveCleanup?: () => void }).phase2c2LiveCleanup?.();
+  });
+
+  const stats = (await (await page.request.get(`${FIXTURE_ORIGIN}/stats`)).json()) as Array<{ path: string }>;
+  for (const path of ['/hls/master.m3u8', '/hls/variant', '/hls/init.mp4', '/hls/key', '/hls/segment']) {
+    expect(stats.some((entry) => entry.path === path), `missing upstream request ${path}`).toBe(true);
+  }
+});
+
 test("HLS reattaches with a new room grant after Socket.IO reconnect", async ({ page }) => {
   await loginAndCreateRoom(page);
   await assertRoomGrantRefreshesAfterReconnect(
@@ -662,7 +812,9 @@ test('private source token stays out of media resolve and Socket movie-list; hos
   const lists: string[] = [];
   page.on('websocket', ws => ws.on('framereceived', frame => { const payload = String(frame.payload); if (payload.includes('movie-list')) lists.push(payload); }));
   await loginAndCreateRoom(page);
-  const responsePromise = page.waitForResponse(response => response.url().includes('/api/stream/media/resolve'));
+  const responsePromise = page.waitForResponse(response =>
+    response.url().includes('/api/stream/media/resolve') && response.ok(),
+  );
   await page.getByPlaceholder(/影片网页、MP4\/MKV/).last().fill(`${FIXTURE_ORIGIN}/normal.mp4?token=private-source-secret`);
   await page.getByRole('button', { name: '添加', exact: true }).last().click();
   const response = await responsePromise;

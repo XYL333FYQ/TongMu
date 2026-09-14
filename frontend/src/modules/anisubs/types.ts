@@ -33,7 +33,5 @@ export interface AniSubsEpisode {
 
 /** 解析后的播放地址 */
 export interface AniSubsResolvedSource {
-  url: string
-  headers?: Record<string, string>
-  format?: AniSubsMediaFormat
+  sourceReference: string
 }
