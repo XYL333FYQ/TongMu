@@ -11,8 +11,15 @@ function load(file, imports = {}, directory = path.join(__dirname, '../src/modul
   return module.exports;
 }
 const playbackProfile = load('playbackProfile.ts');
+const storageReference = load('storageReference.ts');
 const { planPlayback } = load('localPlanner.ts', { './playbackProfile': playbackProfile });
 const media = { drm: { protected: false }, transport: 'dash', container: 'dash', videoCodec: 'hvc1.1.6.L93.B0' };
+test('storage playback references contain only provider identity and path', () => {
+  const input = storageReference.buildStorageReference({ provider: 'webdav', mountId: 7, path: '/movies/a.mp4' });
+  assert.match(input, /^storage:\/\/webdav\?/);
+  assert.equal(input.includes('password'), false);
+  assert.match(storageReference.buildServerFileStorageReference('custom:3:/movies/a.mp4'), /rootKey=custom%3A3/);
+});
 test('each client independently plans the same shared HEVC DASH media', () => {
   assert.equal(planPlayback(media, { mediaSource: true, hevc: true }).engine, 'dash');
   assert.equal(planPlayback(media, { mediaSource: true, hevc: false }).engine, 'blocked');

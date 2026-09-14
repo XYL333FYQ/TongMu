@@ -1,4 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 
 const FIXTURE_ORIGIN = "http://127.0.0.1:3456";
 
@@ -183,6 +185,15 @@ async function loginAndCreateRoom(page: Page): Promise<void> {
   await page.getByRole("button", { name: "开始共享", exact: true }).click();
   await page.getByRole("button", { name: "创建房间", exact: true }).click();
   await expect(page).toHaveURL(/\/room\//);
+}
+
+async function loginRoot(page: Page): Promise<void> {
+  await page.goto("/login");
+  await page.getByPlaceholder("请输入用户名").fill("root");
+  await page.getByPlaceholder("请输入密码").fill("root");
+  await page.getByRole("button", { name: "登录", exact: true }).click();
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByText("已连接", { exact: true })).toBeVisible();
 }
 
 async function configureGeneratedMedia(page: Page): Promise<void> {
@@ -664,4 +675,108 @@ test('runtime media error reattaches real MP4 through same-quality proxy and pre
   expect(restored.rate).toBe(1.5);
   expect(restored.width).toBe(original.width); expect(restored.height).toBe(original.height);
   expect(restored.url).toContain('/api/stream/media/');
+});
+
+test('storage providers resolve through mediaApi and play via scoped gateway fixtures', async ({ page }) => {
+  await loginRoot(page);
+  const storageDir = path.resolve('.e2e-runtime', 'phase2b-local-storage');
+  await mkdir(storageDir, { recursive: true });
+  const fixtureResponse = await page.request.get(`${FIXTURE_ORIGIN}/normal.mp4`);
+  expect(fixtureResponse.ok(), await fixtureResponse.text()).toBe(true);
+  await writeFile(path.join(storageDir, 'movie.mp4'), await fixtureResponse.body());
+
+  const mounts = await page.evaluate(async (rootPath) => {
+    // @ts-ignore Vite serves application modules for the browser integration test.
+    const { apiFetch } = await import('/src/lib/api.ts');
+    const request = async (url: string, body: Record<string, unknown>) => {
+      const response = await apiFetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.success) throw new Error(JSON.stringify(payload));
+      return payload;
+    };
+    const root = await request('/api/server-files/roots', {
+      name: 'phase2b-e2e-local', absPath: rootPath, readonly: true,
+    });
+    const webdav = await request('/api/webdav/mounts', {
+      name: 'phase2b-e2e-webdav', serverUrl: 'http://127.0.0.1:3456/dav', path: '/',
+      username: 'fixture-user', password: 'fixture-pass', directLink: true,
+    });
+    const openlist = await request('/api/openlist/mounts', {
+      name: 'phase2b-e2e-openlist', serverUrl: 'http://127.0.0.1:3456', path: '/',
+      username: 'fixture-user', password: 'fixture-pass', directLink: true,
+    });
+    return {
+      rootKey: root.root.key as string,
+      rootId: Number(String(root.root.key).split(':')[1]),
+      webdavId: Number(webdav.mount.id),
+      openlistId: Number(openlist.mount.id),
+    };
+  }, storageDir);
+
+  const localInput = `storage://local-file?path=${encodeURIComponent('/movie.mp4')}&rootKey=${encodeURIComponent(mounts.rootKey)}`;
+  const webdavInput = `storage://webdav?path=${encodeURIComponent('/movie.mp4')}&mountId=${mounts.webdavId}`;
+  const openlistInput = `storage://openlist?path=${encodeURIComponent('/movie.mp4')}&mountId=${mounts.openlistId}`;
+  const video = page.locator('video').first();
+  await page.evaluate(() => {
+    const video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+    document.body.appendChild(video);
+  });
+
+  try {
+    for (const [input, resolver] of [
+      [localInput, 'local-file'],
+      [webdavInput, 'webdav'],
+      [openlistInput, 'openlist'],
+    ] as const) {
+      const resolved = await page.evaluate(async (sourceInput) => {
+        // @ts-ignore Vite serves application modules for the browser integration test.
+        const { resolveMediaInput } = await import('/src/modules/media/mediaApi.ts');
+        const result = await resolveMediaInput(sourceInput);
+        return {
+          descriptor: result.descriptor,
+          plan: result.plan,
+        };
+      }, input);
+      expect(resolved.descriptor.resolver).toBe(resolver);
+      expect(resolved.plan.candidateMode).toBe('FULL_PROXY');
+      expect(resolved.descriptor.finalUrl).toContain('/api/stream/media/');
+      expect(JSON.stringify(resolved)).not.toContain('fixture-pass');
+      expect(JSON.stringify(resolved)).not.toContain('fixture-user');
+
+      const playbackUrl = await page.evaluate(async (candidateUrl) => {
+        // Refresh the short-lived E2E access token through the normal API path
+        // before the media element requests the scoped gateway URL.
+        // @ts-ignore Vite serves application modules for the browser integration test.
+        const { apiFetch } = await import('/src/lib/api.ts');
+        await apiFetch('/api/auth/me');
+        const token = localStorage.getItem('zviewer-access-token');
+        if (!token) throw new Error('missing E2E access token');
+        return `${candidateUrl}${candidateUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
+      }, resolved.plan.candidateUrl ?? resolved.descriptor.finalUrl);
+      await video.evaluate((element, url) => {
+        element.src = url;
+        element.load();
+        void element.play();
+      }, playbackUrl);
+      await expect.poll(() => video.evaluate((element: HTMLVideoElement) => element.readyState), { timeout: 15_000 }).toBeGreaterThanOrEqual(1);
+      await expect.poll(() => video.evaluate((element: HTMLVideoElement) => element.currentTime), { timeout: 15_000 }).toBeGreaterThan(0);
+      await video.evaluate((element: HTMLVideoElement) => element.pause());
+    }
+  } finally {
+    await page.evaluate(async (ids) => {
+      // @ts-ignore Vite serves application modules for the browser integration test.
+      const { apiFetch } = await import('/src/lib/api.ts');
+      await Promise.all([
+        apiFetch(`/api/webdav/mounts/${ids.webdavId}`, { method: 'DELETE' }),
+        apiFetch(`/api/openlist/mounts/${ids.openlistId}`, { method: 'DELETE' }),
+        apiFetch(`/api/server-files/roots/${ids.rootId}`, { method: 'DELETE' }),
+      ]);
+    }, mounts).catch(() => undefined);
+  }
 });

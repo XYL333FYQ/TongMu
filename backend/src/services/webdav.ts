@@ -1,4 +1,5 @@
 import { Connection, BasicAuthenticator } from 'webdav-client';
+import { DOMParser, type Document as XmlDocument } from '@xmldom/xmldom';
 import { Readable, Transform } from 'node:stream';
 import { promisify } from 'node:util';
 import { TtlCache } from '../utils/ttl-cache';
@@ -10,13 +11,21 @@ import {
 
 const DEFAULT_TIMEOUT = 10000; // 10 秒
 
-function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new WebDAVError(`${label} 超时`, 'TIMEOUT')), DEFAULT_TIMEOUT),
-    ),
-  ]);
+function withTimeout<T>(promise: Promise<T>, label: string, signal?: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new WebDAVError(`${label} 超时`, 'TIMEOUT')), DEFAULT_TIMEOUT);
+    const abort = () => {
+      const error = new Error('WebDAV 请求已取消');
+      error.name = 'AbortError';
+      reject(error);
+    };
+    if (signal?.aborted) abort();
+    else signal?.addEventListener('abort', abort, { once: true });
+    promise.then(resolve, reject).finally(() => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
+    });
+  });
 }
 
 // 错误类型：携带错误码便于上层路由处理
@@ -34,6 +43,11 @@ export class WebDAVError extends Error {
 // 将底层抛出的异常包装为 WebDAVError，便于路由层根据 code 返回对应 HTTP 状态
 function wrapWebDAVError(err: unknown): WebDAVError {
   if (err instanceof WebDAVError) return err;
+  if (err instanceof Error && err.name === 'AbortError') {
+    const wrapped = new WebDAVError('WebDAV 请求已取消', 'CANCELLED');
+    wrapped.name = 'AbortError';
+    return wrapped;
+  }
   const message = err instanceof Error ? err.message : String(err);
   const lower = message.toLowerCase();
 
@@ -47,6 +61,94 @@ function wrapWebDAVError(err: unknown): WebDAVError {
     return new WebDAVError('文件不存在或路径错误', 'NOT_FOUND');
   }
   return new WebDAVError(message, 'UNREACHABLE');
+}
+
+const MAX_PROPERTY_RESPONSE_BYTES = 64 * 1024;
+
+async function readBoundedText(response: Response): Promise<string> {
+  const declaredLength = Number(response.headers.get('content-length') || 0);
+  if (declaredLength > MAX_PROPERTY_RESPONSE_BYTES) {
+    throw new WebDAVError('WebDAV 属性响应过大', 'UNREACHABLE');
+  }
+  if (!response.body) return '';
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  try {
+    while (total <= MAX_PROPERTY_RESPONSE_BYTES) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_PROPERTY_RESPONSE_BYTES) {
+        throw new WebDAVError('WebDAV 属性响应过大', 'UNREACHABLE');
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  return Buffer.concat(chunks, total).toString('utf8');
+}
+
+function xmlPropertyText(document: XmlDocument, localName: string): string | undefined {
+  const elements = document.getElementsByTagNameNS('DAV:', localName);
+  const element = elements.length > 0 ? elements.item(0) : document.getElementsByTagName(localName).item(0);
+  const value = element?.textContent?.trim();
+  return value || undefined;
+}
+
+async function statWebDAVFileWithFetch(
+  params: WebDAVConnectionParams,
+  signal?: AbortSignal,
+): Promise<WebDAVFileInfo> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT);
+  const abort = () => controller.abort(signal?.reason);
+  if (signal?.aborted) abort();
+  else signal?.addEventListener('abort', abort, { once: true });
+  try {
+    const headers: Record<string, string> = {
+      Depth: '0',
+      'Content-Type': 'application/xml; charset=utf-8',
+    };
+    if (params.username || params.password) {
+      headers.Authorization = `Basic ${Buffer.from(`${params.username || ''}:${params.password || ''}`).toString('base64')}`;
+    }
+    const response = await fetch(`${normalizeServerUrl(params.serverUrl)}${normalizePath(params.path)}`, {
+      method: 'PROPFIND',
+      headers,
+      body: '<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:"><d:prop><d:displayname/><d:getcontentlength/><d:getlastmodified/></d:prop></d:propfind>',
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 403) throw new WebDAVError('WebDAV 认证失败，请检查用户名和密码', 'AUTH_FAILED');
+      if (response.status === 404) throw new WebDAVError('文件不存在或路径错误', 'NOT_FOUND');
+      throw new WebDAVError(`WebDAV HTTP ${response.status}`, 'UNREACHABLE');
+    }
+    const document = new DOMParser().parseFromString(await readBoundedText(response), 'text/xml');
+    const parserError = document.getElementsByTagName('parsererror').item(0);
+    if (parserError) throw new WebDAVError('WebDAV 属性响应无效', 'UNREACHABLE');
+    const name = xmlPropertyText(document, 'displayname') || params.path.split('/').filter(Boolean).pop() || '';
+    const size = Number(xmlPropertyText(document, 'getcontentlength') || 0);
+    const lastModifiedRaw = xmlPropertyText(document, 'getlastmodified');
+    return {
+      name,
+      path: params.path,
+      size: Number.isFinite(size) && size >= 0 ? size : 0,
+      lastModified: lastModifiedRaw ? new Date(lastModifiedRaw) : undefined,
+    };
+  } catch (error) {
+    if (error instanceof WebDAVError) throw error;
+    if (error instanceof Error && error.name === 'AbortError') {
+      const cancelled = new Error(signal?.aborted ? 'WebDAV 请求已取消' : 'WebDAV 请求超时');
+      cancelled.name = 'AbortError';
+      throw cancelled;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', abort);
+  }
 }
 
 export interface WebDAVConnectionParams {
@@ -174,65 +276,20 @@ function createConnection(params: WebDAVConnectionParams): Connection {
 
 export async function statWebDAVFile(
   params: WebDAVConnectionParams,
+  signal?: AbortSignal,
 ): Promise<WebDAVFileInfo> {
   try {
-    return await withTimeout(
-      (async () => {
-        const connection = createConnection(params);
-        const getProperties = promisify(connection.getProperties.bind(connection));
-
-        const statOnce = async (requestPath: string) => {
-          // webdav-client getProperties 返回的属性名带 DAV: 命名空间前缀
-          const props = (await getProperties(normalizePath(requestPath))) as Record<
-            string,
-            { content?: string | unknown[] }
-          >;
-
-          const lenProp = props['DAV:getcontentlength'];
-          const lenRaw = Array.isArray(lenProp?.content)
-            ? undefined
-            : lenProp?.content;
-          const size = lenRaw !== undefined ? Number(lenRaw) || 0 : 0;
-
-          const nameProp = props['DAV:displayname'];
-          const nameRaw = Array.isArray(nameProp?.content)
-            ? undefined
-            : nameProp?.content;
-          const name =
-            (typeof nameRaw === 'string' && nameRaw) ||
-            requestPath.split('/').filter(Boolean).pop() ||
-            '';
-
-          const mtimeProp = props['DAV:getlastmodified'];
-          const mtimeRaw = Array.isArray(mtimeProp?.content)
-            ? undefined
-            : mtimeProp?.content;
-          const lastModified =
-            typeof mtimeRaw === 'string' ? new Date(mtimeRaw) : undefined;
-
-          return { name, size, lastModified };
-        };
-
-        try {
-          const { name, size, lastModified } = await statOnce(params.path);
-          return { name, path: params.path, size, lastModified };
-        } catch (err) {
-          // 历史数据兼容：影片表中 path 若为旧版"乱码修复"形态（`！`），
-          // 与服务器真名（`ï¼\x81`）不匹配会 404；用逆变换候选路径重试一次。
-          const fallbackPath = latin1RoundTrip(params.path);
-          if (fallbackPath) {
-            try {
-              const { name, size, lastModified } = await statOnce(fallbackPath);
-              return { name, path: fallbackPath, size, lastModified };
-            } catch {
-              // 重试也失败，抛出原始错误
-            }
-          }
-          throw err;
-        }
-      })(),
-      'WebDAV 连接',
-    );
+    try {
+      return await statWebDAVFileWithFetch(params, signal);
+    } catch (err) {
+      // 历史数据兼容：影片表中 path 若为旧版"乱码修复"形态（`！`），
+      // 与服务器真名（`ï¼\x81`）不匹配会 404；用逆变换候选路径重试一次。
+      const fallbackPath = latin1RoundTrip(params.path);
+      if (fallbackPath && !(signal?.aborted)) {
+        return await statWebDAVFileWithFetch({ ...params, path: fallbackPath }, signal);
+      }
+      throw err;
+    }
   } catch (err) {
     throw wrapWebDAVError(err);
   }
@@ -248,39 +305,24 @@ export function createWebDAVReadStream(
 /**
  * 构造 WebDAV 文件直链。
  *
- * 注意：WebDAV 协议本身不支持生成带签名的下载直链，所有访问都需要 BasicAuth。
- * 该函数仅返回 `serverUrl + path` 拼接结果，浏览器 `<video>` 直接播放时
- * 通常会因为缺少 Authorization 头而无法加载（卡死）。
- *
- * 用户选择"直链模式"时若使用 WebDAV 挂载，应知晓此限制：
- * 仅当 WebDAV 服务器本身允许匿名访问或已通过其他方式（如 Basic URL）放行时才能播放。
- *
- * 该函数的存在是为了与 OpenList 直链模式保持接口一致，由后端统一返回"直链 URL"。
+ * WebDAV credentials are never embedded in a browser-visible URL. The
+ * returned URL is therefore eligible for direct playback only when the
+ * configured mount is actually anonymous and the URL passes the common
+ * public-target policy; credentialed mounts must use the scoped media gateway.
+ * The optional credential arguments remain for source compatibility with
+ * older callers, but are intentionally ignored.
  */
 export function buildWebDAVDirectUrl(
   serverUrl: string,
   path: string,
-  username?: string,
-  password?: string,
+  _username?: string,
+  _password?: string,
 ): string {
   const normalizedUrl = normalizeServerUrl(serverUrl);
   // 路径保持服务器真名原样，不做乱码修复（与 normalizePath 策略一致）
   const encodedPath = normalizePath(path);
-  // WebDAV 协议不支持生成真实直链，仅返回 serverUrl+path 拼接。
-  // 若提供了认证信息，嵌入 Basic Auth（http://user:pass@host/path），
-  // 让浏览器可以直接播放需要认证的 WebDAV 文件。
-  // 注意：密码暴露在 URL 中，仅适用于内网/可信环境。
-  if (username && password) {
-    try {
-      const parsed = new URL(normalizedUrl);
-      parsed.username = encodeURIComponent(username);
-      parsed.password = encodeURIComponent(password);
-      parsed.pathname = encodedPath;
-      return parsed.toString();
-    } catch {
-      // URL 解析失败，回退到简单拼接
-    }
-  }
+  // WebDAV credentials are never embedded in a browser-visible URL. A
+  // credentialed mount must use the scoped media gateway instead.
   return `${normalizedUrl}${encodedPath}`;
 }
 

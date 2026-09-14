@@ -32,6 +32,7 @@ import {
   OpenListError,
 } from '../services/openlist';
 import { isInternalOpenListServer } from '../services/openlist-errors';
+import { canPublishStorageDirectUrl } from '../services/media/providers/storage-reference';
 import { detectMediaFormat, getContentType } from '../services/mediaFormat';
 import {
   resolveUserMount,
@@ -579,6 +580,14 @@ export function createMountRouter(opts: MountRouterOptions): Router {
           mount.password || undefined,
           targetPath,
         );
+        if (!canPublishStorageDirectUrl(alistDirectUrl)) {
+          res.status(400).json({
+            success: false,
+            message: '该直链含有凭据或不是浏览器可访问的安全地址，请使用服务器转发',
+            code: 'DIRECT_URL_NOT_SAFE',
+          });
+          return;
+        }
         // 配置期探测的 HTTPS 能力：源站支持 TLS 时升级 http 直链为 https
         // （浏览器直连零带宽）；否则保持 http，播放时走服务器代理
         const httpsDirect = await ensureHttpsProbe(mount);
@@ -620,6 +629,14 @@ export function createMountRouter(opts: MountRouterOptions): Router {
       }
 
       // WebDAV 协议不支持获取真实直链，直接拼接 serverUrl+path
+      if (mount.username || mount.password) {
+        res.status(400).json({
+          success: false,
+          message: '该 WebDAV 挂载需要认证，请使用服务器转发',
+          code: 'CREDENTIAL_REQUIRED',
+        });
+        return;
+      }
       const directUrl = buildWebDAVDirectUrl(
         mount.serverUrl,
         targetPath,

@@ -256,7 +256,8 @@ export class MovieService {
     // 直链模式下 url 已是真实下载 URL（OpenList 由后端 /direct-url 接口获取，
     // WebDAV 由后端 /direct-url 接口拼接），无需重写。
     const sourceType = typeof data.source === 'string' ? data.source : '';
-    const isProxyMode = data.directLink !== true && ['webdav', 'openlist', 'ftp', 'emby', 'jellyfin'].includes(sourceType);
+    const usesMediaCoreStorage = typeof data.sourceInput === 'string' && data.sourceInput.startsWith('storage://');
+    const isProxyMode = !usesMediaCoreStorage && data.directLink !== true && ['webdav', 'openlist', 'ftp', 'emby', 'jellyfin'].includes(sourceType);
     if (isProxyMode && movie.id) {
       const streamUrl = `/api/${sourceType}/stream?movieId=${movie.id}`;
       await repo.update({ id: movie.id }, { url: streamUrl });
@@ -381,7 +382,9 @@ export class MovieService {
       pages: parsePagesArray(movie.pages),
       currentPage: movie.currentPage,
       serverUrl: null,
-      path: movie.path,
+      // Storage playback is re-resolved from the server-side source reference;
+      // legacy path/mount metadata is not part of the room DTO.
+      path: ['server-files', 'webdav', 'ftp', 'openlist'].includes(movie.source ?? '') ? null : movie.path,
       username: null,
       password: null,
       directLink: movie.directLink,

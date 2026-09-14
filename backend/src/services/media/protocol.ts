@@ -5,7 +5,16 @@ export type TransportMode = 'DIRECT' | 'MANIFEST_ASSISTED' | 'PARTIAL_PROXY' | '
 export interface TransportCandidate { mode: TransportMode; url: string; audioUrl?: string }
 export interface TransportPlan { candidates: TransportCandidate[]; reason: string }
 /** Server-private resolved source. Never serialize this type as a public DTO. */
-export type PrivateMediaSource = Pick<MediaDescriptor, 'input' | 'originalUrl' | 'finalUrl' | 'headers' | 'credentialOrigins'>;
+export interface PrivateMediaSource {
+  input: string;
+  originalUrl: string;
+  finalUrl: string;
+  headers?: Record<string, string>;
+  credentialOrigins?: string[];
+  /** Provider identity and opaque server-only material for the media gateway. */
+  providerId?: string;
+  providerData?: Record<string, unknown>;
+}
 
 /**
  * Candidate facts used by the server viability filter. URL/header fields remain

@@ -162,6 +162,30 @@ function sendText(req, res, body, contentType) {
   sendBuffer(req, res, Buffer.from(body), contentType);
 }
 
+function sendWebDavProperties(req, res, path, includeChildren) {
+  const base = `http://127.0.0.1:${PORT}/dav`;
+  const file = `${base}/movie.mp4`;
+  const root = `${base}/`;
+  const fileResponse = `
+    <d:response><d:href>${file}</d:href><d:propstat><d:prop>
+      <d:displayname>movie.mp4</d:displayname>
+      <d:getcontentlength>${assets.muxed.length}</d:getcontentlength>
+      <d:getlastmodified>Wed, 01 Jan 2025 00:00:00 GMT</d:getlastmodified>
+      <d:resourcetype />
+    </d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>`;
+  const rootResponse = `
+    <d:response><d:href>${root}</d:href><d:propstat><d:prop>
+      <d:displayname>dav</d:displayname><d:getcontentlength>0</d:getcontentlength>
+      <d:getlastmodified>Wed, 01 Jan 2025 00:00:00 GMT</d:getlastmodified>
+      <d:resourcetype><d:collection /></d:resourcetype>
+    </d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>`;
+  const body = `<?xml version="1.0" encoding="utf-8"?><d:multistatus xmlns:d="DAV:">${
+    includeChildren || path.endsWith('/') ? rootResponse + fileResponse : fileResponse
+  }</d:multistatus>`;
+  res.writeHead(207, { 'Content-Type': 'application/xml; charset=utf-8' });
+  res.end(body);
+}
+
 function readJson(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -231,6 +255,41 @@ const server = http.createServer(async (req, res) => {
   if (!assets) { res.writeHead(503); res.end('fixture not configured'); return; }
   const path = new URL(req.url, `http://127.0.0.1:${PORT}`).pathname;
   requests.push({ path, method: req.method, range: req.headers.range || '' });
+
+  if (path === '/dav/' || path === '/dav/movie.mp4') {
+    if (req.method === 'PROPFIND') return sendWebDavProperties(req, res, path, path === '/dav/');
+    if (path === '/dav/movie.mp4' && (req.method === 'GET' || req.method === 'HEAD')) {
+      return sendBuffer(req, res, assets.muxed, 'video/mp4');
+    }
+  }
+
+  if (path === '/api/auth/login/hash' && req.method === 'POST') {
+    await readJson(req);
+    res.setHeader('Content-Type', 'application/json');
+    return res.end(JSON.stringify({ code: 200, message: 'success', data: { token: 'phase2b-openlist-token' } }));
+  }
+  if (path === '/api/fs/list' && req.method === 'POST') {
+    await readJson(req);
+    res.setHeader('Content-Type', 'application/json');
+    return res.end(JSON.stringify({ code: 200, message: 'success', data: {
+      content: [{ name: 'movie.mp4', size: assets.muxed.length, is_dir: false, type: 2, modified: '2025-01-01T00:00:00Z', sign: '', thumb: '' }],
+      total: 1, readme: '', provider: 'fixture', write: false,
+    } }));
+  }
+  if (path === '/api/fs/get' && req.method === 'POST') {
+    await readJson(req);
+    res.setHeader('Content-Type', 'application/json');
+    return res.end(JSON.stringify({ code: 200, message: 'success', data: {
+      name: 'movie.mp4', size: assets.muxed.length, is_dir: false,
+      modified: '2025-01-01T00:00:00Z', created: '2025-01-01T00:00:00Z',
+      sign: 'fixture-signature', thumb: '', type: 2, provider: 'fixture',
+      raw_url: `http://127.0.0.1:${PORT}/openlist/movie.mp4?sign=fixture-signature&expires=4102444800`,
+      readme: '', hash_info: null, related: [],
+    } }));
+  }
+  if (path === '/openlist/movie.mp4' && (req.method === 'GET' || req.method === 'HEAD')) {
+    return sendBuffer(req, res, assets.muxed, 'video/mp4');
+  }
 
   if (path === '/normal.mp4' || path === '/extensionless') return sendBuffer(req, res, assets.muxed, 'video/mp4');
   if (path === '/hls/master.m3u8') return sendText(req, res,

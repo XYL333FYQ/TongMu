@@ -6,6 +6,7 @@ import { GenericWebResolver } from '../resolvers/generic-web';
 import { ResolverNotApplicableError, type MediaDescriptor, type ResolverContext } from '../types';
 import { legacyPlaybackClientProfile, type PlaybackClientProfileV1 } from '../playback-profile';
 import { LegacyResolverAdapter } from './legacy-resolver-adapter';
+import { FtpProvider, LocalFileProvider, OpenListProvider, WebDavProvider } from './storage-providers';
 import {
   assertProviderActive,
   providerActorForUser,
@@ -17,6 +18,10 @@ import {
 
 export function defaultProviderRegistry(): MediaProvider[] {
   return [
+    new LocalFileProvider(),
+    new WebDavProvider(),
+    new FtpProvider(),
+    new OpenListProvider(),
     new LegacyResolverAdapter({
       id: 'bilibili', sourceKinds: ['bilibili'], resolver: new BilibiliResolver(),
       credentialDependencies: [{ providerId: 'bilibili', owner: 'current-viewer', requirement: 'optional', scope: 'playback' }],
@@ -88,6 +93,7 @@ export function providerContextFromResolverContext(context: ResolverContext): Pr
     actor: providerActorForUser(context.userId),
     userId: context.userId,
     roomId: context.roomId,
+    movieId: context.movieId,
     sourceGeneration: context.sourceGeneration,
     signal: controller.signal,
     deadline: context.deadline ?? Date.now() + 30_000,

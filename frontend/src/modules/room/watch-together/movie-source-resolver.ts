@@ -162,6 +162,7 @@ async function resolveMediaCoreMovie(
   const resolved = await resolveMediaInput(movie.sourceInput!, {
     browserSniff: true,
     roomId,
+    movieId: movie.id,
     requestedQn: bili?.bilibili?.requestedQn ?? movie.currentQn,
     preferMp4: bili?.bilibili?.preferMp4 === true,
   })
@@ -190,7 +191,7 @@ function mapMediaCoreResult(
   const { descriptor, plan } = resolved
   const bilibili = descriptor.sourceMetadata?.bilibili
   return {
-    sourceUrl: descriptor.finalUrl,
+    sourceUrl: plan.candidateUrl ?? descriptor.finalUrl,
     audioUrl: descriptor.audioUrl,
     format: descriptor.container,
     videoCodec: descriptor.videoCodec,
@@ -385,6 +386,7 @@ export async function resolveBilibiliOnline(
   } else {
     const core = await resolveMediaInput(movie.sourceInput || movie.url, {
       roomId: options?.roomId,
+      movieId: movie.id,
       requestedQn: movie.currentQn,
       preferMp4: effectivePreferMp4,
       cid: movie.cid,

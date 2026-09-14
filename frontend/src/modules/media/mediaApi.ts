@@ -127,13 +127,25 @@ export interface ResolveMediaInputOptions {
   preferMp4?: boolean
   page?: number
   cid?: number
+  /** Room media record being refreshed; kept out of public provider context. */
+  movieId?: number
+  sourceGeneration?: number
 }
 
 export async function resolveMediaInput(
   input: string,
   options: ResolveMediaInputOptions = {}
 ): Promise<ResolvedMedia> {
-  const { browserSniff = false, roomId, requestedQn, preferMp4, page, cid } = options
+  const {
+    browserSniff = false,
+    roomId,
+    requestedQn,
+    preferMp4,
+    page,
+    cid,
+    movieId,
+    sourceGeneration,
+  } = options
   const profile = await collectPlaybackClientProfile()
   const response = await apiFetch('/api/stream/media/resolve', {
     method: 'POST',
@@ -142,6 +154,8 @@ export async function resolveMediaInput(
       input,
       roomId,
       roomGrant: roomId ? getRoomMediaGrant(roomId) : undefined,
+      movieId,
+      sourceGeneration,
       browserSniff,
       requestedQn,
       preferMp4,

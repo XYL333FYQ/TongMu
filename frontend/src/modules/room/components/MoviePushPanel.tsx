@@ -37,7 +37,6 @@ import {
   type KazumiEpisode,
 } from '@/modules/kazumi'
 import {
-  resolveFTP,
   buildBilibiliImageProxyUrl,
   getBilibiliQrCode,
   pollBilibiliQrCode,
@@ -56,24 +55,13 @@ import {
   CliResolveError,
 } from '@/modules/bilibili/cliApi'
 import { getActiveCliProxyUrl } from '@/modules/room/watch-together/movie-source-resolver'
-import {
-  resolveOpenList,
-  fetchOpenListDirectUrl,
-} from '@/modules/openlist/openlistApi'
 import { isInternalOpenListServer } from '@/modules/openlist/isInternal'
 import OpenListBrowser from '@/modules/openlist/OpenListBrowser'
 import { resolveEmby } from '@/modules/emby/embyApi'
 import { resolveJellyfin } from '@/modules/jellyfin/jellyfinApi'
-import { resolveWebDAV, fetchWebDAVDirectUrl } from '@/modules/webdav/webdavApi'
 import MountBrowser from '@/modules/mounts/MountBrowser'
 import WebDAVBrowser from '@/modules/webdav/WebDAVBrowser'
-import { resolveFTP as resolveFTPNew } from '@/modules/ftp/ftpApi'
 import ServerFilesBrowser from '@/modules/server-files/ServerFilesBrowser'
-import {
-  resolveServerFile,
-  buildServerFileProxyUrl,
-} from '@/modules/server-files/serverFilesApi'
-import type { MediaFormat } from '@/lib/mediaFormat'
 import {
   fetchAllMounts,
   type UnionMount,
@@ -87,6 +75,10 @@ import {
   toBilibiliResolvedSource,
   type ResolvedMedia,
 } from '@/modules/media/mediaApi'
+import {
+  buildServerFileStorageReference,
+  buildStorageReference,
+} from '@/modules/media/storageReference'
 
 type SourceType =
   | 'bilibili'
@@ -609,72 +601,49 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
       setResolveProgress(`正在批量解析 ${paths.length} 个文件...`)
       try {
         let added = 0
-        for (const path of paths) {
-          const normalizedPath = normalizeMountPath(path)
-          if (sourceType === 'webdav' || sourceType === 'openlist') {
-            // WebDAV 与 OpenList 共用同一套协议逻辑，仅 API 前缀与直链获取不同
-            // 内网地址强制使用服务器转发（浏览器无法直连内网服务器）
-            const isDirect =
-              sourceType === 'webdav'
-                ? isWebdavInternal
-                  ? false
-                  : webdavDirectLink
-                : isOpenlistInternal
-                  ? false
-                  : openlistDirectLink
-            const serverUrl =
-              (sourceType === 'webdav'
-                ? webdav.serverUrl
-                : openlist.serverUrl
-              ).trim() || undefined
-            const resolveMount =
-              sourceType === 'webdav' ? resolveWebDAV : resolveOpenList
-            const fetchDirect =
-              sourceType === 'webdav'
-                ? fetchWebDAVDirectUrl
-                : fetchOpenListDirectUrl
-
-            if (isDirect) {
-              // 直链模式：后端通过挂载凭证获取直链 URL（OpenList 为 AList 签名直链，WebDAV 为拼接）
-              const movieUrl = await fetchDirect(mountId, normalizedPath)
-              const title = extractTitleFromUrl(normalizedPath)
-              await addMovie(roomId, {
-                url: movieUrl,
-                title,
-                source: sourceType,
-                serverUrl,
+          for (const path of paths) {
+            const normalizedPath = normalizeMountPath(path)
+            if (sourceType === 'webdav' || sourceType === 'openlist') {
+              const sourceInput = buildStorageReference({
+                provider: sourceType,
+                mountId,
                 path: normalizedPath,
-                directLink: true,
               })
-            } else {
-              // 代理模式：resolve 返回相对 proxy URL，后端随后用 movieId 重写为 stream URL
-              const resolved = await resolveMount(mountId, normalizedPath)
-              const title =
-                resolved.title || extractTitleFromUrl(normalizedPath)
+              const resolved = await resolveMediaInput(sourceInput, { roomId })
+              const media = resolved.descriptor
+              const mount = mounts.find((item) => item.id === mountId)
               await addMovie(roomId, {
-                url: resolved.videoUrl,
-                title,
+                url: media.finalUrl,
+                title: media.title || extractTitleFromUrl(normalizedPath),
                 source: sourceType,
-                format: resolved.format,
-                duration: resolved.duration,
-                serverUrl,
+                sourceInput,
+                mediaDescriptor: { ...media, playbackPlan: resolved.plan },
+                format: media.container,
+                duration: media.duration,
+                serverUrl: mount?.serverUrl,
                 path: normalizedPath,
-                directLink: false,
+                directLink: resolved.plan.candidateMode === 'DIRECT',
               })
-            }
             added++
           } else if (sourceType === 'ftp') {
-            const resolved = await resolveFTPNew(mountId, normalizedPath)
-            const title = resolved.title || extractTitleFromUrl(normalizedPath)
-            await addMovie(roomId, {
-              url: resolved.videoUrl,
-              title,
-              source: 'ftp',
-              format: resolved.format,
-              serverUrl: ftp.serverUrl.trim(),
+            const sourceInput = buildStorageReference({
+              provider: 'ftp',
+              mountId,
               path: normalizedPath,
-              username: ftp.username || undefined,
-              password: ftp.password || undefined,
+            })
+            const resolved = await resolveMediaInput(sourceInput, { roomId })
+            const media = resolved.descriptor
+            const mount = mounts.find((item) => item.id === mountId)
+            await addMovie(roomId, {
+              url: media.finalUrl,
+              title: media.title || extractTitleFromUrl(normalizedPath),
+              source: 'ftp',
+              sourceInput,
+              mediaDescriptor: { ...media, playbackPlan: resolved.plan },
+              format: media.container,
+              duration: media.duration,
+              serverUrl: mount?.serverUrl,
+              path: normalizedPath,
             })
             added++
           } else if (sourceType === 'emby') {
@@ -730,13 +699,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
       roomId,
       selectedMountId,
       sourceType,
-      webdav.serverUrl,
-      webdavDirectLink,
       ftp.serverUrl,
-      ftp.username,
-      ftp.password,
-      openlist.serverUrl,
-      openlistDirectLink,
       embyDirectLink,
       jellyfinDirectLink,
       mounts,
@@ -763,16 +726,19 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
         let added = 0
         for (const path of paths) {
           const normalizedPath = path.trim()
-          const resolved = await resolveServerFile(normalizedPath)
-          const movieUrl = buildServerFileProxyUrl(normalizedPath)
+          const sourceInput = buildServerFileStorageReference(normalizedPath)
+          const resolved = await resolveMediaInput(sourceInput, { roomId })
+          const media = resolved.descriptor
           await addMovie(roomId, {
-            url: movieUrl,
-            title: resolved.title,
+            url: media.finalUrl,
+            title: media.title || extractTitleFromUrl(normalizedPath),
             source: 'server-files',
-            format: resolved.format as MediaFormat,
+            sourceInput,
+            mediaDescriptor: { ...media, playbackPlan: resolved.plan },
+            format: media.container,
             path: normalizedPath,
-            duration: resolved.duration ?? undefined,
-            audioCodec: resolved.audioCodec ?? undefined,
+            duration: media.duration ?? undefined,
+            audioCodec: media.audioCodec ?? undefined,
           })
           added++
         }
@@ -1085,31 +1051,10 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
         })
         message.success('影片已添加')
       } else if (sourceType === 'webdav' || sourceType === 'openlist') {
-        // WebDAV 与 OpenList 共用同一套协议逻辑，仅 API 前缀与直链获取不同
-        // 内网地址强制使用服务器转发（浏览器无法直连内网服务器）
-        const isDirect =
-          sourceType === 'webdav'
-            ? isWebdavInternal
-              ? false
-              : webdavDirectLink
-            : isOpenlistInternal
-              ? false
-              : openlistDirectLink
         const mountPath = (
           sourceType === 'webdav' ? webdav.path : openlist.path
         ).trim()
-        const mountServerUrl =
-          (sourceType === 'webdav'
-            ? webdav.serverUrl
-            : openlist.serverUrl
-          ).trim() || undefined
         const label = sourceType === 'webdav' ? 'WebDAV' : 'OpenList'
-        const resolveMount =
-          sourceType === 'webdav' ? resolveWebDAV : resolveOpenList
-        const fetchDirect =
-          sourceType === 'webdav'
-            ? fetchWebDAVDirectUrl
-            : fetchOpenListDirectUrl
 
         if (!mountPath) {
           message.warning('请填写文件路径')
@@ -1120,34 +1065,26 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           message.warning(`请选择已保存的 ${label} 挂载`)
           return
         }
-        let title: string
-        let movieUrl: string
-        let format: MediaFormat = 'mp4'
-        let duration: number | undefined
-
-        if (isDirect) {
-          // 直链模式：后端通过挂载凭证获取直链 URL（OpenList 为 AList 签名直链，WebDAV 为拼接）
-          setResolveProgress(`正在获取 ${label} 直链...`)
-          movieUrl = await fetchDirect(mountId, mountPath)
-          title = extractTitleFromUrl(mountPath)
-        } else {
-          // 代理模式：resolve 返回相对 proxy URL，后端随后用 movieId 重写为 stream URL
-          setResolveProgress(`正在解析 ${label} 文件...`)
-          const resolved = await resolveMount(mountId, mountPath)
-          title = resolved.title || extractTitleFromUrl(mountPath)
-          movieUrl = resolved.videoUrl
-          format = resolved.format
-          duration = resolved.duration
-        }
-        await addMovie(roomId, {
-          url: movieUrl,
-          title,
-          source: sourceType,
-          format,
-          duration,
-          serverUrl: mountServerUrl,
+        setResolveProgress(`正在解析 ${label} 文件...`)
+        const sourceInput = buildStorageReference({
+          provider: sourceType,
+          mountId,
           path: mountPath,
-          directLink: isDirect,
+        })
+        const resolved = await resolveMediaInput(sourceInput, { roomId })
+        const media = resolved.descriptor
+        const mount = mounts.find((item) => item.id === mountId)
+        await addMovie(roomId, {
+          url: media.finalUrl,
+          title: media.title || extractTitleFromUrl(mountPath),
+          source: sourceType,
+          sourceInput,
+          mediaDescriptor: { ...media, playbackPlan: resolved.plan },
+          format: media.container,
+          duration: media.duration,
+          serverUrl: mount?.serverUrl,
+          path: mountPath,
+          directLink: resolved.plan.candidateMode === 'DIRECT',
         })
         resetForm()
         message.success('影片已添加')
@@ -1157,38 +1094,29 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           return
         }
         setResolveProgress('正在解析 FTP 文件...')
-        // 优先使用已保存挂载的新 API；手动填写时回退到旧 API
         const mountId = Number(selectedMountId)
-        let title: string
-        let movieUrl: string
-        let format: MediaFormat = 'mp4'
-
-        if (mountId) {
-          const resolved = await resolveFTPNew(mountId, ftp.path.trim())
-          title = resolved.title || extractTitleFromUrl(ftp.path.trim())
-          movieUrl = resolved.videoUrl
-          format = resolved.format
-        } else {
-          const resolved = await resolveFTP({
-            serverUrl: ftp.serverUrl.trim(),
-            path: ftp.path.trim(),
-            port: ftp.port,
-            username: ftp.username || undefined,
-            password: ftp.password || undefined,
-          })
-          title = resolved.title || extractTitleFromUrl(ftp.path.trim())
-          movieUrl = resolved.videoUrl
-          format = resolved.format
+        if (!mountId) {
+          message.warning('请选择已保存的 FTP 挂载')
+          return
         }
-        await addMovie(roomId, {
-          url: movieUrl,
-          title,
-          source: 'ftp',
-          format,
-          serverUrl: ftp.serverUrl.trim(),
+        const sourceInput = buildStorageReference({
+          provider: 'ftp',
+          mountId,
           path: ftp.path.trim(),
-          username: ftp.username || undefined,
-          password: ftp.password || undefined,
+        })
+        const resolved = await resolveMediaInput(sourceInput, { roomId })
+        const media = resolved.descriptor
+        const mount = mounts.find((item) => item.id === mountId)
+        await addMovie(roomId, {
+          url: media.finalUrl,
+          title: media.title || extractTitleFromUrl(ftp.path.trim()),
+          source: 'ftp',
+          sourceInput,
+          mediaDescriptor: { ...media, playbackPlan: resolved.plan },
+          format: media.container,
+          duration: media.duration,
+          serverUrl: mount?.serverUrl,
+          path: ftp.path.trim(),
         })
         resetForm()
         message.success('影片已添加')
@@ -1260,19 +1188,19 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           return
         }
         setResolveProgress('正在解析服务器文件...')
-        const resolved = await resolveServerFile(serverFilePath.trim())
-        const movieUrl = buildServerFileProxyUrl(serverFilePath.trim())
-        // 音轨编码来自后端 resolve（ffprobe），仅作元数据存储：playsvideo
-        // 的启用由播放时的 shouldUsePlaysVideo 依据容器与音轨自行判定，
-        // 添加影片时不再需要前端补探测。
+        const sourceInput = buildServerFileStorageReference(serverFilePath.trim())
+        const resolved = await resolveMediaInput(sourceInput, { roomId })
+        const media = resolved.descriptor
         await addMovie(roomId, {
-          url: movieUrl,
-          title: resolved.title,
+          url: media.finalUrl,
+          title: media.title || extractTitleFromUrl(serverFilePath.trim()),
           source: 'server-files',
-          format: resolved.format as MediaFormat,
+          sourceInput,
+          mediaDescriptor: { ...media, playbackPlan: resolved.plan },
+          format: media.container,
           path: serverFilePath.trim(),
-          duration: resolved.duration ?? undefined,
-          audioCodec: resolved.audioCodec ?? undefined,
+          duration: media.duration ?? undefined,
+          audioCodec: media.audioCodec ?? undefined,
         })
         resetForm()
         message.success('影片已添加')

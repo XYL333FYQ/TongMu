@@ -21,9 +21,10 @@ test('Movie DTO and descriptors omit private refresh inputs, credentials and own
   const descriptor = { ...media, headers: { Cookie: 'private' }, playbackPlan: { nativeHls: true }, nested: { authorization: 'private', apiKey: 'private' } };
   const safe = toPublicDescriptor(descriptor, '/api/stream/media/opaque');
   assert.equal(JSON.stringify(safe).includes('private'), false);
-  const dto = movieService.serializeMovie({ id: 1, roomId: 'room', url: 'https://cdn.example/video?token=private', sourceInput: media.input, password: 'private', username: 'private', serverUrl: 'https://private', mediaDescriptor: JSON.stringify(descriptor), createdAt: new Date(), updatedAt: new Date() });
+  const dto = movieService.serializeMovie({ id: 1, roomId: 'room', url: 'https://cdn.example/video?token=private', source: 'server-files', path: 'C:\\private\\movie.mp4', sourceInput: media.input, password: 'private', username: 'private', serverUrl: 'https://private', mediaDescriptor: JSON.stringify(descriptor), createdAt: new Date(), updatedAt: new Date() });
   assert.equal(dto.sourceInput, 'media-movie:1');
   assert.equal(JSON.stringify(dto).includes('private'), false);
+  assert.equal(dto.path, null);
   assert.match(dto.url, /^\/api\/stream\/media\//);
   assert.equal('playbackPlan' in dto.mediaDescriptor, false);
 });

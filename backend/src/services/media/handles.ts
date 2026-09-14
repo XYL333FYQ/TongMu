@@ -17,6 +17,12 @@ export interface MediaHandleResource {
   contentType?: string;
   rewriteManifest?: boolean;
   transportMode?: import('./protocol').TransportMode;
+  /** Server-only gateway adapter data; sealed inside the handle. */
+  providerId?: string;
+  providerData?: Record<string, unknown>;
+  targetPolicy?: import('../proxy/safe-fetch').ProxyTargetPolicy;
+  trustedPrivateHosts?: string[];
+  sourceGeneration?: number;
   expiresAt: number;
 }
 

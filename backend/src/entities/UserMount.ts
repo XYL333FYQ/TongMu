@@ -6,6 +6,18 @@ import {
   UpdateDateColumn,
   Index,
 } from 'typeorm';
+import { isSecretVaultEnvelope, secretVault } from '../services/secret-vault';
+
+const secretFieldTransformer = {
+  to(value: string | null): string | null {
+    if (!value) return value;
+    return isSecretVaultEnvelope(value) ? value : secretVault.encrypt(value);
+  },
+  from(value: string | null): string | null {
+    if (!value || !isSecretVaultEnvelope(value)) return value;
+    return secretVault.decrypt(value);
+  },
+};
 
 export type MountType = 'webdav' | 'ftp' | 'openlist' | 'emby' | 'jellyfin';
 
@@ -36,14 +48,14 @@ export class UserMount {
   @Column({ type: 'varchar', nullable: true })
   username!: string | null;
 
-  @Column({ type: 'varchar', nullable: true })
+  @Column({ type: 'varchar', nullable: true, transformer: secretFieldTransformer })
   password!: string | null;
 
   @Column({ type: 'varchar', nullable: true })
   indexUrl!: string | null;
 
   /** Emby API Key（X-Emby-Token）；与 username/password 二选一 */
-  @Column({ type: 'varchar', nullable: true })
+  @Column({ type: 'varchar', nullable: true, transformer: secretFieldTransformer })
   apiKey!: string | null;
 
   /** Emby 登录后缓存的用户 ID（运行时使用，可空） */

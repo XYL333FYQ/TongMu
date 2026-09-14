@@ -123,6 +123,7 @@ export async function fetchOpenListFileInfo(
   username: string | undefined,
   password: string | undefined,
   path: string,
+  signal?: AbortSignal,
 ): Promise<OpenListDirectUrlResult> {
   const mode = detectLoginMode(password);
   const normalizedUrl = normalizeOpenListServerUrl(serverUrl);
@@ -141,15 +142,15 @@ export async function fetchOpenListFileInfo(
 
   // 内部 FsGet，带 401 自动重试
   const fsGetWithRetry = async (): Promise<AlistFsGetData> => {
-    const token = await getOpenListToken(serverUrl, username, password, mode);
+    const token = await getOpenListToken(serverUrl, username, password, mode, signal);
     try {
-      return await alistFsGet(apiBaseUrl, token, targetPath, undefined);
+      return await alistFsGet(apiBaseUrl, token, targetPath, undefined, signal);
     } catch (err) {
       // token 过期：失效缓存并重试一次
       if (err instanceof OpenListError && err.code === 'AUTH_FAILED' && token) {
         invalidateOpenListToken(serverUrl, username);
-        const newToken = await getOpenListToken(serverUrl, username, password, mode);
-        return await alistFsGet(apiBaseUrl, newToken, targetPath, undefined);
+        const newToken = await getOpenListToken(serverUrl, username, password, mode, signal);
+        return await alistFsGet(apiBaseUrl, newToken, targetPath, undefined, signal);
       }
       throw err;
     }
@@ -194,8 +195,8 @@ export async function fetchOpenListFileInfo(
       if (related.name.toLowerCase().endsWith('.xml')) continue;
       try {
         const subtitlePath = prefix + related.name;
-        const subToken = await getOpenListToken(serverUrl, username, password, mode);
-        const subFs = await alistFsGet(apiBaseUrl, subToken, subtitlePath, undefined);
+        const subToken = await getOpenListToken(serverUrl, username, password, mode, signal);
+        const subFs = await alistFsGet(apiBaseUrl, subToken, subtitlePath, undefined, signal);
         let subRawUrl = subFs.raw_url;
         if (subRawUrl && !subRawUrl.startsWith('http://') && !subRawUrl.startsWith('https://')) {
           subRawUrl = `${apiBaseUrl}${subRawUrl.startsWith('/') ? subRawUrl : '/' + subRawUrl}`;

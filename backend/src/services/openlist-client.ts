@@ -198,10 +198,16 @@ async function alistRequest<T>(
   apiPath: string,
   body?: unknown,
   token?: string,
+  signal?: AbortSignal,
 ): Promise<T> {
   const url = `${baseUrl}${apiPath}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const abortFromCaller = () => controller.abort(signal?.reason);
+  if (signal) {
+    if (signal.aborted) controller.abort(signal.reason);
+    else signal.addEventListener('abort', abortFromCaller, { once: true });
+  }
 
   try {
     const headers: Record<string, string> = {
@@ -246,6 +252,7 @@ async function alistRequest<T>(
   } catch (err) {
     if (err instanceof OpenListError) throw err;
     // AbortError（超时）
+    if (signal?.aborted) throw err;
     if (err instanceof Error && err.name === 'AbortError') {
       throw new OpenListError('AList 请求超时', 'TIMEOUT');
     }
@@ -256,6 +263,7 @@ async function alistRequest<T>(
     );
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener('abort', abortFromCaller);
   }
 }
 
@@ -273,6 +281,7 @@ export async function alistLogin(
   username: string,
   password: string,
   mode: AlistLoginMode = 'plain',
+  signal?: AbortSignal,
 ): Promise<string> {
   const apiPath = mode === 'hash' ? '/api/auth/login/hash' : '/api/auth/login';
   const data = await alistRequest<AlistLoginData>(
@@ -280,6 +289,8 @@ export async function alistLogin(
     'POST',
     apiPath,
     { username, password } satisfies AlistLoginReq,
+    undefined,
+    signal,
   );
   if (!data?.token) {
     throw new OpenListError('AList 未返回 token', 'AUTH_FAILED');
@@ -316,6 +327,7 @@ export async function alistFsGet(
   token: string | undefined,
   path: string,
   password: string | undefined,
+  signal?: AbortSignal,
 ): Promise<AlistFsGetData> {
   return alistRequest<AlistFsGetData>(
     baseUrl,
@@ -323,6 +335,7 @@ export async function alistFsGet(
     '/api/fs/get',
     { path, password: password || '', page: 1, per_page: 0, refresh: false } satisfies AlistFsGetReq,
     token,
+    signal,
   );
 }
 

@@ -8,9 +8,10 @@ Current state: **Phase 1 implementation is complete within its approved scope; t
 
 Phase 2 has a working core checkpoint: the versioned client profile, server
 viability filter, client-owned planner path, provider contract/registry, and
-deterministic tamper coverage are implemented. Full Phase 2 remains open while
-WebDAV, FTP, OpenList, Emby, Jellyfin, local files, anime/catalog, and live
-routes are still documented temporary adapters or legacy surfaces.
+deterministic tamper coverage are implemented. Phase 2B additionally converges
+Local/server files, WebDAV, FTP, and OpenList/Alist playback resolution through
+the Media Core. Full Phase 2 remains open while Emby, Jellyfin, anime/catalog,
+and live routes are still documented temporary adapters or legacy surfaces.
 
 Phase 1 restored the declared dependency baseline, closed the scoped credential and
 token-revocation P0/P1 defects, introduced the shared ByteRange core, and added a
@@ -45,7 +46,9 @@ These remote values identify the upstream state observed on 2026-09-13; they do 
 - The server owns secrets, authorization, source resolution, and safety/viability facts. The client owns the final `PlaybackPlan` choice.
 - Rooms share media facts/descriptors and source generation, not a device-specific playback plan.
 - Bilibili, Direct URL, Generic Web, and BrowserResolver are substantially integrated with the new core.
-- WebDAV, FTP, OpenList, Emby, Jellyfin, server/local file, anime/Kazumi/AniSubs paths, and some live paths still use legacy-specific contracts or routes.
+- Emby, Jellyfin, anime/Kazumi/AniSubs paths, and some live paths still use
+  legacy-specific contracts or routes. Storage browse/manage APIs remain
+  provider-specific by design, while their new playback path is Media Core.
 - Safe Fetch and BrowserResolver provide meaningful SSRF and network-policy defenses, but every proxy/resolver path must continue to use the same policy boundary.
 - SQLite/config persistence remains rooted at `/app/config`; the root Docker entry retains Playwright/Chromium and `shm_size` expectations.
 
@@ -65,7 +68,7 @@ to do that work safely.
 
 ### P1 — high-priority integration and reliability gaps
 
-1. Legacy providers bypass the common private-source/descriptor/candidate contract, so authorization, redaction, quality, and fallback rules are not uniformly enforced.
+1. Emby, Jellyfin, anime/catalog, and live providers still bypass the common private-source/descriptor/candidate contract, so authorization, redaction, quality, and fallback rules are not uniformly enforced there.
 2. HLS rewriting is useful but untyped and lacks bounded manifest-resource protection comparable to SyncTV's mapper.
 3. DASH rewriting does not yet cover the full MPD surface needed for `SegmentBase`, representation indexes, bitstream-switching resources, `Location`, and xlink semantics.
 4. Realtime video and future music synchronization do not yet share a documented `RealtimeSyncCore`; sequence, generation, reconnect, host loss, request/ack, and stale-event rules are duplicated or incomplete.
@@ -128,7 +131,7 @@ revocation, Range semantics, and updater-source safety. Docker image startup,
 ffmpeg-dependent transcoding, and live third-party provider accounts remain
 environment-dependent.
 
-## Phase 2 core checkpoint validation
+## Phase 2 core checkpoint validation (pre-Phase 2B snapshot)
 
 | Check | Command | Result | Evidence / limitation |
 | --- | --- | ---: | --- |
@@ -140,9 +143,40 @@ environment-dependent.
 | Diff whitespace check | `git diff --check` | PASS | Only Git's existing LF/CRLF normalization warnings were reported |
 
 This is a **core checkpoint**, not a full Phase 2 exit: provider compatibility
-ledger entries for WebDAV, FTP, OpenList, Emby, Jellyfin, local files,
-AniSubs/Kazumi/anime, and live routes remain temporary adapters or legacy
-surfaces. Docker and ffmpeg were not available for this validation run.
+ledger entries for Emby, Jellyfin, AniSubs/Kazumi/anime, and live routes remain
+temporary adapters or legacy surfaces. Docker and ffmpeg were not available
+for this validation run.
+
+## Phase 2B storage convergence validation
+
+| Check | Command | Result | Evidence / limitation |
+| --- | --- | ---: | --- |
+| Backend lint | `npm run lint -w backend` | PASS | LocalFile, WebDAV, FTP and OpenList providers plus gateway compile/typecheck |
+| Backend tests | `npm test -w backend` | PASS with 1 skip | 70 passing; Windows symlink-escape case skipped because this environment does not permit creating a symlink |
+| Frontend tests | `npm test -w frontend` | PASS | 9/9, including storage-reference encoding and existing Phase 2 profile/planner coverage |
+| Frontend lint | `npm run lint -w frontend` | BASELINE BLOCKED | Existing repository/vendor CRLF, formatting, and React-compiler findings remain; no lint rule or assertion was weakened |
+| Frontend production build | `npm run build -w frontend` | PASS | Existing dynamic-import/chunk-size warnings remain |
+| Provider contract coverage | backend fixture suite | PASS | Four providers exercise validation/normalization/resolve/private source/candidates/cancellation/redaction; FTP real-server E2E not run |
+| Chromium storage fixture E2E | `npx playwright test e2e/media-playback.spec.ts -g "storage providers resolve" --reporter=line` | PASS | Local File, credentialed WebDAV, and credentialed/private-URL OpenList resolve through `mediaApi` and play through the scoped gateway |
+| Chromium media E2E | `npm run test:e2e -- --reporter=dot` | PASS | 14/14; existing 13 tests plus the storage fixture flow |
+| Diff whitespace check | `git diff --check` | PASS | No whitespace errors |
+
+The storage providers preserve provider-specific browse APIs but route new
+playback through `mediaApi` and the client Local Planner. A legacy server-file
+fallback remains for old movie records that have no `storage://` source or
+Media Core descriptor; it is documented as compatibility debt, not a new path.
+
+### Phase 2B secret storage boundary
+
+- New WebDAV, FTP, and OpenList `UserMount` writes are wrapped by the existing
+  SecretVault transformer. OpenList still hashes its AList password before the
+  encrypted write.
+- Existing mount rows remain readable for compatibility; a legacy plaintext
+  value is only upgraded when that row is saved. Historical plaintext therefore
+  remains a Phase 6 migration debt, not a claim of completed conversion.
+- Local File has no provider credential. Legacy movie credential fields keep
+  their existing compatibility transformer and are not used by new
+  `storage://` references.
 
 ## Migration foundation boundary
 
@@ -188,6 +222,7 @@ surfaces. Docker and ffmpeg were not available for this validation run.
 ## Documentation produced and updated
 
 - `upstream-adoption-matrix.md`
+- `provider-compatibility.md`
 - `target-architecture.md`
 - `implementation-plan.md`
 - `upstream-notes-zviewer.md`

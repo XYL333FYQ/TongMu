@@ -122,6 +122,7 @@ export interface ResolverContext {
   signal?: AbortSignal;
   deadline?: number;
   roomId?: string;
+  movieId?: number;
   sourceGeneration?: number;
   playbackClientProfile?: import('./playback-profile').PlaybackClientProfileV1;
   credentialOwnerPolicy?: import('./providers/types').ProviderCredentialOwner;

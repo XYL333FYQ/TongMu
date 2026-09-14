@@ -49,6 +49,7 @@ import { hashAlistPassword, isAlistHashedPassword } from '../services/openlist-c
 import { detectMediaFormat, getContentType } from '../services/mediaFormat';
 import { proxyHttpUpstream } from '../services/proxy/http-proxy';
 import { TtlCache } from '../utils/ttl-cache';
+import { canPublishStorageDirectUrl } from '../services/media/providers/storage-reference';
 
 const router = Router();
 const userMountRepository = () => AppDataSource.getRepository(UserMount);
@@ -552,6 +553,14 @@ router.get('/direct-url', async (req: AuthenticatedRequest, res: Response): Prom
         mount.password || undefined,
         targetPath,
       );
+      if (!canPublishStorageDirectUrl(directUrl)) {
+        res.status(400).json({
+          success: false,
+          message: '该直链含有凭据或不是浏览器可访问的安全地址，请使用服务器转发',
+          code: 'DIRECT_URL_NOT_SAFE',
+        });
+        return;
+      }
       // 配置期探测的 HTTPS 能力：源站支持 TLS（http/https 双栈）时将 http
       // 直链升级为 https——浏览器直连不受混合内容限制，零服务器带宽；
       // 不支持或未探测（旧数据，此处惰性补探测并写回）时保持 http 直链，

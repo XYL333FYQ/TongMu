@@ -121,6 +121,23 @@ export function resolveSafePath(
   return { abs: absolute, root };
 }
 
+/** Resolve an existing file and reject symlink/junction escapes from its root. */
+export async function resolveSafeExistingPath(
+  input: string | undefined,
+  roots: RootRegistry,
+): Promise<{ abs: string; root: RootInfo; rootReal: string; stat: fs.Stats }> {
+  const resolved = resolveSafePath(input, roots);
+  const [rootReal, fileReal] = await Promise.all([
+    fs.promises.realpath(resolved.root.absPath),
+    fs.promises.realpath(resolved.abs),
+  ]);
+  const relative = path.relative(rootReal, fileReal);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('路径越权');
+  const stat = await fs.promises.stat(fileReal);
+  if (!stat.isFile()) throw new Error('目标不是文件');
+  return { abs: fileReal, root: resolved.root, rootReal, stat };
+}
+
 /**
  * 将绝对路径转换为相对于指定根的前缀式 POSIX 路径。
  */

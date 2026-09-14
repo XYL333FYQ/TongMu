@@ -57,6 +57,7 @@ export async function getOpenListToken(
   username: string | undefined,
   password: string | undefined,
   mode: AlistLoginMode = 'plain',
+  signal?: AbortSignal,
 ): Promise<string | undefined> {
   const normalized = normalizeOpenListServerUrl(serverUrl);
   const apiBaseUrl = toApiBaseUrl(normalized);
@@ -77,7 +78,7 @@ export async function getOpenListToken(
     throw new OpenListError('OpenList 用户名已配置但密码为空', 'AUTH_FAILED');
   }
 
-  const token = await alistLogin(apiBaseUrl, user, password, mode);
+  const token = await alistLogin(apiBaseUrl, user, password, mode, signal);
   tokenCache.set(key, { token });
   return token;
 }

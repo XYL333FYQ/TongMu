@@ -3,13 +3,21 @@ import { Readable, PassThrough, Writable } from 'node:stream';
 
 const DEFAULT_TIMEOUT = 10000; // 10 秒
 
-function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error(`${label} 超时`)), DEFAULT_TIMEOUT),
-    ),
-  ]);
+function withTimeout<T>(promise: Promise<T>, label: string, signal?: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} 超时`)), DEFAULT_TIMEOUT);
+    const abort = () => {
+      const error = new Error('FTP 请求已取消');
+      error.name = 'AbortError';
+      reject(error);
+    };
+    if (signal?.aborted) abort();
+    else signal?.addEventListener('abort', abort, { once: true });
+    promise.then(resolve, reject).finally(() => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
+    });
+  });
 }
 
 export interface FTPConnectionParams {
@@ -38,15 +46,19 @@ function parseServerUrl(serverUrl: string): { host: string; protocol?: string } 
 
 export async function statFTPFile(
   params: FTPConnectionParams,
+  signal?: AbortSignal,
 ): Promise<FTPFileInfo> {
   return withTimeout(
     (async () => {
-      const client = new Client();
+      const client = new Client(DEFAULT_TIMEOUT);
       client.ftp.verbose = false;
       const { host, protocol } = parseServerUrl(params.serverUrl);
       const port = params.port || 21;
       const secure = protocol === 'ftps:';
 
+      const abort = () => client.close();
+      if (signal?.aborted) abort();
+      else signal?.addEventListener('abort', abort, { once: true });
       try {
         await client.access({
           host,
@@ -72,10 +84,12 @@ export async function statFTPFile(
           lastModified: file.modifiedAt,
         };
       } finally {
+        signal?.removeEventListener('abort', abort);
         client.close();
       }
     })(),
     'FTP 连接',
+    signal,
   );
 }
 
@@ -116,9 +130,10 @@ export function createFTPReadStream(
   params: FTPConnectionParams,
   startAt = 0,
   endAt?: number,
+  signal?: AbortSignal,
 ): Readable {
   const passThrough = new PassThrough();
-  const client = new Client();
+  const client = new Client(DEFAULT_TIMEOUT);
   client.ftp.verbose = false;
   const { host, protocol } = parseServerUrl(params.serverUrl);
   const port = params.port || 21;
@@ -155,6 +170,16 @@ export function createFTPReadStream(
       },
     });
 
+  const abort = () => {
+    const error = new Error('FTP 请求已取消');
+    error.name = 'AbortError';
+    client.close();
+    if (!output.writableEnded) output.destroy(error);
+  };
+  if (signal?.aborted) abort();
+  else signal?.addEventListener('abort', abort, { once: true });
+  output.once('close', () => signal?.removeEventListener('abort', abort));
+
   client
     .access({
       host,
@@ -172,6 +197,7 @@ export function createFTPReadStream(
       if (!output.writableEnded) output.destroy(err);
     })
     .finally(() => {
+      signal?.removeEventListener('abort', abort);
       client.close();
     });
 
@@ -192,7 +218,7 @@ export async function listFTPDirectory(
 ): Promise<FTPDirectoryEntry[]> {
   return withTimeout(
     (async () => {
-      const client = new Client();
+      const client = new Client(DEFAULT_TIMEOUT);
       client.ftp.verbose = false;
       const { host, protocol } = parseServerUrl(params.serverUrl);
       const port = params.port || 21;

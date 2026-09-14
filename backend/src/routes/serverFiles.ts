@@ -36,6 +36,7 @@ import {
 import {
   UPLOADS_ROOT,
   resolveSafePath,
+  resolveSafeExistingPath,
   toPrefixedPath,
   loadRootRegistry,
   basename,
@@ -567,8 +568,8 @@ router.get('/resolve', async (req: AuthenticatedRequest, res: Response): Promise
       return;
     }
     const roots = await loadRootRegistry();
-    const { abs: targetAbs } = resolveSafePath(target, roots);
-    if (!fs.existsSync(targetAbs) || fs.statSync(targetAbs).isDirectory()) {
+    const { abs: targetAbs } = await resolveSafeExistingPath(target, roots);
+    if (!fs.existsSync(targetAbs)) {
       res.status(404).json({ success: false, message: '文件不存在' });
       return;
     }
@@ -611,8 +612,8 @@ router.head('/proxy', async (req: AuthenticatedRequest, res: Response): Promise<
       return;
     }
     const roots = await loadRootRegistry();
-    const { abs: targetAbs } = resolveSafePath(target, roots);
-    if (!fs.existsSync(targetAbs) || fs.statSync(targetAbs).isDirectory()) {
+    const { abs: targetAbs } = await resolveSafeExistingPath(target, roots);
+    if (!fs.existsSync(targetAbs)) {
       res.status(404).end();
       return;
     }
@@ -651,8 +652,8 @@ router.get('/proxy', async (req: AuthenticatedRequest, res: Response): Promise<v
       return;
     }
     const roots = await loadRootRegistry();
-    const { abs: targetAbs } = resolveSafePath(target, roots);
-    if (!fs.existsSync(targetAbs) || fs.statSync(targetAbs).isDirectory()) {
+    const { abs: targetAbs } = await resolveSafeExistingPath(target, roots);
+    if (!fs.existsSync(targetAbs)) {
       res.status(404).json({ success: false, message: '文件不存在' });
       return;
     }
