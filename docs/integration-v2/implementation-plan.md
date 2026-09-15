@@ -248,9 +248,14 @@ The detailed contract is recorded in `docs/integration-v2/player-lifecycle.md`.
 
 ### Phase 4B — Voice lifecycle and identity
 
-Voice remains deferred. It includes real user identity/reconnect replacement,
-fixed 48 kHz/960-frame Opus behavior, decoder configuration dedupe/fallback,
-pending-source and ghost cleanup, and moderation/root invariants.
+**Current checkpoint: COMPLETE within the voice-local boundary.**
+
+TongMu now uses real logged-in identity with guest connection identities,
+same-user replacement and generation guards, fixed 48 kHz/960-frame Opus
+behavior, decoder configuration dedupe/fallback, bounded pending-source and
+ghost cleanup, and backend-enforced voice moderation/root invariants. The
+complete role/action matrix, host transfer, and RealtimeSyncCore remain
+Phase 5.
 
 **Why now**
 
@@ -290,6 +295,13 @@ Once descriptors/candidates are stable, client lifecycle behavior can be tested 
 - Resource/lifecycle instrumentation returns to baseline after repeated switches/leaves.
 - Stale generations cannot change the active player or subtitle state.
 - Logged-in voice membership uses real user identity; no duplicate/ghost member survives reconciliation.
+
+**Exit evidence**
+
+- backend/test/phase4b-voice.test.js: 4 focused integration tests pass.
+- frontend/test/voice-contract.test.cjs: 4 focused contract/lifecycle tests pass.
+- e2e/voice-lifecycle.spec.ts: Playwright fake-media join/reconnect/leave/unmount gate.
+- docs/integration-v2/voice-lifecycle.md records the Phase 5 convergence boundary.
 
 **Major risks**
 

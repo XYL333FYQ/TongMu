@@ -9,12 +9,15 @@ import {
   Headphones,
   ChevronDown,
   Volume2,
+  VolumeX,
+  UserX,
 } from 'lucide-react'
 import type { Socket } from 'socket.io-client'
 import { useVoiceChat } from '../hooks/useVoiceChat'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
 import { Slider } from '@/components/ui/Slider'
+import { message } from '@/components/ui/message'
 
 interface VoiceChatPanelProps {
   socket: Socket | null
@@ -28,6 +31,7 @@ export function VoiceChatPanel({
   socket,
   roomId,
   username,
+  isHost = false,
 }: VoiceChatPanelProps) {
   const [expanded, setExpanded] = useState(false)
   const [editingPeer, setEditingPeer] = useState<string | null>(null)
@@ -49,6 +53,9 @@ export function VoiceChatPanel({
     setGlobalVolume,
     setPeerVolume,
     setMicVolume,
+    voiceMutedBySocket,
+    muteVoiceMember,
+    kickVoiceMember,
   } = useVoiceChat({ socket, roomId, username })
 
   if (!roomId) return null
@@ -155,6 +162,7 @@ export function VoiceChatPanel({
                 const peerVolume = peerVolumes.get(member.socketId) ?? 1
                 const levelKey = me ? 'self' : member.socketId
                 const audioLevel = audioLevels.get(levelKey) ?? 0
+                const memberMuted = voiceMutedBySocket.has(member.socketId)
                 return (
                   <div
                     key={member.socketId}
@@ -182,9 +190,23 @@ export function VoiceChatPanel({
                           <Users className="h-3 w-3" />
                         )}
                       </div>
-                      <span className="shrink-0 truncate text-xs font-medium text-[var(--md-sys-color-on-surface)]">
-                        {me ? '我' : member.username || '观众'}
+                      <span
+                        className={cn(
+                          'shrink-0 truncate text-xs font-medium',
+                          memberMuted
+                            ? 'text-[var(--md-sys-color-error)]'
+                            : 'text-[var(--md-sys-color-on-surface)]'
+                        )}
+                        title={memberMuted ? '已被语音禁言' : undefined}
+                      >
+                        {me
+                          ? '我'
+                          : member.username ||
+                            `游客 ${member.socketId.slice(0, 4)}`}
                       </span>
+                      {memberMuted && (
+                        <VolumeX className="h-3 w-3 shrink-0 text-[var(--md-sys-color-error)]" />
+                      )}
                       {/* 横向实时音量条 */}
                       <div className="flex h-1.5 flex-1 items-center overflow-hidden rounded-full bg-[var(--md-sys-color-surface-container-high)]">
                         <div
@@ -224,6 +246,47 @@ export function VoiceChatPanel({
                         >
                           <Volume2 className="h-3.5 w-3.5" />
                         </button>
+                      )}
+                      {isHost && !me && (
+                        <>
+                          <button
+                            onClick={() => {
+                              void muteVoiceMember(
+                                member.socketId,
+                                !memberMuted
+                              ).then((response) => {
+                                if (!response.success && response.message) {
+                                  message.error(response.message)
+                                }
+                              })
+                            }}
+                            className="rounded-full p-1 text-[var(--md-sys-color-on-surface-variant)] transition-colors hover:bg-[var(--md-sys-color-surface-container-highest)]"
+                            title={memberMuted ? '解除语音禁言' : '语音禁言'}
+                          >
+                            {memberMuted ? (
+                              <Volume2 className="h-3.5 w-3.5" />
+                            ) : (
+                              <VolumeX className="h-3.5 w-3.5" />
+                            )}
+                          </button>
+                          <button
+                            onClick={() => {
+                              void kickVoiceMember(member.socketId).then(
+                                (response) => {
+                                  if (response.success) {
+                                    message.success('已将成员移出语音')
+                                  } else if (response.message) {
+                                    message.error(response.message)
+                                  }
+                                }
+                              )
+                            }}
+                            className="rounded-full p-1 text-[var(--md-sys-color-on-surface-variant)] transition-colors hover:bg-[var(--md-sys-color-surface-container-highest)]"
+                            title="移出语音"
+                          >
+                            <UserX className="h-3.5 w-3.5" />
+                          </button>
+                        </>
                       )}
                     </div>
                     {!me && editingPeer === member.socketId && (

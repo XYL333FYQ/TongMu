@@ -8,13 +8,13 @@
  * - isRoomHost / isInRoom 结果缓存 5s，避免高频事件（心跳 2s）重复查 DB
  * - 缓存 key = socketId:roomId:method，TTL 5s；socket 重连时 socketId 变更缓存自动失效
  */
-import type { Socket } from 'socket.io';
-import { IsNull } from 'typeorm';
-import { AppDataSource } from '../../data-source';
-import { Session } from '../../entities/Session';
-import { Room } from '../../entities/Room';
-import { SystemSettings } from '../../entities/SystemSettings';
-import type { UserRole } from '../../entities/User';
+import type { Socket } from "socket.io";
+import { IsNull } from "typeorm";
+import { AppDataSource } from "../../data-source";
+import { Session } from "../../entities/Session";
+import { Room } from "../../entities/Room";
+import { SystemSettings } from "../../entities/SystemSettings";
+import type { UserRole } from "../../entities/User";
 
 /** 权限校验缓存条目 */
 interface PermissionCacheEntry {
@@ -81,12 +81,14 @@ export class RoomPermissionService {
    */
   invalidatePermissionCache(socketId?: string, roomId?: string): void {
     if (socketId && roomId) {
-      this.permissionCache.delete(this.cacheKey(socketId, roomId, 'isRoomHost'));
-      this.permissionCache.delete(this.cacheKey(socketId, roomId, 'isInRoom'));
+      this.permissionCache.delete(
+        this.cacheKey(socketId, roomId, "isRoomHost"),
+      );
+      this.permissionCache.delete(this.cacheKey(socketId, roomId, "isInRoom"));
       return;
     }
     for (const key of this.permissionCache.keys()) {
-      const [sid, rid] = key.split(':');
+      const [sid, rid] = key.split(":");
       if (socketId && sid === socketId) this.permissionCache.delete(key);
       else if (roomId && rid === roomId) this.permissionCache.delete(key);
     }
@@ -103,10 +105,10 @@ export class RoomPermissionService {
    * 将此逻辑集中到权限服务，消除在 handler/路由中硬编码角色判断的反复出现。
    */
   canCreateRoom(role: UserRole, settings: SystemSettings): boolean {
-    if (role === 'guest') return false;
-    if (role === 'root' || role === 'admin') return true;
+    if (role === "guest") return false;
+    if (role === "root" || role === "admin") return true;
     // role === 'user'
-    return settings.roomCreationMode === 'all-users';
+    return settings.roomCreationMode === "all-users";
   }
 
   /**
@@ -116,7 +118,7 @@ export class RoomPermissionService {
    * @param roomId 房间 ID
    */
   async isRoomHost(socket: Socket, roomId: string): Promise<boolean> {
-    const key = this.cacheKey(socket.id, roomId, 'isRoomHost');
+    const key = this.cacheKey(socket.id, roomId, "isRoomHost");
     const cached = this.getCached(key);
     if (cached !== null) return cached;
 
@@ -124,7 +126,7 @@ export class RoomPermissionService {
     const sharer = await sessionRepo.findOneBy({
       socketId: socket.id,
       roomId,
-      role: 'sharer',
+      role: "sharer",
       endedAt: IsNull(),
     });
     const result = !!sharer;
@@ -145,7 +147,7 @@ export class RoomPermissionService {
     return sessionRepo.findOneBy({
       socketId: socket.id,
       roomId,
-      role: 'sharer',
+      role: "sharer",
       endedAt: IsNull(),
     });
   }
@@ -159,7 +161,7 @@ export class RoomPermissionService {
     const sessionRepo = AppDataSource.getRepository(Session);
     return sessionRepo.findOneBy({
       socketId,
-      role: 'sharer',
+      role: "sharer",
       endedAt: IsNull(),
     });
   }
@@ -184,26 +186,26 @@ export class RoomPermissionService {
     const sharer = await sessionRepo.findOneBy({
       socketId: socket.id,
       roomId,
-      role: 'sharer',
+      role: "sharer",
       endedAt: IsNull(),
     });
     if (sharer) return sharer;
 
     // 自愈：socket 重连后 sharer session 的 socketId 可能未更新
     const room = await roomRepo.findOneBy({ roomId });
-    if (!room || room.status !== 'active') return null;
+    if (!room || room.status !== "active") return null;
 
     const userId: number = socket.data.userId;
     const role: UserRole = socket.data.role;
     const isOwner =
-      role === 'root' ||
+      role === "root" ||
       room.ownerUserId === null ||
       room.ownerUserId === userId;
     if (!isOwner) return null;
 
     const latestSharer = await sessionRepo.findOne({
-      where: { roomId, role: 'sharer' },
-      order: { startedAt: 'DESC' },
+      where: { roomId, role: "sharer" },
+      order: { startedAt: "DESC" },
     });
     if (!latestSharer) return null;
 
@@ -217,7 +219,7 @@ export class RoomPermissionService {
    * 检查 socket 是否在指定房间内（任意角色）。
    */
   async isInRoom(socket: Socket, roomId: string): Promise<boolean> {
-    const key = this.cacheKey(socket.id, roomId, 'isInRoom');
+    const key = this.cacheKey(socket.id, roomId, "isInRoom");
     const cached = this.getCached(key);
     if (cached !== null) return cached;
 
@@ -250,8 +252,8 @@ export class RoomPermissionService {
    */
   async isWatchTogetherRoom(roomId: string): Promise<boolean> {
     const roomRepo = AppDataSource.getRepository(Room);
-    const room = await roomRepo.findOneBy({ roomId, status: 'active' });
-    return !!room && room.mode === 'watch-together';
+    const room = await roomRepo.findOneBy({ roomId, status: "active" });
+    return !!room && room.mode === "watch-together";
   }
 
   /**
@@ -259,8 +261,8 @@ export class RoomPermissionService {
    */
   async isScreenShareRoom(roomId: string): Promise<boolean> {
     const roomRepo = AppDataSource.getRepository(Room);
-    const room = await roomRepo.findOneBy({ roomId, status: 'active' });
-    return !!room && room.mode === 'screen-share';
+    const room = await roomRepo.findOneBy({ roomId, status: "active" });
+    return !!room && room.mode === "screen-share";
   }
 
   /**
@@ -271,10 +273,94 @@ export class RoomPermissionService {
     const room = await roomRepo.findOneBy({ roomId });
     if (!room) return false;
     try {
-      const muted: string[] = JSON.parse(room.mutedViewers || '[]');
+      const muted: string[] = JSON.parse(room.mutedViewers || "[]");
       return muted.includes(String(userId));
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * 检查当前 socket 是否为房间房管。
+   *
+   * 这是 Voice Phase 4B 的最小权限 helper。它只依据当前认证身份、
+   * 活跃房间 session 和 Room.moderators，不把 displayName/socketId 当身份。
+   * 完整角色/action matrix 留给 Phase 5 收敛。
+   */
+  async isRoomModerator(socket: Socket, roomId: string): Promise<boolean> {
+    const key = this.cacheKey(socket.id, roomId, "isRoomModerator");
+    const cached = this.getCached(key);
+    if (cached !== null) return cached;
+
+    const userId: number | undefined = socket.data?.userId;
+    if (!userId || userId <= 0 || !(await this.isInRoom(socket, roomId))) {
+      this.setCache(key, false);
+      return false;
+    }
+
+    const room = await AppDataSource.getRepository(Room).findOneBy({ roomId });
+    let result = false;
+    if (room) {
+      try {
+        const moderators = JSON.parse(room.moderators || "[]");
+        result = Array.isArray(moderators) && moderators.includes(userId);
+      } catch {
+        result = false;
+      }
+    }
+    this.setCache(key, result);
+    return result;
+  }
+
+  /** 检查当前 socket 是否拥有 Voice 管理权限。 */
+  async isRoomHostOrModerator(
+    socket: Socket,
+    roomId: string,
+  ): Promise<boolean> {
+    if (await this.isRoomHost(socket, roomId)) return true;
+    return this.isRoomModerator(socket, roomId);
+  }
+
+  /**
+   * 房管目标保护：房管不能操作房主、root 或其他房管。
+   * 房主调用方仍可管理普通成员，但 handler 仍会阻止自我危险操作。
+   */
+  async canModeratorActOn(
+    roomId: string,
+    targetUserId: number | undefined,
+    targetRole?: UserRole,
+  ): Promise<string | null> {
+    if (targetRole === "root") return "不能对管理员操作";
+    if (!targetUserId || targetUserId <= 0) return null;
+
+    const room = await AppDataSource.getRepository(Room).findOneBy({ roomId });
+    if (room?.ownerUserId === targetUserId) return "不能对房主操作";
+
+    try {
+      const moderators = JSON.parse(room?.moderators || "[]");
+      if (Array.isArray(moderators) && moderators.includes(targetUserId)) {
+        return "不能对房管操作";
+      }
+    } catch {
+      // malformed moderator data fails closed for the target-protection check
+    }
+    return null;
+  }
+
+  /** 读取房间房管 user ID 列表，供 Voice handler 做最小目标保护。 */
+  async getModerators(roomId: string): Promise<number[]> {
+    const room = await AppDataSource.getRepository(Room).findOneBy({ roomId });
+    if (!room) return [];
+    try {
+      const moderators = JSON.parse(room.moderators || "[]");
+      return Array.isArray(moderators)
+        ? moderators.filter(
+            (id: unknown): id is number =>
+              typeof id === "number" && Number.isInteger(id) && id > 0,
+          )
+        : [];
+    } catch {
+      return [];
     }
   }
 }

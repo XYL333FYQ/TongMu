@@ -5,13 +5,13 @@ import {
   CreateDateColumn,
   UpdateDateColumn,
   OneToMany,
-} from 'typeorm';
-import { Session } from './Session';
-import { Movie } from './Movie';
+} from "typeorm";
+import { Session } from "./Session";
+import { Movie } from "./Movie";
 
-export type RoomStatus = 'active' | 'closed';
-export type RoomMode = 'screen-share' | 'watch-together';
-export type ShareMethod = 'webrtc' | 'stream-push';
+export type RoomStatus = "active" | "closed";
+export type RoomMode = "screen-share" | "watch-together";
+export type ShareMethod = "webrtc" | "stream-push";
 
 @Entity()
 export class Room {
@@ -21,19 +21,27 @@ export class Room {
   @Column({ unique: true })
   roomId!: string;
 
-  @Column({ type: 'varchar', nullable: true })
+  @Column({ type: "varchar", nullable: true })
   name!: string | null;
 
-  @Column({ type: 'varchar', nullable: true })
+  @Column({ type: "varchar", nullable: true })
   password!: string | null;
 
-  @Column({ type: 'integer', default: 10 })
+  @Column({ type: "integer", default: 10 })
   maxViewers!: number;
 
-  @Column({ type: 'simple-enum', enum: ['active', 'closed'], default: 'active' })
+  @Column({
+    type: "simple-enum",
+    enum: ["active", "closed"],
+    default: "active",
+  })
   status!: RoomStatus;
 
-  @Column({ type: 'simple-enum', enum: ['screen-share', 'watch-together'], default: 'screen-share' })
+  @Column({
+    type: "simple-enum",
+    enum: ["screen-share", "watch-together"],
+    default: "screen-share",
+  })
   mode!: RoomMode;
 
   /**
@@ -42,7 +50,11 @@ export class Room {
    * - stream-push：基于 OBS RTMP 推流 + HTTP-FLV 拉流的流媒体模式
    * watch-together 模式下此字段被忽略。
    */
-  @Column({ type: 'simple-enum', enum: ['webrtc', 'stream-push'], default: 'webrtc' })
+  @Column({
+    type: "simple-enum",
+    enum: ["webrtc", "stream-push"],
+    default: "webrtc",
+  })
   shareMethod!: ShareMethod;
 
   /**
@@ -50,13 +62,13 @@ export class Room {
    * 与 roomId 分离，提高安全性；生成后保持不变，除非手动重置。
    * webrtc 模式下此字段为 null。
    */
-  @Column({ type: 'varchar', nullable: true })
+  @Column({ type: "varchar", nullable: true })
   streamKey!: string | null;
 
-  @Column({ type: 'boolean', default: false })
+  @Column({ type: "boolean", default: false })
   requireApproval!: boolean;
 
-  @Column({ type: 'integer', nullable: true })
+  @Column({ type: "integer", nullable: true })
   ownerUserId!: number | null;
 
   /**
@@ -64,7 +76,7 @@ export class Room {
    * 被禁言的用户不能发送评论与弹幕，但仍可观看与接收同步状态。
    * 空数组或 null 表示无禁言。
    */
-  @Column({ type: 'text', default: '[]' })
+  @Column({ type: "text", default: "[]" })
   mutedViewers!: string;
 
   /**
@@ -72,8 +84,22 @@ export class Room {
    * 一旦被批准，观众刷新页面或切换模式后无需再次审批即可直接进入房间。
    * 仅对已登录用户有效（guest 无 userId，每次仍需审批）。
    */
-  @Column({ type: 'text', default: '[]' })
+  @Column({ type: "text", default: "[]" })
   approvedViewers!: string;
+
+  /**
+   * 房间房管 user ID 列表（JSON 数组）。这里只为 Voice 的最小管理权限
+   * 提供存储边界；完整 action matrix 与任命/转交规则仍属于 Phase 5。
+   */
+  @Column({ type: "text", default: "[]" })
+  moderators!: string;
+
+  /**
+   * 语音禁言的登录用户 ID 列表（JSON 数组）。游客禁言只在当前进程内
+   * 绑定到 socket identity，避免把游客伪造成持久用户。
+   */
+  @Column({ type: "text", default: "[]" })
+  voiceMuted!: string;
 
   @CreateDateColumn()
   createdAt!: Date;
@@ -81,7 +107,7 @@ export class Room {
   @UpdateDateColumn()
   updatedAt!: Date;
 
-  @Column({ type: 'datetime', default: () => 'CURRENT_TIMESTAMP' })
+  @Column({ type: "datetime", default: () => "CURRENT_TIMESTAMP" })
   lastAccessedAt!: Date;
 
   @OneToMany(() => Session, (session) => session.room)

@@ -1,38 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Socket } from 'socket.io-client'
 import { message } from '@/components/ui/message'
+import {
+  VOICE_CHANNELS,
+  VOICE_FRAME_DURATION_US,
+  VOICE_FRAME_SAMPLES,
+  VOICE_MAX_PACKET_BYTES,
+  VOICE_MAX_PENDING_AGE_MS,
+  VOICE_MAX_PENDING_BYTES,
+  VOICE_MAX_PENDING_PACKETS,
+  VOICE_SAMPLE_RATE,
+  arrayBufferEquals,
+  boundedArrayBuffer,
+  isBoundedVoicePacket,
+} from '../voice-contract'
 
-// ============================================================
-// 语音聊天 — 服务器中转架构 + Opus 编码（128kbps）
-//
-// 1. 客户端通过 AudioWorklet 采集 PCM 音频（Float32, 48kHz, mono）
-// 2. 使用 WebCodecs AudioEncoder 将 PCM 编码为 Opus（128kbps）
-// 3. 通过 Socket.IO 将编码后的 Opus 数据发送到服务器
-// 4. 服务器转发给房间内其他语音成员
-// 5. 接收端使用 WebCodecs AudioDecoder 解码 Opus → PCM
-// 6. 使用 Web Audio API 播放 PCM 数据
-//
-// 如果浏览器不支持 WebCodecs，自动回退到原始 PCM 传输（768kbps）。
-//
-// 优势：
-// - 无需 NAT 穿透（不依赖 STUN/TURN）
-// - 连接更稳定（不依赖 P2P 连接建立）
-// - Opus 编码大幅降低带宽（768kbps → 128kbps）
-// ============================================================
-
-/** 每次 AudioWorklet 累积的样本数（20ms @ 48kHz，匹配 Opus 编码帧） */
-const FRAME_SIZE = 960
-
-/** Opus 编码比特率（128kbps） */
 const OPUS_BITRATE = 128_000
+const JITTER_BUFFER_DELAY = 0.12
+const MAX_PLAYBACK_BACKLOG_SEC = 0.5
+const MAX_PENDING_SOURCES = 32
+const DECODER_REBUILD_THROTTLE_MS = 10_000
 
-/** Opus 编码采样率 */
-const OPUS_SAMPLE_RATE = 48_000
-
-/** 接收端 jitter buffer 初始延迟（秒） */
-const JITTER_BUFFER_DELAY = 0.06
-
-/** 检测浏览器是否支持 WebCodecs AudioEncoder/AudioDecoder */
 const OPUS_SUPPORTED =
   typeof window !== 'undefined' &&
   typeof (window as unknown as { AudioEncoder?: unknown }).AudioEncoder !==
@@ -41,8 +29,13 @@ const OPUS_SUPPORTED =
     'undefined'
 
 export interface VoiceMember {
+  identity: string
   socketId: string
+  userId: number | null
   username?: string
+  role?: 'root' | 'admin' | 'user' | 'guest'
+  generation: number
+  muted?: boolean
   speaking?: boolean
 }
 
@@ -50,106 +43,133 @@ export interface UseVoiceChatOptions {
   socket: Socket | null
   roomId: string | undefined
   username?: string
-  /** 是否为房主（已废弃，保留接口兼容） */
+  /** 保留旧接口；Voice 权限由服务端验证。 */
   isHost?: boolean
 }
 
 export interface UseVoiceChatResult {
-  /** 是否已加入语音聊天 */
   joined: boolean
-  /** 是否正在加入中 */
   joining: boolean
-  /** 本地麦克风是否启用 */
   micEnabled: boolean
-  /** 当前语音成员列表（包含自己） */
   members: VoiceMember[]
-  /** 全局输出音量 0~1 */
   globalVolume: number
-  /** 每个远端成员对应的单独音量 0~1 */
   peerVolumes: Map<string, number>
-  /** 每个远端成员对应的延迟（ms） */
   peerLatencies: Map<string, number>
-  /** 加入语音聊天 */
   join: () => Promise<void>
-  /** 离开语音聊天 */
   leave: () => void
-  /** 切换本地麦克风开关 */
   toggleMic: () => void
-  /** 设置全局输出音量 */
   setGlobalVolume: (value: number) => void
-  /** 设置某个远端成员的单独音量 */
   setPeerVolume: (socketId: string, value: number) => void
-  /** 本地麦克风反送（监听）是否开启 */
   monitorEnabled: boolean
-  /** 切换本地麦克风反送开关 */
   toggleMonitor: () => void
-  /** 本地麦克风输入音量 0~1（影响所有远端用户听到的音量） */
   micVolume: number
-  /** 设置本地麦克风输入音量 */
   setMicVolume: (value: number) => void
-  /** 每个成员的实时音量电平 0~1（key 为 socketId，本地为 'self'） */
   audioLevels: Map<string, number>
+  voiceMutedBySocket: Set<string>
+  muteVoiceMember: (
+    socketId: string,
+    muted: boolean
+  ) => Promise<{ success: boolean; message?: string }>
+  kickVoiceMember: (
+    socketId: string
+  ) => Promise<{ success: boolean; message?: string }>
 }
 
-// ==================== 工具函数 ====================
+interface PendingAudioPacket {
+  data: ArrayBuffer
+  timestamp: number
+  mediaTs?: number
+  queuedAt: number
+}
 
-/** Float32Array → Int16Array（PCM 回退模式使用） */
+interface PeerPlaybackState {
+  generation: number
+  gainNode: GainNode
+  analyser: AnalyserNode
+  nextStartTime: number
+  pendingSources: Set<AudioBufferSourceNode>
+  pendingPackets: PendingAudioPacket[]
+  pendingPacketBytes: number
+  lastArrivalAt: number
+  lastLatency: number
+  decoder?: AudioDecoder
+  decoderConfigured: boolean
+  decoderConfigKey?: string
+  codecDescription?: ArrayBuffer
+  decoderRebuildAt: number
+}
+
+interface VoicePacketPayload {
+  from: string
+  identity?: string
+  generation?: number
+  data: unknown
+  sampleRate?: number
+  channels?: number
+  codec?: string
+  timestamp: number
+  mediaTs?: number
+  encoded?: boolean
+  frameSamples?: number
+}
+
+interface VoiceCodecPayload {
+  from: string
+  identity?: string
+  generation?: number
+  codec?: string
+  sampleRate?: number
+  channels?: number
+  description: unknown
+}
+
 function float32ToInt16(float32: Float32Array): Int16Array {
   const int16 = new Int16Array(float32.length)
-  for (let i = 0; i < float32.length; i++) {
-    const s = Math.max(-1, Math.min(1, float32[i]))
-    int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff
+  for (let i = 0; i < float32.length; i += 1) {
+    const sample = Math.max(-1, Math.min(1, float32[i]))
+    int16[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff
   }
   return int16
 }
 
-/** Int16Array → Float32Array（PCM 回退模式使用） */
 function int16ToFloat32(int16: Int16Array): Float32Array {
   const float32 = new Float32Array(int16.length)
-  for (let i = 0; i < int16.length; i++) {
+  for (let i = 0; i < int16.length; i += 1) {
     float32[i] = int16[i] / 0x8000
   }
   return float32
 }
 
-/** 将 BufferSource 转换为 ArrayBuffer */
-function bufferSourceToArrayBuffer(
-  source: ArrayBuffer | ArrayBufferView
-): ArrayBuffer {
-  if (source instanceof ArrayBuffer) return source
-  return source.buffer.slice(
-    source.byteOffset,
-    source.byteOffset + source.byteLength
-  ) as ArrayBuffer
+function bytesToKey(value: ArrayBuffer | undefined): string {
+  if (!value) return 'none'
+  const bytes = new Uint8Array(value)
+  let key = ''
+  for (const byte of bytes) key += byte.toString(16).padStart(2, '0')
+  return key
 }
 
-/** 接收端每个远端用户的播放状态 */
-interface PeerPlaybackState {
-  gainNode: GainNode
-  analyser: AnalyserNode
-  /** 下一个音频块的开始播放时间（AudioContext.currentTime 基准） */
-  nextStartTime: number
-  /** 播放队列长度（用于 jitter buffer 管理） */
-  queueLength: number
-  /** 最近一次收到数据的时间戳（用于延迟检测） */
-  lastReceiveTime: number
-  /** 延迟检测：发送端附带的时间戳 → 接收端计算差值 */
-  lastLatency: number
-  /** Opus 解码器（WebCodecs 模式下每个远端用户独立） */
-  decoder?: AudioDecoder
-  /** 解码器是否已配置（收到 codec description 后才为 true） */
-  decoderConfigured?: boolean
+function decoderConfigKey(
+  codec: string,
+  sampleRate: number,
+  channels: number,
+  description?: ArrayBuffer
+): string {
+  return [codec, sampleRate, channels, bytesToKey(description)].join('|')
 }
 
-/**
- * 语音聊天核心 hook（服务器中转模式 + Opus 编码）。
- *
- * 客户端采集 PCM → Opus 编码 → Socket.IO 发送到服务器 → 服务器转发 →
- * 接收端 Opus 解码 → Web Audio API 播放。
- */
+function getUplinkBacklogBytes(socket: Socket): number {
+  try {
+    const engine = socket.io as unknown as {
+      engine?: { transport?: { ws?: { bufferedAmount?: number } } }
+    }
+    return engine.engine?.transport?.ws?.bufferedAmount ?? 0
+  } catch {
+    return 0
+  }
+}
+
 export function useVoiceChat(options: UseVoiceChatOptions): UseVoiceChatResult {
   const { socket, roomId, username } = options
-
   const [joined, setJoined] = useState(false)
   const [joining, setJoining] = useState(false)
   const [micEnabled, setMicEnabled] = useState(true)
@@ -162,34 +182,42 @@ export function useVoiceChat(options: UseVoiceChatOptions): UseVoiceChatResult {
     new Map()
   )
   const [audioLevels, setAudioLevels] = useState<Map<string, number>>(new Map())
+  const [voiceMutedBySocket, setVoiceMutedBySocket] = useState<Set<string>>(
+    new Set()
+  )
 
-  // 音频采集与处理相关 refs
   const localStreamRef = useRef<MediaStream | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
+  const micSourceRef = useRef<MediaStreamAudioSourceNode | null>(null)
   const micGainNodeRef = useRef<GainNode | null>(null)
   const workletNodeRef = useRef<AudioWorkletNode | null>(null)
   const silenceGainRef = useRef<GainNode | null>(null)
+  const localAnalyserRef = useRef<AnalyserNode | null>(null)
+  const monitorGainRef = useRef<GainNode | null>(null)
+  const monitorStreamRef = useRef<MediaStream | null>(null)
+  const monitorAudioRef = useRef<HTMLAudioElement | null>(null)
+  const visibilityHandlerRef = useRef<(() => void) | null>(null)
 
-  // Opus 编码器相关 refs
   const audioEncoderRef = useRef<AudioEncoder | null>(null)
   const codecDescriptionRef = useRef<ArrayBuffer | null>(null)
-  const encoderTimestampRef = useRef(0) // 微秒，单调递增
+  const encoderTimestampRef = useRef(0)
 
-  // 接收端播放相关 refs
   const playbackContextRef = useRef<AudioContext | null>(null)
   const masterGainRef = useRef<GainNode | null>(null)
   const peerStatesRef = useRef<Map<string, PeerPlaybackState>>(new Map())
+  const levelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const playAudioChunkRef = useRef<
+    (
+      socketId: string,
+      generation: number,
+      pcm: Float32Array,
+      sampleRate: number
+    ) => void
+  >(() => {})
+  const createPeerDecoderRef = useRef<
+    (socketId: string, generation: number) => AudioDecoder | null
+  >(() => null)
 
-  // 音量电平分析相关 refs
-  const analyserContextRef = useRef<AudioContext | null>(null)
-  const localAnalyserRef = useRef<AnalyserNode | null>(null)
-  const levelRafRef = useRef<number | null>(null)
-
-  // 监听（反送）相关 refs
-  const localMonitorAudioRef = useRef<HTMLAudioElement | null>(null)
-  const monitorStreamRef = useRef<MediaStream | null>(null)
-
-  // 通用 refs
   const socketRef = useRef(socket)
   const roomIdRef = useRef(roomId)
   const usernameRef = useRef(username)
@@ -198,24 +226,14 @@ export function useVoiceChat(options: UseVoiceChatOptions): UseVoiceChatResult {
   const micVolumeRef = useRef(micVolume)
   const micEnabledRef = useRef(true)
   const joinedRef = useRef(false)
-
-  useEffect(() => {
-    globalVolumeRef.current = globalVolume
-    if (masterGainRef.current) {
-      masterGainRef.current.gain.value = globalVolume
-    }
-  }, [globalVolume])
-
-  useEffect(() => {
-    peerVolumesRef.current = peerVolumes
-  }, [peerVolumes])
-
-  useEffect(() => {
-    micVolumeRef.current = micVolume
-    if (micGainNodeRef.current) {
-      micGainNodeRef.current.gain.value = micVolume
-    }
-  }, [micVolume])
+  const joiningRef = useRef(false)
+  const selfMutedRef = useRef(false)
+  const membersRef = useRef<Map<string, VoiceMember>>(new Map())
+  const lifecycleTokenRef = useRef(0)
+  const reconnectingRef = useRef(false)
+  const reconnectCleanupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  )
 
   useEffect(() => {
     socketRef.current = socket
@@ -224,227 +242,407 @@ export function useVoiceChat(options: UseVoiceChatOptions): UseVoiceChatResult {
   }, [socket, roomId, username])
 
   useEffect(() => {
-    micEnabledRef.current = micEnabled
-    // 通知 AudioWorklet 启用/禁用采集
-    if (workletNodeRef.current?.port) {
-      workletNodeRef.current.port.postMessage({ enabled: micEnabled })
-    }
-    // 同时控制本地 track
-    localStreamRef.current?.getAudioTracks().forEach((track) => {
-      track.enabled = micEnabled
-    })
-  }, [micEnabled])
+    globalVolumeRef.current = globalVolume
+    if (masterGainRef.current) masterGainRef.current.gain.value = globalVolume
+  }, [globalVolume])
+
+  useEffect(() => {
+    peerVolumesRef.current = peerVolumes
+  }, [peerVolumes])
+
+  useEffect(() => {
+    micVolumeRef.current = micVolume
+    if (micGainNodeRef.current) micGainNodeRef.current.gain.value = micVolume
+  }, [micVolume])
 
   useEffect(() => {
     joinedRef.current = joined
   }, [joined])
 
-  // ==================== 音量电平检测 ====================
+  useEffect(() => {
+    joiningRef.current = joining
+  }, [joining])
 
-  const getLevelFromAnalyser = useCallback((analyser: AnalyserNode): number => {
+  useEffect(() => {
+    micEnabledRef.current = micEnabled
+    workletNodeRef.current?.port.postMessage({ enabled: micEnabled })
+    if (monitorGainRef.current) {
+      monitorGainRef.current.gain.value = micEnabled ? 1 : 0
+    }
+  }, [micEnabled])
+
+  const getLevel = useCallback((analyser: AnalyserNode): number => {
     const data = new Uint8Array(analyser.frequencyBinCount)
     analyser.getByteTimeDomainData(data)
     let sum = 0
-    for (let i = 0; i < data.length; i++) {
-      const v = (data[i] - 128) / 128
-      sum += v * v
+    for (const value of data) {
+      const sample = (value - 128) / 128
+      sum += sample * sample
     }
-    const rms = Math.sqrt(sum / data.length)
-    return Math.min(1, rms * 2.5)
-  }, [])
-
-  const setupLocalAnalyser = useCallback(() => {
-    const stream = localStreamRef.current
-    if (!stream) return
-    try {
-      if (!analyserContextRef.current) {
-        analyserContextRef.current = new AudioContext()
-      }
-      const ctx = analyserContextRef.current
-      const source = ctx.createMediaStreamSource(stream)
-      const analyser = ctx.createAnalyser()
-      analyser.fftSize = 256
-      analyser.smoothingTimeConstant = 0.6
-      source.connect(analyser)
-      localAnalyserRef.current = analyser
-    } catch (err) {
-      console.warn('[voice] setup local analyser error:', err)
-    }
+    return Math.min(1, Math.sqrt(sum / data.length) * 2.5)
   }, [])
 
   const startLevelDetection = useCallback(() => {
-    if (levelRafRef.current) return
-
-    const tick = () => {
-      const levels = new Map<string, number>()
-
-      // 本地电平
+    if (levelTimerRef.current) return
+    let lastPublished = new Map<string, number>()
+    levelTimerRef.current = setInterval(() => {
+      const next = new Map<string, number>()
       if (localAnalyserRef.current && micVolumeRef.current > 0) {
-        const level = getLevelFromAnalyser(localAnalyserRef.current)
-        levels.set('self', micEnabledRef.current ? level : 0)
+        next.set(
+          'self',
+          micEnabledRef.current ? getLevel(localAnalyserRef.current) : 0
+        )
       }
-
-      // 远端电平
       peerStatesRef.current.forEach((state, socketId) => {
-        levels.set(socketId, getLevelFromAnalyser(state.analyser))
+        next.set(socketId, getLevel(state.analyser))
       })
-
-      setAudioLevels(levels)
-      levelRafRef.current = requestAnimationFrame(tick)
-    }
-
-    levelRafRef.current = requestAnimationFrame(tick)
-  }, [getLevelFromAnalyser])
+      let changed = next.size !== lastPublished.size
+      if (!changed) {
+        next.forEach((value, key) => {
+          if (Math.abs(value - (lastPublished.get(key) ?? 0)) > 0.03)
+            changed = true
+        })
+      }
+      if (changed) {
+        lastPublished = next
+        setAudioLevels(next)
+      }
+    }, 80)
+  }, [getLevel])
 
   const stopLevelDetection = useCallback(() => {
-    if (levelRafRef.current) {
-      cancelAnimationFrame(levelRafRef.current)
-      levelRafRef.current = null
-    }
+    if (levelTimerRef.current) clearInterval(levelTimerRef.current)
+    levelTimerRef.current = null
     setAudioLevels(new Map())
   }, [])
 
-  // ==================== 接收端播放 ====================
+  const resetPeerTimeline = useCallback((state: PeerPlaybackState) => {
+    state.pendingSources.forEach((source) => {
+      try {
+        source.stop()
+      } catch {
+        // already ended
+      }
+      try {
+        source.disconnect()
+      } catch {
+        // already disconnected
+      }
+    })
+    state.pendingSources.clear()
+    state.nextStartTime = 0
+  }, [])
 
-  /** 为远端用户创建播放链路（含 Opus 解码器） */
+  const playAudioChunk = useCallback(
+    (
+      socketId: string,
+      generation: number,
+      pcmData: Float32Array,
+      sampleRate: number
+    ) => {
+      if (sampleRate !== VOICE_SAMPLE_RATE || !pcmData.length) return
+      const context = playbackContextRef.current
+      const state = peerStatesRef.current.get(socketId)
+      if (!context || !state || state.generation !== generation) return
+
+      const now = context.currentTime
+      if (
+        state.pendingSources.size >= MAX_PENDING_SOURCES ||
+        state.nextStartTime - now > MAX_PLAYBACK_BACKLOG_SEC ||
+        (state.nextStartTime > 0 && now - state.nextStartTime > 0.3)
+      ) {
+        resetPeerTimeline(state)
+      }
+
+      const buffer = context.createBuffer(
+        VOICE_CHANNELS,
+        pcmData.length,
+        sampleRate
+      )
+      const copy = new Float32Array(pcmData.length)
+      copy.set(pcmData)
+      buffer.copyToChannel(copy, 0)
+      const source = context.createBufferSource()
+      source.buffer = buffer
+      source.connect(state.gainNode)
+      const startTime = Math.max(
+        now + JITTER_BUFFER_DELAY,
+        state.nextStartTime || now + JITTER_BUFFER_DELAY
+      )
+      state.pendingSources.add(source)
+      source.onended = () => {
+        state.pendingSources.delete(source)
+        try {
+          source.disconnect()
+        } catch {
+          // ignore
+        }
+      }
+      source.start(startTime)
+      state.nextStartTime = startTime + buffer.duration
+      state.lastArrivalAt = performance.now()
+    },
+    [resetPeerTimeline]
+  )
+
+  useEffect(() => {
+    playAudioChunkRef.current = playAudioChunk
+  }, [playAudioChunk])
+
+  const createPeerDecoder = useCallback(
+    (socketId: string, generation: number): AudioDecoder | null => {
+      if (!OPUS_SUPPORTED) return null
+      try {
+        return new AudioDecoder({
+          output: (audioData: AudioData) => {
+            try {
+              const state = peerStatesRef.current.get(socketId)
+              if (!state || state.generation !== generation) return
+              const frames = audioData.numberOfFrames
+              let pcm: Float32Array
+              if (audioData.format?.includes('s16')) {
+                const int16 = new Int16Array(frames)
+                audioData.copyTo(int16, { planeIndex: 0 })
+                pcm = int16ToFloat32(int16)
+              } else {
+                pcm = new Float32Array(frames)
+                audioData.copyTo(pcm, { planeIndex: 0 })
+              }
+              playAudioChunkRef.current(
+                socketId,
+                generation,
+                pcm,
+                audioData.sampleRate
+              )
+            } finally {
+              audioData.close()
+            }
+          },
+          error: () => {
+            const state = peerStatesRef.current.get(socketId)
+            if (!state || state.generation !== generation) return
+            state.decoderConfigured = false
+            const now = Date.now()
+            if (now - state.decoderRebuildAt < DECODER_REBUILD_THROTTLE_MS)
+              return
+            state.decoderRebuildAt = now
+            try {
+              state.decoder?.close()
+            } catch {
+              // ignore
+            }
+            state.decoder =
+              createPeerDecoderRef.current(socketId, generation) ?? undefined
+            if (!state.decoder) return
+            const description = state.codecDescription
+            try {
+              state.decoder.configure({
+                codec: 'opus',
+                sampleRate: VOICE_SAMPLE_RATE,
+                numberOfChannels: VOICE_CHANNELS,
+                ...(description ? { description } : {}),
+              })
+              state.decoderConfigured = true
+              state.decoderConfigKey = decoderConfigKey(
+                'opus',
+                VOICE_SAMPLE_RATE,
+                VOICE_CHANNELS,
+                description
+              )
+            } catch {
+              if (!description) {
+                state.decoderConfigured = false
+                return
+              }
+              try {
+                state.decoder.configure({
+                  codec: 'opus',
+                  sampleRate: VOICE_SAMPLE_RATE,
+                  numberOfChannels: VOICE_CHANNELS,
+                })
+                state.codecDescription = undefined
+                state.decoderConfigured = true
+                state.decoderConfigKey = decoderConfigKey(
+                  'opus',
+                  VOICE_SAMPLE_RATE,
+                  VOICE_CHANNELS
+                )
+              } catch {
+                state.decoderConfigured = false
+              }
+            }
+          },
+        })
+      } catch {
+        return null
+      }
+    },
+    []
+  )
+
+  useEffect(() => {
+    createPeerDecoderRef.current = createPeerDecoder
+  }, [createPeerDecoder])
+
   const ensurePeerPlayback = useCallback(
-    (socketId: string): PeerPlaybackState | null => {
-      const ctx = playbackContextRef.current
+    (member: VoiceMember): PeerPlaybackState | null => {
+      const context = playbackContextRef.current
       const master = masterGainRef.current
-      if (!ctx || !master) return null
-
-      let state = peerStatesRef.current.get(socketId)
-      if (state) return state
-
-      const gainNode = ctx.createGain()
-      const peerVolume = peerVolumesRef.current.get(socketId) ?? 1
-      gainNode.gain.value = peerVolume
-
-      const analyser = ctx.createAnalyser()
+      if (!context || !master) return null
+      const existing = peerStatesRef.current.get(member.socketId)
+      if (existing && existing.generation === member.generation) return existing
+      if (existing) {
+        resetPeerTimeline(existing)
+        try {
+          existing.decoder?.close()
+        } catch {
+          // ignore
+        }
+        try {
+          existing.gainNode.disconnect()
+          existing.analyser.disconnect()
+        } catch {
+          // ignore
+        }
+      }
+      const gainNode = context.createGain()
+      gainNode.gain.value = peerVolumesRef.current.get(member.socketId) ?? 1
+      const analyser = context.createAnalyser()
       analyser.fftSize = 256
       analyser.smoothingTimeConstant = 0.6
-
       gainNode.connect(analyser)
       analyser.connect(master)
-
-      state = {
+      const state: PeerPlaybackState = {
+        generation: member.generation,
         gainNode,
         analyser,
         nextStartTime: 0,
-        queueLength: 0,
-        lastReceiveTime: 0,
+        pendingSources: new Set(),
+        pendingPackets: [],
+        pendingPacketBytes: 0,
+        lastArrivalAt: 0,
         lastLatency: 0,
+        decoder:
+          createPeerDecoder(member.socketId, member.generation) ?? undefined,
+        decoderConfigured: false,
+        decoderRebuildAt: 0,
       }
-
-      // Opus 模式下创建解码器
-      if (OPUS_SUPPORTED) {
-        try {
-          const decoder = new AudioDecoder({
-            output: (audioData: AudioData) => {
-              const numFrames = audioData.numberOfFrames
-              let float32: Float32Array
-
-              // 根据 AudioData 格式提取 PCM 数据
-              if (audioData.format === 's16-planar') {
-                const int16 = new Int16Array(numFrames)
-                audioData.copyTo(int16, { planeIndex: 0 })
-                float32 = int16ToFloat32(int16)
-              } else {
-                // f32-planar 或其他格式
-                float32 = new Float32Array(numFrames)
-                audioData.copyTo(float32, { planeIndex: 0 })
-              }
-
-              playAudioChunk(socketId, float32, audioData.sampleRate)
-              audioData.close()
-            },
-            error: (e: DOMException) => {
-              console.error('[voice] AudioDecoder error for', socketId, e)
-            },
-          })
-          state.decoder = decoder as unknown as AudioDecoder
-          state.decoderConfigured = false
-        } catch (err) {
-          console.error('[voice] failed to create AudioDecoder:', err)
-        }
-      }
-
-      peerStatesRef.current.set(socketId, state)
+      peerStatesRef.current.set(member.socketId, state)
       return state
     },
+    [createPeerDecoder, resetPeerTimeline]
+  )
+
+  const flushPendingPackets = useCallback(
+    (socketId: string, state: PeerPlaybackState) => {
+      if (!state.decoder || !state.decoderConfigured) return
+      const pending = state.pendingPackets.splice(0)
+      state.pendingPacketBytes = 0
+      for (const packet of pending) {
+        if (Date.now() - packet.queuedAt > VOICE_MAX_PENDING_AGE_MS) continue
+        try {
+          state.decoder.decode(
+            new EncodedAudioChunk({
+              type: 'key',
+              timestamp: packet.mediaTs ?? packet.timestamp * 1000,
+              data: packet.data,
+            })
+          )
+        } catch {
+          break
+        }
+      }
+      if (!peerStatesRef.current.has(socketId)) return
+    },
     []
   )
 
-  /** 配置远端用户的 Opus 解码器 */
   const configurePeerDecoder = useCallback(
-    (socketId: string, description: ArrayBuffer | null) => {
+    (
+      socketId: string,
+      generation: number,
+      description: ArrayBuffer | null
+    ): boolean => {
+      const member = membersRef.current.get(socketId)
       const state = peerStatesRef.current.get(socketId)
-      if (!state || !state.decoder) return
-
-      try {
-        const config: AudioDecoderConfig = {
-          codec: 'opus',
-          sampleRate: OPUS_SAMPLE_RATE,
-          numberOfChannels: 1,
-        }
-        if (description) {
-          config.description = description
-        }
-        state.decoder.configure(config)
-        state.decoderConfigured = true
-      } catch (err) {
-        console.error('[voice] failed to configure decoder for', socketId, err)
-      }
-    },
-    []
-  )
-
-  /** 播放收到的 PCM 音频块 */
-  const playAudioChunk = useCallback(
-    (socketId: string, pcmData: Float32Array, sampleRate: number) => {
-      const ctx = playbackContextRef.current
-      if (!ctx) return
-      const state = ensurePeerPlayback(socketId)
-      if (!state) return
-
-      state.lastReceiveTime = Date.now()
-
-      // 创建 AudioBuffer
-      const audioBuffer = ctx.createBuffer(1, pcmData.length, sampleRate)
-      // 拷贝到新数组确保 ArrayBuffer 支持（TS 5.7+ 类型要求）
-      const pcm = new Float32Array(pcmData)
-      audioBuffer.copyToChannel(pcm, 0)
-
-      const source = ctx.createBufferSource()
-      source.buffer = audioBuffer
-      source.connect(state.gainNode)
-
-      const now = ctx.currentTime
-      // jitter buffer：第一个块延迟播放，后续块无缝接续
-      const startTime = Math.max(now + JITTER_BUFFER_DELAY, state.nextStartTime)
-      source.start(startTime)
-      state.nextStartTime = startTime + audioBuffer.duration
-      state.queueLength = Math.max(0, state.queueLength - 1)
-
-      // 如果队列积压过多，重置 nextStartTime 以减少延迟
-      if (state.nextStartTime - now > 0.5) {
-        state.nextStartTime = now + JITTER_BUFFER_DELAY
-      }
-    },
-    [ensurePeerPlayback]
-  )
-
-  /** 清理指定远端用户的播放状态（含解码器） */
-  const cleanupPeerPlayback = useCallback((socketId: string) => {
-    const state = peerStatesRef.current.get(socketId)
-    if (state) {
-      // 关闭解码器
-      if (state.decoder) {
+      if (
+        !member ||
+        !state ||
+        state.generation !== generation ||
+        !state.decoder
+      )
+        return false
+      const key = decoderConfigKey(
+        'opus',
+        VOICE_SAMPLE_RATE,
+        VOICE_CHANNELS,
+        description ?? undefined
+      )
+      if (state.decoderConfigured && state.decoderConfigKey === key) return true
+      if (state.decoderConfigured && state.decoderConfigKey !== key) {
+        resetPeerTimeline(state)
         try {
           state.decoder.close()
         } catch {
           // ignore
         }
+        state.decoder = createPeerDecoder(socketId, generation) ?? undefined
+        state.decoderConfigured = false
+      }
+      if (!state.decoder) return false
+      state.codecDescription = description ?? undefined
+      try {
+        state.decoder.configure({
+          codec: 'opus',
+          sampleRate: VOICE_SAMPLE_RATE,
+          numberOfChannels: VOICE_CHANNELS,
+          ...(description ? { description } : {}),
+        })
+        state.decoderConfigured = true
+        state.decoderConfigKey = key
+        flushPendingPackets(socketId, state)
+        return true
+      } catch {
+        // Browser-specific descriptions can be rejected. A known Opus tuple
+        // remains safe to try without description before isolating this peer.
+        if (description) {
+          try {
+            state.decoder.configure({
+              codec: 'opus',
+              sampleRate: VOICE_SAMPLE_RATE,
+              numberOfChannels: VOICE_CHANNELS,
+            })
+            state.decoderConfigured = true
+            state.codecDescription = undefined
+            state.decoderConfigKey = decoderConfigKey(
+              'opus',
+              VOICE_SAMPLE_RATE,
+              VOICE_CHANNELS
+            )
+            flushPendingPackets(socketId, state)
+            return true
+          } catch {
+            // isolate the bad peer decoder; the room stays usable
+          }
+        }
+        state.decoderConfigured = false
+        return false
+      }
+    },
+    [createPeerDecoder, flushPendingPackets, resetPeerTimeline]
+  )
+
+  const cleanupPeerPlayback = useCallback(
+    (socketId: string) => {
+      const state = peerStatesRef.current.get(socketId)
+      if (!state) return
+      resetPeerTimeline(state)
+      state.pendingPackets = []
+      state.pendingPacketBytes = 0
+      try {
+        state.decoder?.close()
+      } catch {
+        // ignore
       }
       try {
         state.gainNode.disconnect()
@@ -453,143 +651,111 @@ export function useVoiceChat(options: UseVoiceChatOptions): UseVoiceChatResult {
         // ignore
       }
       peerStatesRef.current.delete(socketId)
-    }
-  }, [])
-
-  // ==================== 音量控制 ====================
-
-  const applyAudioVolume = useCallback((socketId: string) => {
-    const state = peerStatesRef.current.get(socketId)
-    if (!state) return
-    const peerVolume = peerVolumesRef.current.get(socketId) ?? 1
-    state.gainNode.gain.value = peerVolume
-  }, [])
-
-  // ==================== 监听（反送） ====================
+    },
+    [resetPeerTimeline]
+  )
 
   const stopMonitor = useCallback(() => {
-    const audioEl = localMonitorAudioRef.current
-    if (audioEl) {
-      audioEl.pause()
-      audioEl.srcObject = null
-      audioEl.remove()
-      localMonitorAudioRef.current = null
+    const audio = monitorAudioRef.current
+    if (audio) {
+      audio.pause()
+      audio.srcObject = null
+      audio.remove()
+      monitorAudioRef.current = null
     }
   }, [])
 
   const startMonitor = useCallback(() => {
     const stream = monitorStreamRef.current
     if (!stream) return
-    let audioEl = localMonitorAudioRef.current
-    if (!audioEl) {
-      audioEl = document.createElement('audio')
-      audioEl.autoplay = true
-      audioEl.muted = false
-      audioEl.dataset.voiceMonitor = 'self'
-      document.body.appendChild(audioEl)
-      localMonitorAudioRef.current = audioEl
+    let audio = monitorAudioRef.current
+    if (!audio) {
+      audio = document.createElement('audio')
+      audio.autoplay = true
+      audio.dataset.voiceMonitor = 'self'
+      document.body.appendChild(audio)
+      monitorAudioRef.current = audio
     }
-    if (audioEl.srcObject !== stream) {
-      audioEl.srcObject = stream
+    if (audio.srcObject !== stream) {
+      // The monitor is an intentionally imperative media element owned by this hook.
+      // eslint-disable-next-line react-hooks/immutability
+      audio.srcObject = stream
     }
   }, [])
 
-  // ==================== 清理 ====================
-
   const cleanupAll = useCallback(() => {
-    // 清理远端播放（含解码器）
-    peerStatesRef.current.forEach((_, socketId) => {
-      cleanupPeerPlayback(socketId)
-    })
-    peerStatesRef.current.clear()
-
-    // 停止监听
-    stopMonitor()
-
-    // 停止电平检测
-    stopLevelDetection()
-
-    // 关闭 Opus 编码器
-    if (audioEncoderRef.current) {
-      try {
-        audioEncoderRef.current.close()
-      } catch {
-        // ignore
-      }
-      audioEncoderRef.current = null
+    lifecycleTokenRef.current += 1
+    joinedRef.current = false
+    joiningRef.current = false
+    if (reconnectCleanupTimerRef.current) {
+      clearTimeout(reconnectCleanupTimerRef.current)
+      reconnectCleanupTimerRef.current = null
     }
+    peerStatesRef.current.forEach((_, socketId) =>
+      cleanupPeerPlayback(socketId)
+    )
+    peerStatesRef.current.clear()
+    stopMonitor()
+    stopLevelDetection()
+    try {
+      audioEncoderRef.current?.close()
+    } catch {
+      // ignore
+    }
+    audioEncoderRef.current = null
     codecDescriptionRef.current = null
     encoderTimestampRef.current = 0
-
-    // 停止本地音频采集
-    if (workletNodeRef.current) {
-      try {
-        workletNodeRef.current.port.postMessage({ enabled: false })
-        workletNodeRef.current.disconnect()
-      } catch {
-        // ignore
-      }
-      workletNodeRef.current = null
+    try {
+      workletNodeRef.current?.port.postMessage({ enabled: false })
+      workletNodeRef.current?.disconnect()
+      silenceGainRef.current?.disconnect()
+      micGainNodeRef.current?.disconnect()
+      micSourceRef.current?.disconnect()
+      localAnalyserRef.current?.disconnect()
+      monitorGainRef.current?.disconnect()
+    } catch {
+      // ignore
     }
-    if (silenceGainRef.current) {
-      try {
-        silenceGainRef.current.disconnect()
-      } catch {
-        // ignore
-      }
-      silenceGainRef.current = null
-    }
-    if (micGainNodeRef.current) {
-      try {
-        micGainNodeRef.current.disconnect()
-      } catch {
-        // ignore
-      }
-      micGainNodeRef.current = null
-    }
-
-    // 停止本地流
+    workletNodeRef.current = null
+    silenceGainRef.current = null
+    micGainNodeRef.current = null
+    micSourceRef.current = null
+    localAnalyserRef.current = null
+    monitorGainRef.current = null
     localStreamRef.current?.getTracks().forEach((track) => track.stop())
     localStreamRef.current = null
     monitorStreamRef.current = null
-
-    // 关闭采集 AudioContext
     try {
-      audioContextRef.current?.close()
+      void audioContextRef.current?.close()
+    } catch {
+      // ignore
+    }
+    try {
+      void playbackContextRef.current?.close()
     } catch {
       // ignore
     }
     audioContextRef.current = null
-
-    // 关闭播放 AudioContext
-    try {
-      playbackContextRef.current?.close()
-    } catch {
-      // ignore
-    }
     playbackContextRef.current = null
     masterGainRef.current = null
-
-    // 关闭分析 AudioContext
-    localAnalyserRef.current = null
-    try {
-      analyserContextRef.current?.close()
-    } catch {
-      // ignore
+    if (visibilityHandlerRef.current) {
+      document.removeEventListener(
+        'visibilitychange',
+        visibilityHandlerRef.current
+      )
+      visibilityHandlerRef.current = null
     }
-    analyserContextRef.current = null
-
+    membersRef.current.clear()
     setMembers([])
+    setVoiceMutedBySocket(new Set())
+    setPeerLatencies(new Map())
     setJoined(false)
     setJoining(false)
     setMicEnabled(true)
     setMonitorEnabled(false)
     setMicVolumeState(1)
-    setPeerLatencies(new Map())
-    setAudioLevels(new Map())
-  }, [cleanupPeerPlayback, stopMonitor, stopLevelDetection])
-
-  // ==================== 加入/离开 ====================
+    selfMutedRef.current = false
+  }, [cleanupPeerPlayback, stopLevelDetection, stopMonitor])
 
   const join = useCallback(async () => {
     const currentSocket = socketRef.current
@@ -598,441 +764,632 @@ export function useVoiceChat(options: UseVoiceChatOptions): UseVoiceChatResult {
       message.error('未连接到房间')
       return
     }
-    if (joinedRef.current || joining) return
-
+    if (joinedRef.current || joiningRef.current) return
+    const token = ++lifecycleTokenRef.current
+    joiningRef.current = true
     setJoining(true)
+    const isCurrent = () => token === lifecycleTokenRef.current
     try {
-      // 1. 获取麦克风
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new DOMException('microphone unavailable', 'NotSupportedError')
+      }
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
-          channelCount: 1,
-          sampleRate: OPUS_SAMPLE_RATE,
+          channelCount: VOICE_CHANNELS,
+          sampleRate: VOICE_SAMPLE_RATE,
           sampleSize: 16,
         } as MediaTrackConstraints,
       })
+      if (!isCurrent()) {
+        stream.getTracks().forEach((track) => track.stop())
+        return
+      }
       localStreamRef.current = stream
-
-      stream.getAudioTracks().forEach((track) => {
-        track.enabled = micEnabled
-      })
-
-      // 2. 创建采集 AudioContext + AudioWorklet
-      const captureCtx = new AudioContext()
-      await captureCtx.audioWorklet.addModule('/voice-processor.js')
-
-      const source = captureCtx.createMediaStreamSource(stream)
-      const micGain = captureCtx.createGain()
+      const captureContext = new AudioContext({ sampleRate: VOICE_SAMPLE_RATE })
+      audioContextRef.current = captureContext
+      await captureContext.audioWorklet.addModule('/voice-processor.js')
+      if (!isCurrent()) {
+        await captureContext.close()
+        return
+      }
+      const source = captureContext.createMediaStreamSource(stream)
+      const micGain = captureContext.createGain()
       micGain.gain.value = micVolumeRef.current
-
-      const workletNode = new AudioWorkletNode(captureCtx, 'voice-processor', {
-        processorOptions: { frameSize: FRAME_SIZE },
+      const worklet = new AudioWorkletNode(captureContext, 'voice-processor', {
+        processorOptions: {
+          frameSize: VOICE_FRAME_SAMPLES,
+          outputSampleRate: VOICE_SAMPLE_RATE,
+        },
       })
-
-      // 静音输出节点（AudioWorkletNode 需要连接到 destination 才能持续运行 process）
-      const silenceGain = captureCtx.createGain()
+      const silenceGain = captureContext.createGain()
       silenceGain.gain.value = 0
-
-      // 链路：source → micGain → workletNode → silenceGain → destination
       source.connect(micGain)
-      micGain.connect(workletNode)
-      workletNode.connect(silenceGain)
-      silenceGain.connect(captureCtx.destination)
-
-      // 同时创建反送流（从 micGain 输出）
-      const monitorDestination = captureCtx.createMediaStreamDestination()
-      micGain.connect(monitorDestination)
+      micGain.connect(worklet)
+      worklet.connect(silenceGain)
+      silenceGain.connect(captureContext.destination)
+      const analyser = captureContext.createAnalyser()
+      analyser.fftSize = 256
+      analyser.smoothingTimeConstant = 0.6
+      micGain.connect(analyser)
+      const monitorDestination = captureContext.createMediaStreamDestination()
+      const monitorGain = captureContext.createGain()
+      monitorGain.gain.value = micEnabledRef.current ? 1 : 0
+      micGain.connect(monitorGain)
+      monitorGain.connect(monitorDestination)
+      await captureContext.resume()
+      micSourceRef.current = source
+      micGainNodeRef.current = micGain
+      workletNodeRef.current = worklet
+      silenceGainRef.current = silenceGain
+      localAnalyserRef.current = analyser
+      monitorGainRef.current = monitorGain
       monitorStreamRef.current = monitorDestination.stream
 
-      await captureCtx.resume()
-      audioContextRef.current = captureCtx
-      micGainNodeRef.current = micGain
-      workletNodeRef.current = workletNode
-      silenceGainRef.current = silenceGain
-
-      // 3. Opus 编码器设置（WebCodecs 模式）
       if (OPUS_SUPPORTED) {
-        try {
-          const encoder = new AudioEncoder({
-            output: (
-              chunk: EncodedAudioChunk,
-              metadata: EncodedAudioChunkMetadata
-            ) => {
-              // 处理编解码器配置（description）
-              if (metadata?.decoderConfig?.description) {
-                const descBuf = bufferSourceToArrayBuffer(
-                  metadata.decoderConfig.description as
-                    ArrayBuffer | ArrayBufferView
-                )
-                codecDescriptionRef.current = descBuf
-
-                // 发送编解码器配置给房间内其他成员
+        const encoderConfig = {
+          codec: 'opus',
+          sampleRate: VOICE_SAMPLE_RATE,
+          numberOfChannels: VOICE_CHANNELS,
+          bitrate: OPUS_BITRATE,
+        }
+        const encoderSupport =
+          await AudioEncoder.isConfigSupported?.(encoderConfig)
+        if (encoderSupport && encoderSupport.supported === false) {
+          throw new DOMException(
+            'Opus encoder unsupported',
+            'NotSupportedError'
+          )
+        }
+        const encoder = new AudioEncoder({
+          output: (
+            chunk: EncodedAudioChunk,
+            metadata: EncodedAudioChunkMetadata
+          ) => {
+            if (
+              !joinedRef.current ||
+              selfMutedRef.current ||
+              !currentSocket.connected
+            )
+              return
+            if (metadata?.decoderConfig?.description) {
+              const description = boundedArrayBuffer(
+                metadata.decoderConfig.description
+              )
+              if (
+                description &&
+                (!codecDescriptionRef.current ||
+                  !arrayBufferEquals(codecDescriptionRef.current, description))
+              ) {
+                codecDescriptionRef.current = description
                 currentSocket.emit('voice-codec-config', {
                   roomId: currentRoomId,
-                  description: descBuf,
+                  codec: 'opus',
+                  sampleRate: VOICE_SAMPLE_RATE,
+                  channels: VOICE_CHANNELS,
+                  description,
                 })
               }
-
-              // 拷贝编码后的 Opus 数据
-              const chunkData = new ArrayBuffer(chunk.byteLength)
-              chunk.copyTo(chunkData)
-
-              // 发送编码后的音频
-              currentSocket.emit('voice-audio-data', {
-                roomId: currentRoomId,
-                data: chunkData,
-                timestamp: Date.now(),
-                mediaTs: chunk.timestamp,
-                encoded: true,
-              })
-            },
-            error: (e: DOMException) => {
-              console.error('[voice] AudioEncoder error:', e)
-            },
-          })
-
-          encoder.configure({
-            codec: 'opus',
-            sampleRate: OPUS_SAMPLE_RATE,
-            numberOfChannels: 1,
-            bitrate: OPUS_BITRATE,
-          })
-
-          audioEncoderRef.current = encoder
-          encoderTimestampRef.current = 0
-          console.log('[voice] Opus encoder configured at', OPUS_BITRATE, 'bps')
-        } catch (err) {
-          console.error(
-            '[voice] failed to create AudioEncoder, falling back to PCM:',
-            err
-          )
-          audioEncoderRef.current = null
-        }
+            }
+            const data = new ArrayBuffer(chunk.byteLength)
+            chunk.copyTo(data)
+            if (data.byteLength > VOICE_MAX_PACKET_BYTES) return
+            currentSocket.emit('voice-audio-data', {
+              roomId: currentRoomId,
+              data,
+              codec: 'opus',
+              sampleRate: VOICE_SAMPLE_RATE,
+              channels: VOICE_CHANNELS,
+              frameSamples: VOICE_FRAME_SAMPLES,
+              timestamp: Date.now(),
+              mediaTs: chunk.timestamp,
+              encoded: true,
+            })
+          },
+          error: () => {
+            try {
+              audioEncoderRef.current?.close()
+            } catch {
+              // keep the room alive; the next join can retry encoder setup
+            }
+            audioEncoderRef.current = null
+          },
+        })
+        audioEncoderRef.current = encoder
+        encoder.configure(encoderConfig)
       }
 
-      // 4. AudioWorklet 数据回调 → 编码/发送
-      workletNode.port.onmessage = (e: MessageEvent) => {
-        const arrayBuffer = e.data as ArrayBuffer
-        if (!arrayBuffer || !joinedRef.current || !micEnabledRef.current) return
-
-        const float32 = new Float32Array(arrayBuffer)
-
-        if (OPUS_SUPPORTED && audioEncoderRef.current) {
-          // Opus 模式：创建 AudioData → 编码
+      let frameTimestamp = 0
+      worklet.port.onmessage = (event: MessageEvent) => {
+        const data = event.data as ArrayBuffer
+        if (
+          !isCurrent() ||
+          !joinedRef.current ||
+          !micEnabledRef.current ||
+          selfMutedRef.current ||
+          !currentSocket.connected ||
+          !data ||
+          data.byteLength !==
+            VOICE_FRAME_SAMPLES * Float32Array.BYTES_PER_ELEMENT ||
+          getUplinkBacklogBytes(currentSocket) > 16 * 1024
+        )
+          return
+        const pcm = new Float32Array(data)
+        if (audioEncoderRef.current) {
           try {
             const audioData = new AudioData({
               format: 'f32-planar',
-              sampleRate: captureCtx.sampleRate,
-              numberOfFrames: float32.length,
-              numberOfChannels: 1,
-              timestamp: encoderTimestampRef.current,
-              data: float32,
+              sampleRate: VOICE_SAMPLE_RATE,
+              numberOfFrames: VOICE_FRAME_SAMPLES,
+              numberOfChannels: VOICE_CHANNELS,
+              timestamp: frameTimestamp,
+              data: pcm,
             })
             audioEncoderRef.current.encode(audioData)
             audioData.close()
-            // 递增时间戳（微秒）
-            encoderTimestampRef.current +=
-              (float32.length / captureCtx.sampleRate) * 1_000_000
-          } catch (err) {
-            console.error('[voice] encode error:', err)
+            frameTimestamp += VOICE_FRAME_DURATION_US
+          } catch {
+            // Encoder failures are isolated; server-side packet validation remains.
           }
         } else {
-          // PCM 回退模式：直接发送 Int16 数据
-          const int16 = float32ToInt16(float32)
+          const int16 = float32ToInt16(pcm)
           currentSocket.emit('voice-audio-data', {
             roomId: currentRoomId,
             data: int16.buffer,
-            sampleRate: captureCtx.sampleRate,
+            codec: 'pcm-s16',
+            sampleRate: VOICE_SAMPLE_RATE,
+            channels: VOICE_CHANNELS,
+            frameSamples: VOICE_FRAME_SAMPLES,
             timestamp: Date.now(),
             encoded: false,
           })
         }
       }
 
-      // 5. 创建接收端播放 AudioContext
-      const playbackCtx = new AudioContext()
-      const masterGain = playbackCtx.createGain()
+      const playbackContext = new AudioContext({
+        sampleRate: VOICE_SAMPLE_RATE,
+      })
+      playbackContextRef.current = playbackContext
+      const masterGain = playbackContext.createGain()
       masterGain.gain.value = globalVolumeRef.current
-      masterGain.connect(playbackCtx.destination)
-      await playbackCtx.resume()
-      playbackContextRef.current = playbackCtx
+      masterGain.connect(playbackContext.destination)
+      await playbackContext.resume()
       masterGainRef.current = masterGain
 
-      // 6. 发送 voice-join 到服务器
       const response = await new Promise<
-        | { success: true; members: string[] }
+        | { success: true; members: VoiceMember[]; selfMuted?: boolean }
         | { success: false; message: string }
       >((resolve) => {
+        let settled = false
+        const timer = setTimeout(() => {
+          if (!settled) {
+            settled = true
+            resolve({ success: false, message: '加入语音超时' })
+          }
+        }, 10_000)
         currentSocket.emit(
           'voice-join',
-          { roomId: currentRoomId },
-          (
-            res:
-              | { success: true; members: string[] }
-              | { success: false; message: string }
-          ) => resolve(res)
+          { roomId: currentRoomId, username },
+          (result: {
+            success: boolean
+            members?: VoiceMember[]
+            selfMuted?: boolean
+            message?: string
+          }) => {
+            if (settled) return
+            settled = true
+            clearTimeout(timer)
+            if (result.success && result.members) {
+              resolve({
+                success: true,
+                members: result.members,
+                selfMuted: result.selfMuted,
+              })
+            } else {
+              resolve({
+                success: false,
+                message: result.message ?? '加入语音失败',
+              })
+            }
+          }
         )
       })
-
-      if ('message' in response) {
-        message.error(response.message ?? '加入语音聊天失败')
-        stream.getTracks().forEach((track) => track.stop())
-        localStreamRef.current = null
-        setJoining(false)
+      if (!isCurrent()) return
+      if (!response.success) {
+        if (!reconnectingRef.current) {
+          message.error(
+            'message' in response ? response.message : '加入语音失败'
+          )
+        }
+        cleanupAll()
         return
       }
-
-      setJoined(true)
-      setJoining(false)
-
-      const currentSocketId = currentSocket.id
-      const initialMembers: VoiceMember[] = response.members.map((id) => ({
-        socketId: id,
-        username: id.slice(0, 6),
-      }))
-      if (currentSocketId) {
-        initialMembers.unshift({ socketId: currentSocketId, username })
+      const nextMembers = [...response.members]
+      if (currentSocket.id) {
+        nextMembers.unshift({
+          identity: 'self',
+          socketId: currentSocket.id,
+          userId: null,
+          username,
+          generation: 0,
+        })
       }
-      setMembers(initialMembers)
-
-      // 为已有成员创建播放链路
-      response.members.forEach((id) => {
-        ensurePeerPlayback(id)
+      membersRef.current = new Map(
+        nextMembers.map((member) => [member.socketId, member])
+      )
+      setMembers(nextMembers)
+      selfMutedRef.current = response.selfMuted === true
+      setVoiceMutedBySocket(
+        new Set(
+          nextMembers
+            .filter((member) => member.muted)
+            .map((member) => member.socketId)
+        )
+      )
+      nextMembers.forEach((member) => {
+        if (member.socketId !== currentSocket.id) ensurePeerPlayback(member)
       })
-
-      // 启动电平检测
-      setupLocalAnalyser()
-      startLevelDetection()
-    } catch (err) {
-      console.error('[voice] join error:', err)
-      message.error('无法获取麦克风权限或加入语音失败')
-      localStreamRef.current?.getTracks().forEach((track) => track.stop())
-      localStreamRef.current = null
+      setJoined(true)
+      joinedRef.current = true
+      joiningRef.current = false
       setJoining(false)
+      startLevelDetection()
+      const onVisibility = () => {
+        if (document.visibilityState !== 'visible') return
+        ;[audioContextRef.current, playbackContextRef.current].forEach(
+          (context) => {
+            if (context?.state === 'suspended')
+              void context.resume().catch(() => {})
+          }
+        )
+      }
+      visibilityHandlerRef.current = onVisibility
+      document.addEventListener('visibilitychange', onVisibility)
+    } catch (error) {
+      if (isCurrent()) {
+        const name = (error as { name?: string })?.name
+        if (reconnectingRef.current) {
+          // A reconnect can race the room module's own room rejoin. The caller
+          // retries with a bounded backoff; do not flash a permission toast for
+          // an intermediate attempt.
+        } else if (
+          name === 'NotAllowedError' ||
+          name === 'PermissionDeniedError'
+        ) {
+          message.error('麦克风权限被拒绝，请允许权限后重试')
+        } else if (
+          name === 'NotFoundError' ||
+          name === 'DevicesNotFoundError'
+        ) {
+          message.error('未找到可用的麦克风设备')
+        } else {
+          message.error('加入语音失败，请稍后重试')
+        }
+      }
+      cleanupAll()
     }
-  }, [
-    joining,
-    micEnabled,
-    username,
-    ensurePeerPlayback,
-    setupLocalAnalyser,
-    startLevelDetection,
-  ])
+  }, [cleanupAll, ensurePeerPlayback, startLevelDetection, username])
 
   const leave = useCallback(() => {
     const currentSocket = socketRef.current
     const currentRoomId = roomIdRef.current
-    if (currentSocket && currentRoomId) {
+    const wasActive = joinedRef.current || joiningRef.current
+    if (wasActive && currentSocket && currentRoomId) {
       currentSocket.emit('voice-leave', { roomId: currentRoomId })
     }
     cleanupAll()
   }, [cleanupAll])
 
-  // ==================== 控制方法 ====================
-
-  const toggleMic = useCallback(() => {
-    setMicEnabled((prev) => !prev)
-  }, [])
+  const toggleMic = useCallback(() => setMicEnabled((value) => !value), [])
 
   const toggleMonitor = useCallback(() => {
-    setMonitorEnabled((prev) => {
-      const next = !prev
-      if (next) {
-        startMonitor()
-      } else {
-        stopMonitor()
-      }
+    setMonitorEnabled((value) => {
+      const next = !value
+      if (next) startMonitor()
+      else stopMonitor()
       return next
     })
   }, [startMonitor, stopMonitor])
 
   useEffect(() => {
-    if (!joined) return
-    if (monitorEnabled) {
-      startMonitor()
-    } else {
-      stopMonitor()
-    }
+    if (joined && monitorEnabled) startMonitor()
+    if (!monitorEnabled) stopMonitor()
   }, [joined, monitorEnabled, startMonitor, stopMonitor])
 
   const setMicVolume = useCallback((value: number) => {
-    const clamped = Math.max(0, Math.min(1, value))
-    setMicVolumeState(clamped)
-    micVolumeRef.current = clamped
-    if (micGainNodeRef.current) {
-      micGainNodeRef.current.gain.value = clamped
-    }
+    const next = Math.max(0, Math.min(1, value))
+    setMicVolumeState(next)
+    micVolumeRef.current = next
+    if (micGainNodeRef.current) micGainNodeRef.current.gain.value = next
   }, [])
 
   const setGlobalVolume = useCallback((value: number) => {
-    const clamped = Math.max(0, Math.min(1, value))
-    setGlobalVolumeState(clamped)
-    globalVolumeRef.current = clamped
-    if (masterGainRef.current) {
-      masterGainRef.current.gain.value = clamped
-    }
+    const next = Math.max(0, Math.min(1, value))
+    setGlobalVolumeState(next)
+    globalVolumeRef.current = next
+    if (masterGainRef.current) masterGainRef.current.gain.value = next
   }, [])
 
-  const setPeerVolume = useCallback(
-    (socketId: string, value: number) => {
-      const clamped = Math.max(0, Math.min(1, value))
-      setPeerVolumes((prev) => {
-        const next = new Map(prev)
-        next.set(socketId, clamped)
-        return next
-      })
-      peerVolumesRef.current.set(socketId, clamped)
-      applyAudioVolume(socketId)
-    },
-    [applyAudioVolume]
-  )
-
-  // ==================== 延迟检测 ====================
+  const setPeerVolume = useCallback((socketId: string, value: number) => {
+    const nextValue = Math.max(0, Math.min(1, value))
+    setPeerVolumes((previous) => {
+      const next = new Map(previous)
+      next.set(socketId, nextValue)
+      return next
+    })
+    peerVolumesRef.current.set(socketId, nextValue)
+    const state = peerStatesRef.current.get(socketId)
+    if (state) state.gainNode.gain.value = nextValue
+  }, [])
 
   useEffect(() => {
     if (!joined) return
     const timer = setInterval(() => {
+      const context = playbackContextRef.current
+      if (!context) return
+      const now = context.currentTime
       const next = new Map<string, number>()
       peerStatesRef.current.forEach((state, socketId) => {
-        if (state.lastLatency > 0) {
-          next.set(socketId, state.lastLatency)
+        if (state.nextStartTime > 0) {
+          next.set(
+            socketId,
+            Math.max(0, Math.round((state.nextStartTime - now) * 1000))
+          )
         }
       })
       setPeerLatencies(next)
-    }, 2000)
+    }, 2_000)
     return () => clearInterval(timer)
   }, [joined])
 
-  // ==================== Socket 事件监听 ====================
-
-  /** 处理收到的编解码器配置 */
   const handleVoiceCodecConfig = useCallback(
-    (payload: { from: string; description: ArrayBuffer }) => {
-      if (!joinedRef.current) return
-      if (payload.from === socketRef.current?.id) return
-
-      // 确保播放链路存在
-      ensurePeerPlayback(payload.from)
-      // 配置解码器
-      configurePeerDecoder(payload.from, payload.description)
+    (payload: VoiceCodecPayload) => {
+      if (
+        !joinedRef.current ||
+        !isBoundedVoicePacket(payload.description) ||
+        payload.codec !== 'opus' ||
+        payload.sampleRate !== VOICE_SAMPLE_RATE ||
+        payload.channels !== VOICE_CHANNELS
+      )
+        return
+      const member = membersRef.current.get(payload.from)
+      if (
+        !member ||
+        member.socketId === socketRef.current?.id ||
+        payload.generation !== member.generation
+      )
+        return
+      const description = boundedArrayBuffer(payload.description)
+      if (!description) return
+      const state = ensurePeerPlayback(member)
+      if (state)
+        configurePeerDecoder(member.socketId, member.generation, description)
     },
-    [ensurePeerPlayback, configurePeerDecoder]
+    [configurePeerDecoder, ensurePeerPlayback]
   )
 
-  /** 处理收到的音频数据（Opus 编码或 PCM 回退） */
   const handleVoiceAudioData = useCallback(
-    (payload: {
-      from: string
-      data: ArrayBuffer
-      sampleRate?: number
-      timestamp: number
-      mediaTs?: number
-      encoded?: boolean
-    }) => {
-      if (!joinedRef.current) return
-      if (payload.from === socketRef.current?.id) return
-
-      // 计算延迟（客户端时钟差，仅作参考）
-      const latency = Date.now() - payload.timestamp
-      const state = peerStatesRef.current.get(payload.from)
-      if (state) {
-        state.lastLatency = Math.max(0, latency)
-      }
-
-      if (payload.encoded && OPUS_SUPPORTED) {
-        // Opus 模式：解码后播放
-        const peerState = ensurePeerPlayback(payload.from)
-        if (!peerState?.decoder) return
-
-        // 如果解码器尚未配置，尝试无 description 配置
-        if (!peerState.decoderConfigured) {
-          configurePeerDecoder(payload.from, codecDescriptionRef.current)
-        }
-
-        try {
-          const encodedChunk = new EncodedAudioChunk({
-            type: 'key',
-            timestamp: payload.mediaTs ?? payload.timestamp * 1000,
-            data: payload.data,
-          })
-          peerState.decoder.decode(encodedChunk)
-        } catch (err) {
-          console.error('[voice] decode error:', err)
-        }
-      } else {
-        // PCM 回退模式：直接播放
-        const int16 = new Int16Array(payload.data)
-        const float32 = int16ToFloat32(int16)
-        playAudioChunk(
-          payload.from,
-          float32,
-          payload.sampleRate ?? OPUS_SAMPLE_RATE
+    (payload: VoicePacketPayload) => {
+      if (!joinedRef.current || payload.from === socketRef.current?.id) return
+      const member = membersRef.current.get(payload.from)
+      if (
+        !member ||
+        payload.generation !== member.generation ||
+        payload.sampleRate !== VOICE_SAMPLE_RATE ||
+        payload.channels !== VOICE_CHANNELS ||
+        !Number.isFinite(payload.timestamp) ||
+        (payload.mediaTs !== undefined && !Number.isFinite(payload.mediaTs))
+      )
+        return
+      const data = boundedArrayBuffer(payload.data)
+      if (
+        !data ||
+        data.byteLength === 0 ||
+        data.byteLength > VOICE_MAX_PACKET_BYTES
+      )
+        return
+      const state = ensurePeerPlayback(member)
+      if (!state) return
+      state.lastLatency = Math.max(0, Date.now() - payload.timestamp)
+      if (payload.encoded) {
+        if (
+          payload.codec !== 'opus' ||
+          payload.frameSamples !== VOICE_FRAME_SAMPLES ||
+          !state.decoder
         )
+          return
+        if (
+          !state.decoderConfigured &&
+          !configurePeerDecoder(member.socketId, member.generation, null)
+        ) {
+          state.pendingPackets.push({
+            data,
+            timestamp: payload.timestamp,
+            mediaTs: payload.mediaTs,
+            queuedAt: Date.now(),
+          })
+          state.pendingPacketBytes += data.byteLength
+          while (
+            state.pendingPackets.length > VOICE_MAX_PENDING_PACKETS ||
+            state.pendingPacketBytes > VOICE_MAX_PENDING_BYTES
+          ) {
+            const removed = state.pendingPackets.shift()
+            if (!removed) break
+            state.pendingPacketBytes -= removed.data.byteLength
+          }
+          return
+        }
+        try {
+          state.decoder.decode(
+            new EncodedAudioChunk({
+              type: 'key',
+              timestamp: payload.mediaTs ?? payload.timestamp * 1000,
+              data,
+            })
+          )
+        } catch {
+          state.decoderConfigured = false
+        }
+        return
       }
+      if (payload.codec !== 'pcm-s16' || data.byteLength % 2 !== 0) return
+      playAudioChunk(
+        member.socketId,
+        member.generation,
+        int16ToFloat32(new Int16Array(data)),
+        VOICE_SAMPLE_RATE
+      )
     },
-    [ensurePeerPlayback, configurePeerDecoder, playAudioChunk]
+    [configurePeerDecoder, ensurePeerPlayback, playAudioChunk]
   )
 
   const handleVoiceUserJoined = useCallback(
-    (payload: { socketId: string }) => {
-      const currentSocketId = socketRef.current?.id
-      const currentRoomId = roomIdRef.current
-      const currentSocket = socketRef.current
-      if (!currentSocketId || payload.socketId === currentSocketId) return
-
-      setMembers((prev) => {
-        if (prev.some((m) => m.socketId === payload.socketId)) return prev
-        return [
-          ...prev,
-          {
-            socketId: payload.socketId,
-            username: payload.socketId.slice(0, 6),
-          },
-        ]
+    (payload: VoiceMember) => {
+      if (!joinedRef.current || payload.socketId === socketRef.current?.id)
+        return
+      const previous = membersRef.current.get(payload.socketId)
+      if (previous?.generation === payload.generation) return
+      const previousIdentity = [...membersRef.current.entries()].find(
+        ([, member]) => member.identity === payload.identity
+      )
+      if (previousIdentity) {
+        const [previousSocketId, previousMember] = previousIdentity
+        if (previousMember.generation >= payload.generation) return
+        membersRef.current.delete(previousSocketId)
+        cleanupPeerPlayback(previousSocketId)
+      }
+      membersRef.current.set(payload.socketId, payload)
+      setMembers((current) => {
+        const withoutIdentity = current.filter(
+          (member) =>
+            member.identity !== payload.identity &&
+            member.socketId !== payload.socketId
+        )
+        return [...withoutIdentity, payload]
       })
-
-      // 为新成员创建播放链路
-      ensurePeerPlayback(payload.socketId)
-
-      // 新成员加入时，重新发送编解码器配置
-      if (
-        OPUS_SUPPORTED &&
-        codecDescriptionRef.current &&
-        currentSocket &&
-        currentRoomId
-      ) {
-        currentSocket.emit('voice-codec-config', {
-          roomId: currentRoomId,
+      ensurePeerPlayback(payload)
+      if (OPUS_SUPPORTED && codecDescriptionRef.current && roomIdRef.current) {
+        socketRef.current?.emit('voice-codec-config', {
+          roomId: roomIdRef.current,
+          codec: 'opus',
+          sampleRate: VOICE_SAMPLE_RATE,
+          channels: VOICE_CHANNELS,
           description: codecDescriptionRef.current,
         })
       }
     },
-    [ensurePeerPlayback]
+    [cleanupPeerPlayback, ensurePeerPlayback]
   )
 
   const handleVoiceUserLeft = useCallback(
-    (payload: { socketId: string }) => {
+    (payload: VoiceMember) => {
+      const current = membersRef.current.get(payload.socketId)
+      if (current && current.generation !== payload.generation) return
+      membersRef.current.delete(payload.socketId)
       cleanupPeerPlayback(payload.socketId)
-      setMembers((prev) => prev.filter((m) => m.socketId !== payload.socketId))
+      setMembers((previous) =>
+        previous.filter((member) => member.socketId !== payload.socketId)
+      )
+      setVoiceMutedBySocket((previous) => {
+        const next = new Set(previous)
+        next.delete(payload.socketId)
+        return next
+      })
     },
     [cleanupPeerPlayback]
   )
 
+  const handleVoiceMutedChanged = useCallback(
+    (payload: {
+      socketId: string
+      identity?: string
+      generation: number
+      muted: boolean
+    }) => {
+      const member = membersRef.current.get(payload.socketId)
+      const isSelf = payload.socketId === socketRef.current?.id
+      if (!member || (!isSelf && member.generation !== payload.generation))
+        return
+      if (isSelf && member.generation !== payload.generation) {
+        const updated = {
+          ...member,
+          identity: payload.identity ?? member.identity,
+          generation: payload.generation,
+        }
+        membersRef.current.set(payload.socketId, updated)
+        setMembers((current) =>
+          current.map((item) =>
+            item.socketId === payload.socketId ? updated : item
+          )
+        )
+      }
+      setVoiceMutedBySocket((previous) => {
+        const next = new Set(previous)
+        if (payload.muted) next.add(payload.socketId)
+        else next.delete(payload.socketId)
+        return next
+      })
+      if (payload.socketId === socketRef.current?.id) {
+        selfMutedRef.current = payload.muted
+        message[payload.muted ? 'warning' : 'success'](
+          payload.muted ? '您已被管理员语音禁言' : '语音禁言已解除'
+        )
+      }
+    },
+    []
+  )
+
+  const handleVoiceKicked = useCallback(
+    (payload: { roomId?: string }) => {
+      if (payload.roomId && payload.roomId !== roomIdRef.current) return
+      message.error('您已被管理员移出语音')
+      leave()
+    },
+    [leave]
+  )
+
+  const emitModeration = useCallback(
+    (event: 'voice-mute' | 'voice-unmute' | 'voice-kick', socketId: string) => {
+      const currentSocket = socketRef.current
+      const currentRoomId = roomIdRef.current
+      if (!currentSocket || !currentRoomId) {
+        return Promise.resolve({ success: false, message: '未连接' })
+      }
+      return new Promise<{ success: boolean; message?: string }>((resolve) => {
+        currentSocket.emit(
+          event,
+          {
+            roomId: currentRoomId,
+            socketId,
+            ...(event !== 'voice-kick'
+              ? { muted: event === 'voice-mute' }
+              : {}),
+          },
+          (response: { success: boolean; message?: string }) =>
+            resolve(response ?? { success: false, message: '操作失败' })
+        )
+      })
+    },
+    []
+  )
+
   useEffect(() => {
     if (!socket) return
-
     socket.on('voice-audio-data', handleVoiceAudioData)
     socket.on('voice-codec-config', handleVoiceCodecConfig)
     socket.on('voice-user-joined', handleVoiceUserJoined)
     socket.on('voice-user-left', handleVoiceUserLeft)
-
+    socket.on('voice-muted-changed', handleVoiceMutedChanged)
+    socket.on('voice-kicked', handleVoiceKicked)
     return () => {
       socket.off('voice-audio-data', handleVoiceAudioData)
       socket.off('voice-codec-config', handleVoiceCodecConfig)
       socket.off('voice-user-joined', handleVoiceUserJoined)
       socket.off('voice-user-left', handleVoiceUserLeft)
+      socket.off('voice-muted-changed', handleVoiceMutedChanged)
+      socket.off('voice-kicked', handleVoiceKicked)
     }
   }, [
     socket,
@@ -1040,14 +1397,54 @@ export function useVoiceChat(options: UseVoiceChatOptions): UseVoiceChatResult {
     handleVoiceCodecConfig,
     handleVoiceUserJoined,
     handleVoiceUserLeft,
+    handleVoiceMutedChanged,
+    handleVoiceKicked,
   ])
 
-  // 组件卸载或房间变化时自动离开
+  useEffect(() => {
+    if (!socket) return
+    const onDisconnect = () => {
+      if (!joinedRef.current) return
+      if (reconnectCleanupTimerRef.current)
+        clearTimeout(reconnectCleanupTimerRef.current)
+      reconnectCleanupTimerRef.current = setTimeout(() => {
+        if (!socket.connected && joinedRef.current) {
+          leave()
+        }
+      }, 15_000)
+    }
+    const onConnect = () => {
+      if (!joinedRef.current || reconnectingRef.current) return
+      reconnectingRef.current = true
+      // Rejoin from a clean local lifecycle. Room modules may still be
+      // restoring their Socket.IO room membership on this same connect event,
+      // so use a short bounded retry window instead of racing the first ack.
+      void (async () => {
+        cleanupAll()
+        for (const delayMs of [150, 300, 600, 1000]) {
+          if (!socket.connected) return
+          await new Promise((resolve) => setTimeout(resolve, delayMs))
+          if (!socket.connected) return
+          await join()
+          if (joinedRef.current) return
+        }
+      })().finally(() => {
+        reconnectingRef.current = false
+      })
+    }
+    socket.on('disconnect', onDisconnect)
+    socket.on('connect', onConnect)
+    return () => {
+      socket.off('disconnect', onDisconnect)
+      socket.off('connect', onConnect)
+      if (reconnectCleanupTimerRef.current)
+        clearTimeout(reconnectCleanupTimerRef.current)
+    }
+  }, [cleanupAll, join, leave, socket])
+
   useEffect(() => {
     return () => {
-      if (joinedRef.current) {
-        leave()
-      }
+      if (joinedRef.current || joiningRef.current) leave()
     }
   }, [leave])
 
@@ -1069,5 +1466,9 @@ export function useVoiceChat(options: UseVoiceChatOptions): UseVoiceChatResult {
     micVolume,
     setMicVolume,
     audioLevels,
+    voiceMutedBySocket,
+    muteVoiceMember: (socketId, muted) =>
+      emitModeration(muted ? 'voice-mute' : 'voice-unmute', socketId),
+    kickVoiceMember: (socketId) => emitModeration('voice-kick', socketId),
   }
 }

@@ -4,7 +4,7 @@
 
 This file is the persistent checkpoint for the TongMu V2 integration program. Phase 0 is an audit and design phase only: no product code, dependency, database, configuration, CI, or reference source was changed.
 
-Current state: **Phase 2, Phase 3A, Phase 3B, and Phase 4A are complete within their approved boundaries. Phase 4B Voice, Phase 5, and the Phase 6 migration/release gate remain open.**
+Current state: **Phase 2, Phase 3A, Phase 3B, Phase 4A, and Phase 4B Voice are complete within their approved boundaries. Phase 5 and the Phase 6 migration/release gate remain open.**
 
 Phase 2 has a working core checkpoint: the versioned client profile, server
 viability filter, client-owned planner path, provider contract/registry, and
@@ -80,8 +80,8 @@ to do that work safely.
 2. Live publishing/ingest lifecycle (RTMP/WHIP/WHEP) remains outside public HLS/HTTP-FLV source convergence and is explicitly deferred.
 3. Phase 3A's typed DASH mapper covers `SegmentBase`, representation indexes, bitstream-switching resources, `Location`, xlink, timing URLs, and bounded recursion in unit/backend tests; nested fixture MPD playback is covered by the completed Chromium suite.
 4. Realtime video and future music synchronization do not yet share a documented `RealtimeSyncCore`; sequence, generation, reconnect, host loss, request/ack, and stale-event rules are duplicated or incomplete.
-5. Voice lifecycle and identity handling are weaker than the current ZViewer implementation, especially 48 kHz/frame consistency, same-user replacement, ghost cleanup, pending-source disposal, and moderator/root invariants.
-6. Phase 4A player/subtitle lifetime hardening is complete within its scoped boundary; Voice identity, reconnect, decoder, ghost, and moderation work remains Phase 4B.
+5. Voice lifecycle, identity, reconnect replacement, decoder ownership, ghost cleanup, and voice-local moderation are implemented in Phase 4B; full room permission convergence remains Phase 5.
+6. Phase 4A player/subtitle lifetime hardening and Phase 4B Voice are complete within their scoped boundaries.
 7. Release artifacts still retain historical ZViewer-era names for compatibility; full TongMu renaming, checksum/signature verification, staged extraction, and rollback remain Phase 6 work.
 8. Third-party provenance is incomplete for fonts, images, icons, wasm/binaries, bundled JavaScript, and media fixtures. Upstream assets must not be copied until license and attribution are recorded.
 9. Docker and ffmpeg are unavailable on this host, so browser-enabled container and transcoding-specific validation remain environment-dependent.
@@ -104,7 +104,7 @@ to do that work safely.
 - [x] Phase 2 — Media Core + Provider convergence.
 - [x] Phase 3 — Manifest / Proxy / Slice Cache.
 - [x] Phase 4A — Player / Subtitle lifecycle.
-- [ ] Phase 4B — Voice lifecycle / identity / moderation.
+- [x] Phase 4B — Voice lifecycle / identity / moderation.
 - [ ] Phase 5 — `RealtimeSyncCore` / Permissions / Together Listen.
 - [ ] Phase 6 — Historical migrations / Packaging / CI / Observability / release gate.
 
@@ -384,7 +384,21 @@ Verification on 2026-09-15: Backend 98 PASS / 1 Windows symlink environment
 SKIP; Frontend 14/14 PASS; backend/frontend builds PASS; Chromium media 21 PASS
 / 1 intentional cache-gate SKIP in the default run, including 3 new Phase 4A
 browser cases; Phase 3B cache enabled 1/1 PASS; cache disabled 1/1 PASS.
-The full Phase 4B Voice scope remains planned and is not implied by this status.
+
+### Phase 4B Voice final status
+
+**COMPLETE within the voice-local boundary.** Logged-in members use stable user
+identity with guest socket identities, same-user replacement is generation-safe,
+audio is bounded to the 48 kHz/960-sample contract, decoder and scheduled-source
+lifetimes are isolated per peer, join/reconnect/leave cleanup is idempotent, and
+the backend enforces ghost cleanup plus host/moderator mute/kick protections.
+Full room permission convergence, host transfer, and RealtimeSyncCore remain
+Phase 5 work.
+
+Verification on 2026-09-15: Backend 102 PASS / 1 Windows symlink environment
+SKIP; Frontend 18/18 PASS; frontend lint/build and backend lint PASS; the
+fake-media Chromium voice join/reconnect/leave/unmount gate is included in the
+final browser regression below.
 
 ### Phase 2 closure audit
 
