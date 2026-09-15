@@ -155,6 +155,7 @@ function toPlayerSource(
 ): PlayerSource {
   const source: PlayerSource = {
     url: stripMediaGatewayAuth(state.sourceUrl),
+    sourceGeneration: state.sourceGeneration,
     audioUrl: state.audioUrl ? stripMediaGatewayAuth(state.audioUrl) : state.audioUrl,
     format: state.format,
     videoCodec: state.videoCodec,
@@ -327,10 +328,15 @@ export function useVideoSource({
         }
       }
 
-      await attachSource(
-        video,
-        toPlayerSource(effectiveState, startTime, blobs)
-      )
+      suppressEventsRef.current = true
+      try {
+        await attachSource(
+          video,
+          toPlayerSource(effectiveState, startTime, blobs)
+        )
+      } finally {
+        suppressEventsRef.current = false
+      }
     },
     [attachSource, isHostRef]
   )

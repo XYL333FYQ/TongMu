@@ -32,6 +32,8 @@ export type VideoFormat = MediaFormat
  * store / hooks / components 均从此处导入。
  */
 export interface WatchTogetherState {
+  /** Monotonically increasing media source generation owned by the host. */
+  sourceGeneration?: number
   sourceUrl: string
   sourceType: SourceType
   audioUrl?: string

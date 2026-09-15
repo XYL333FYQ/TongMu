@@ -30,6 +30,43 @@ export interface ParsedCue {
   align?: 'left' | 'center' | 'right'
 }
 
+/** Escape subtitle text before it enters the HTML overlay. */
+export function escapeSubtitleText(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+/** Stable cue identity: track + time range + text, never start time alone. */
+export function subtitleCueIdentity(
+  cue: Pick<ParsedCue, 'start' | 'end' | 'text'>,
+  trackId = ''
+): string {
+  const normalize = (value: number) => Math.round(value * 1000)
+  return JSON.stringify([
+    trackId,
+    normalize(cue.start),
+    normalize(cue.end),
+    cue.text.replace(/\s+/g, ' ').trim(),
+  ])
+}
+
+export function dedupeSubtitleCues(
+  cues: ParsedCue[],
+  trackId = ''
+): ParsedCue[] {
+  const seen = new Set<string>()
+  return cues.filter((cue) => {
+    const key = subtitleCueIdentity(cue, trackId)
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
 // ── 格式检测 ──────────────────────────────────────────────
 
 /** 从文件扩展名推断格式 */
@@ -55,7 +92,7 @@ export function detectFormatFromExtension(filename: string): SubtitleFormat {
 
 /** 从内容特征推断格式（当扩展名无法判断时使用） */
 export function detectFormatFromContent(content: string): SubtitleFormat {
-  const trimmed = content.trim()
+  const trimmed = content.replace(/^\uFEFF/, '').trim()
   if (trimmed.startsWith('WEBVTT')) return 'vtt'
   if (/^\[Script Info\]/i.test(trimmed) || /^\[Events\]/i.test(trimmed))
     return 'ass'
@@ -81,15 +118,20 @@ export function detectFormat(
 
 /** 解析 SRT/VTT 时间码 HH:MM:SS,mmm 或 HH:MM:SS.mmm → 秒 */
 function parseTime(timeStr: string): number {
-  const match = timeStr.match(/(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})/)
-  if (!match) return 0
-  const [, h, m, s, ms] = match
-  return (
-    parseInt(h) * 3600 +
-    parseInt(m) * 60 +
-    parseInt(s) +
-    parseInt(ms.padEnd(3, '0')) / 1000
-  )
+  const long = timeStr.match(/(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})/)
+  if (long) {
+    const [, h, m, s, ms] = long
+    return (
+      parseInt(h) * 3600 +
+      parseInt(m) * 60 +
+      parseInt(s) +
+      parseInt(ms.padEnd(3, '0')) / 1000
+    )
+  }
+  const short = timeStr.match(/(\d{1,3}):(\d{2})[,.](\d{1,3})/)
+  if (!short) return 0
+  const [, m, s, ms] = short
+  return parseInt(m) * 60 + parseInt(s) + parseInt(ms.padEnd(3, '0')) / 1000
 }
 
 /** 解析 ASS/SSA 时间码 H:MM:SS.CS（百分秒）→ 秒 */
@@ -133,8 +175,8 @@ function parseSrt(content: string): ParsedCue[] {
       .join('\n')
       .trim()
 
-    if (text) {
-      cues.push({ start, end, text })
+    if (text && end > start) {
+      cues.push({ start, end, text: escapeSubtitleText(text) })
     }
   }
 
@@ -207,8 +249,8 @@ function parseVtt(content: string): ParsedCue[] {
       .join('\n')
       .trim()
 
-    if (text) {
-      cues.push({ start, end, text, ...settings })
+    if (text && end > start) {
+      cues.push({ start, end, text: escapeSubtitleText(text), ...settings })
     }
   }
 
@@ -367,7 +409,7 @@ function cleanAssText(text: string): string {
       result += '\u00A0'
       i += 2
     } else {
-      result += text[i]
+      result += escapeSubtitleText(text[i])
       i++
     }
   }
@@ -526,8 +568,12 @@ function parseSmi(content: string): ParsedCue[] {
       .replace(/&#39;/g, "'")
     text = text.trim()
 
-    if (text) {
-      cues.push({ start: current.start, end, text })
+    if (text && end > current.start) {
+      cues.push({
+        start: current.start,
+        end,
+        text: escapeSubtitleText(text),
+      })
     }
   }
 
@@ -564,13 +610,23 @@ function parseSub(content: string): ParsedCue[] {
 
 /** 清理 MicroDVD 文本中的控制字符 */
 function cleanSubText(text: string): string {
+  const tokens: Record<string, string> = {
+    '\u0001b': '<b>',
+    '\u0001i': '<i>',
+    '\u0001u': '<u>',
+    '\u0001s': '<s>',
+  }
   let result = text
-  result = result.replace(/\{y:b\}/gi, '<b>')
-  result = result.replace(/\{y:i\}/gi, '<i>')
-  result = result.replace(/\{y:u\}/gi, '<u>')
-  result = result.replace(/\{y:s\}/gi, '<s>')
-  result = result.replace(/\{[^}]*\}/g, '')
-  result = result.replace(/\|/g, '\n')
+    .replace(/\{y:b\}/gi, '\u0001b')
+    .replace(/\{y:i\}/gi, '\u0001i')
+    .replace(/\{y:u\}/gi, '\u0001u')
+    .replace(/\{y:s\}/gi, '\u0001s')
+    .replace(/\{[^}]*\}/g, '')
+    .replace(/\|/g, '\n')
+  result = escapeSubtitleText(result)
+  for (const [token, tag] of Object.entries(tokens)) {
+    result = result.replaceAll(token, tag)
+  }
   return result.trim()
 }
 
@@ -590,23 +646,24 @@ export function parseSubtitle(
   content: string,
   format: SubtitleFormat
 ): ParsedCue[] {
+  const normalizedContent = content.replace(/^\uFEFF/, '')
   // VTT 格式直接解析（保留 cue settings）
-  if (format === 'vtt' || content.trimStart().startsWith('WEBVTT')) {
-    return parseVtt(content)
+  if (format === 'vtt' || normalizedContent.trimStart().startsWith('WEBVTT')) {
+    return parseVtt(normalizedContent)
   }
 
   switch (format) {
     case 'srt':
-      return parseSrt(content)
+      return parseSrt(normalizedContent)
     case 'ass':
-      return parseAss(content)
+      return parseAss(normalizedContent)
     case 'smi':
-      return parseSmi(content)
+      return parseSmi(normalizedContent)
     case 'sub':
-      return parseSub(content)
+      return parseSub(normalizedContent)
     default:
       // 未知格式尝试按 SRT 解析（最常见的兜底）
-      return parseSrt(content)
+      return parseSrt(normalizedContent)
   }
 }
 

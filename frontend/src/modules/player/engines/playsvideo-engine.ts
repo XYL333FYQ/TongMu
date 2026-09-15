@@ -50,8 +50,13 @@ import type {
   PlayerController,
   SeekResult,
 } from '../types'
-import { resetVideoElement, waitForMetadata } from '../utils'
+import {
+  resetVideoElement,
+  waitForMetadata,
+  createPlayerAbortError,
+} from '../utils'
 import { resolveProxyUrl } from '../services/url-proxy'
+import { trackPlayerResource } from '../lifecycle'
 
 /**
  * 引擎准备超时（毫秒）。
@@ -147,6 +152,9 @@ class PlaysVideoController implements PlayerController {
   private unbindSubtitles: (() => void) | null = null
   /** 中断进行中的字幕 blob 读取 */
   private subtitleAbort: AbortController | null = null
+  private removeExternalAbort: (() => void) | null = null
+  private releaseWorker: (() => void) | null = null
+  private releaseMediaSource: (() => void) | null = null
 
   constructor(video: HTMLVideoElement, source: PlayerSource) {
     this.video = video
@@ -171,6 +179,12 @@ class PlaysVideoController implements PlayerController {
     this.cleanup()
     resetVideoElement(this.video)
 
+    if (this.source.signal?.aborted) throw createPlayerAbortError()
+    const onAbort = () => this.cleanup()
+    this.source.signal?.addEventListener('abort', onAbort, { once: true })
+    this.removeExternalAbort = () =>
+      this.source.signal?.removeEventListener('abort', onAbort)
+
     const gen = ++this.generation
     const url = resolvePlaysVideoUrl(this.source)
 
@@ -181,6 +195,8 @@ class PlaysVideoController implements PlayerController {
       embeddedSubtitlePolicy: 'off',
     })
     this.engine = engine
+    this.releaseWorker = trackPlayerResource('workers')
+    this.releaseMediaSource = trackPlayerResource('mediaSources')
 
     // 开启新字幕会话：旧会话迟到的提取结果会被桥接层丢弃
     this.subtitleGen = resetPlaysVideoSubtitles()
@@ -188,7 +204,7 @@ class PlaysVideoController implements PlayerController {
 
     try {
       engine.loadUrl(url)
-      await this.waitReady(engine)
+      await this.waitReady(engine, this.source.signal)
     } catch (err) {
       // 起播失败（容器不支持 / 探测超时 / 取流不可达）：
       // 必须终结本世代并释放 worker，否则旧管线残留会与回退引擎竞争 video。
@@ -200,7 +216,8 @@ class PlaysVideoController implements PlayerController {
     }
 
     // 世代已被取代：本次 attach 的结果作废，静默让位
-    if (gen !== this.generation) {
+    if (gen !== this.generation || this.source.signal?.aborted) {
+      if (this.source.signal?.aborted) throw createPlayerAbortError()
       return ''
     }
 
@@ -212,7 +229,11 @@ class PlaysVideoController implements PlayerController {
 
     // pipeline 模式下 ready 先于 startHls 触发，此时 readyState 可能仍为 0，
     // 直接赋值 currentTime 会被浏览器丢弃（与 waitForMetadata 的注释同理）。
-    await waitForMetadata(this.video)
+    await waitForMetadata(this.video, this.source.signal)
+    if (gen !== this.generation || this.source.signal?.aborted) {
+      if (this.source.signal?.aborted) throw createPlayerAbortError()
+      return ''
+    }
 
     const start = startTime ?? this.source.startTime ?? 0
     if (start > 0) {
@@ -236,12 +257,20 @@ class PlaysVideoController implements PlayerController {
    * 世代校验不在这里做：监听器注册时 gen 必然等于当前世代，判断无意义；
    * 真正的作废检查在 attach 的 await 之后进行。
    */
-  private waitReady(engine: PlaysVideoEngine): Promise<void> {
+  private waitReady(
+    engine: PlaysVideoEngine,
+    signal?: AbortSignal
+  ): Promise<void> {
     return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(createPlayerAbortError())
+        return
+      }
       const cleanup = () => {
         engine.removeEventListener('ready', onReady)
         engine.removeEventListener('error', onError)
-        clearTimeout(timer)
+        signal?.removeEventListener('abort', onAbort)
+        releaseTimer()
       }
       const onReady = () => {
         cleanup()
@@ -252,13 +281,19 @@ class PlaysVideoController implements PlayerController {
         const detail = (e as CustomEvent<{ message?: string }>).detail
         reject(new Error(detail?.message || 'playsvideo 引擎启动失败'))
       }
+      const onAbort = () => {
+        cleanup()
+        reject(createPlayerAbortError())
+      }
       const timer = setTimeout(() => {
         cleanup()
         reject(new Error('playsvideo 引擎准备超时（60s）'))
       }, READY_TIMEOUT_MS)
+      const releaseTimer = trackPlayerResource('timers', () => clearTimeout(timer))
 
       engine.addEventListener('ready', onReady)
       engine.addEventListener('error', onError)
+      signal?.addEventListener('abort', onAbort, { once: true })
     })
   }
 
@@ -334,7 +369,13 @@ class PlaysVideoController implements PlayerController {
     this.subtitleAbort = abort
 
     const label = element.label || '未命名轨道'
-    const cues = await fetchPlaysVideoTrackCues(element, abort.signal)
+    let cues
+    try {
+      cues = await fetchPlaysVideoTrackCues(element, abort.signal)
+    } catch {
+      return
+    }
+    if (gen !== this.subtitleGen || this.source.signal?.aborted) return
     console.info(
       `[playsvideo-subtitles] 轨道「${label}」取回 ${cues.length} 条 cue`
     )
@@ -361,9 +402,15 @@ class PlaysVideoController implements PlayerController {
       /* ignore */
     }
     this.engine = null
+    this.releaseWorker?.()
+    this.releaseWorker = null
+    this.releaseMediaSource?.()
+    this.releaseMediaSource = null
   }
 
   cleanup(): void {
+    this.removeExternalAbort?.()
+    this.removeExternalAbort = null
     // 先停字幕再毁引擎：避免 destroy 移除 <track> 时触发无意义的提取
     this.unbindSubtitles?.()
     this.unbindSubtitles = null

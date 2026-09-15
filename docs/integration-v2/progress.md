@@ -4,7 +4,7 @@
 
 This file is the persistent checkpoint for the TongMu V2 integration program. Phase 0 is an audit and design phase only: no product code, dependency, database, configuration, CI, or reference source was changed.
 
-Current state: **Phase 2, Phase 3A, and Phase 3B are complete within their approved Media Core scope. The Phase 6 migration/release gate remains open.**
+Current state: **Phase 2, Phase 3A, Phase 3B, and Phase 4A are complete within their approved boundaries. Phase 4B Voice, Phase 5, and the Phase 6 migration/release gate remain open.**
 
 Phase 2 has a working core checkpoint: the versioned client profile, server
 viability filter, client-owned planner path, provider contract/registry, and
@@ -81,7 +81,7 @@ to do that work safely.
 3. Phase 3A's typed DASH mapper covers `SegmentBase`, representation indexes, bitstream-switching resources, `Location`, xlink, timing URLs, and bounded recursion in unit/backend tests; nested fixture MPD playback is covered by the completed Chromium suite.
 4. Realtime video and future music synchronization do not yet share a documented `RealtimeSyncCore`; sequence, generation, reconnect, host loss, request/ack, and stale-event rules are duplicated or incomplete.
 5. Voice lifecycle and identity handling are weaker than the current ZViewer implementation, especially 48 kHz/frame consistency, same-user replacement, ghost cleanup, pending-source disposal, and moderator/root invariants.
-6. Player switching still needs one explicit cancellation/lifetime contract covering fetch streams, MSE, workers, source generations, and remounts across all engines.
+6. Phase 4A player/subtitle lifetime hardening is complete within its scoped boundary; Voice identity, reconnect, decoder, ghost, and moderation work remains Phase 4B.
 7. Release artifacts still retain historical ZViewer-era names for compatibility; full TongMu renaming, checksum/signature verification, staged extraction, and rollback remain Phase 6 work.
 8. Third-party provenance is incomplete for fonts, images, icons, wasm/binaries, bundled JavaScript, and media fixtures. Upstream assets must not be copied until license and attribution are recorded.
 9. Docker and ffmpeg are unavailable on this host, so browser-enabled container and transcoding-specific validation remain environment-dependent.
@@ -90,7 +90,7 @@ to do that work safely.
 
 1. Add structured request/component logs, stable request IDs, response bytes/latency, and bounded metric labels without importing cluster-oriented observability infrastructure.
 2. Consolidate responsive/mobile primitives (`useMediaQuery`, safe-area, `dvh`, coarse-pointer and hover fallbacks) as features are adapted.
-3. Strengthen subtitle track identity, sparse-probe race guards, late-join synchronization, extraction cleanup, and cache lifecycle.
+3. Phase 4A protects subtitle track identity, sparse-probe race guards, late-join synchronization, extraction cleanup, and source-generation cleanup; broader product subtitle UX remains separate.
 4. Introduce bounded, validator-aware range slice caching only after Range correctness and authorization are proven.
 5. Normalize product/release artifact naming while preserving database, API, and updater compatibility aliases.
 6. Consider playback history, privacy/blocking, and user-resource lifecycle only after the media/security foundation is stable.
@@ -103,7 +103,8 @@ to do that work safely.
 - [x] Phase 1 — security and correctness foundation: secret boundary, credentials, Range, migration foundation, baseline restoration, updater/CI safety stopgap.
 - [x] Phase 2 — Media Core + Provider convergence.
 - [x] Phase 3 — Manifest / Proxy / Slice Cache.
-- [ ] Phase 4 — Player / Subtitle / Voice.
+- [x] Phase 4A — Player / Subtitle lifecycle.
+- [ ] Phase 4B — Voice lifecycle / identity / moderation.
 - [ ] Phase 5 — `RealtimeSyncCore` / Permissions / Together Listen.
 - [ ] Phase 6 — Historical migrations / Packaging / CI / Observability / release gate.
 
@@ -369,6 +370,22 @@ validator changes purge resource slices; cache errors fall back to the same
 uncached resource; and the full regression plus cache-enabled/disabled browser
 checks are green.
 
+### Phase 4A final status
+
+**COMPLETE** within the player/subtitle boundary. Player source generations own
+their abort, engine, listener, fetch, worker, MediaSource, object-URL, timer,
+and subtitle lifetimes; stale callbacks cannot commit the active generation;
+attach replacement is serialized; engine destruction is idempotent; and runtime
+fallback preserves representation quality. External/provider/embedded subtitle
+work carries generation and track identity, and bounded MKV Range extraction
+stops on byte, request-count, timeout, or cancellation limits.
+
+Verification on 2026-09-15: Backend 98 PASS / 1 Windows symlink environment
+SKIP; Frontend 14/14 PASS; backend/frontend builds PASS; Chromium media 21 PASS
+/ 1 intentional cache-gate SKIP in the default run, including 3 new Phase 4A
+browser cases; Phase 3B cache enabled 1/1 PASS; cache disabled 1/1 PASS.
+The full Phase 4B Voice scope remains planned and is not implied by this status.
+
 ### Phase 2 closure audit
 
 - Target-2 provider registry rows are converged: storage, Emby/Jellyfin,
@@ -434,6 +451,7 @@ checks are green.
 - `upstream-notes-synctv.md`
 - `manifest-resource-model.md`
 - `progress.md`
+- `player-lifecycle.md`
 
 Phase 1 updated `progress.md`, `upstream-adoption-matrix.md`, and
 `implementation-plan.md` with the implementation status and phase boundary.

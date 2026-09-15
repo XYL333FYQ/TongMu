@@ -28,6 +28,8 @@ import { resolveProxyUrl, isCliProxyUrl } from '../../services/url-proxy'
 import { redactMediaError, redactMediaUrl } from '../../services/media-redaction'
 import { findAllSidxInBuffer, findMoovRange } from './mp4-box-parser'
 import { useP2PStatsStore } from '../../services/p2p-stats-store'
+import { createPlayerAbortError } from '../../utils'
+import { trackPlayerResource } from '../../lifecycle'
 
 /** DashPlayer 构造参数 */
 export interface DashPlayerOptions {
@@ -69,6 +71,8 @@ export interface DashPlayerOptions {
    * 各客户端独立启用，SwarmCloud tracker 通过 channelId（取自 videoUrl）匹配 peer。
    */
   p2pEnabled?: boolean
+  /** Outer player generation cancellation signal. */
+  signal?: AbortSignal
 }
 
 type PlayerState = 'idle' | 'attaching' | 'attached' | 'seeking' | 'disposed'
@@ -120,9 +124,12 @@ export class DashPlayer implements PlayerController {
 
   private dashPlayer: MediaPlayerClass | null = null
   private mpdBlobUrl: string | null = null
+  private releaseMpdBlobUrl: (() => void) | null = null
   /** 缓冲模式：从 Blob 生成的 video/audio blob URL，cleanup 时统一 revoke */
   private videoBlobUrl: string | null = null
   private audioBlobUrl: string | null = null
+  private releaseVideoBlobUrl: (() => void) | null = null
+  private releaseAudioBlobUrl: (() => void) | null = null
   private state: PlayerState = 'idle'
   private initInfo: DashPlayerInitInfo = {}
   /** 最近一次 dash.js 错误事件（用于 seek 失败诊断） */
@@ -143,6 +150,8 @@ export class DashPlayer implements PlayerController {
    * cleanup 时 abort：源切换后不再继续拉取旧源的头部队据（最多 5MB+）。
    */
   private attachAbort: AbortController | null = null
+  private externalSignal: AbortSignal | undefined
+  private removeExternalAbort: (() => void) | null = null
 
   constructor(options: DashPlayerOptions) {
     this.video = options.video
@@ -154,6 +163,13 @@ export class DashPlayer implements PlayerController {
     this.videoBlob = options.videoBlob
     this.audioBlob = options.audioBlob
     this.p2pEnabled = options.p2pEnabled === true
+    this.externalSignal = options.signal
+    if (options.signal) {
+      const onAbort = () => this.cleanup()
+      options.signal.addEventListener('abort', onAbort, { once: true })
+      this.removeExternalAbort = () =>
+        options.signal?.removeEventListener('abort', onAbort)
+    }
   }
 
   /** 是否启用缓冲模式（传入 Blob 数据时为 true） */
@@ -177,6 +193,7 @@ export class DashPlayer implements PlayerController {
    * @returns MPD 的 Blob URL（供调用方在切换时 revokeObjectURL）
    */
   async attach(startTime?: number): Promise<string> {
+    if (this.externalSignal?.aborted) throw createPlayerAbortError('DashPlayer attach 已被取消')
     if (this.state !== 'idle') {
       throw new Error(`DashPlayer 状态不允许 attach: ${this.state}`)
     }
@@ -209,6 +226,7 @@ export class DashPlayer implements PlayerController {
       // 3. 包装成 Blob URL
       const blob = new Blob([mpd], { type: 'application/dash+xml' })
       this.mpdBlobUrl = URL.createObjectURL(blob)
+      this.releaseMpdBlobUrl = trackPlayerResource('objectUrls')
       ensureNotDisposed()
 
       // 4. 创建 dash.js 实例
@@ -277,6 +295,7 @@ export class DashPlayer implements PlayerController {
       // 6.1 监听 dash.js 错误事件，记录详细错误信息用于 seek 失败诊断
       //     dash.js 在 segment 下载失败、解析错误、CORS 问题时都会触发 ERROR 事件
       player.on(dashjs.MediaPlayer.events.ERROR, (event: unknown) => {
+        if (this.state === 'disposed') return
         const e = event as {
           error?: { code?: string; message?: string; url?: string }
           request?: { url?: string }
@@ -302,7 +321,7 @@ export class DashPlayer implements PlayerController {
       }
 
       // 7. 等待 metadata 加载（video.readyState >= 1）
-      await this.waitForMetadata()
+      await this.waitForMetadata(this.externalSignal)
       // attach 期间外部已 cleanup：不再置为 attached（避免覆盖 disposed 状态
       // 导致孤儿 dash.js 实例与 blob URL 无法再被清理）
       ensureNotDisposed()
@@ -479,6 +498,8 @@ export class DashPlayer implements PlayerController {
   /** 清理所有资源：销毁 dash.js 实例 + revoke 所有 Blob URL */
   cleanup(): void {
     this.state = 'disposed'
+    this.removeExternalAbort?.()
+    this.removeExternalAbort = null
     // 取消 attach 进行中的网络请求（init segment 预读 / sidx 扫描）
     this.attachAbort?.abort()
     this.attachAbort = null
@@ -505,15 +526,21 @@ export class DashPlayer implements PlayerController {
       URL.revokeObjectURL(this.mpdBlobUrl)
       this.mpdBlobUrl = null
     }
+    this.releaseMpdBlobUrl?.()
+    this.releaseMpdBlobUrl = null
     // 缓冲模式：释放 video/audio blob URL
     if (this.videoBlobUrl) {
       URL.revokeObjectURL(this.videoBlobUrl)
       this.videoBlobUrl = null
     }
+    this.releaseVideoBlobUrl?.()
+    this.releaseVideoBlobUrl = null
     if (this.audioBlobUrl) {
       URL.revokeObjectURL(this.audioBlobUrl)
       this.audioBlobUrl = null
     }
+    this.releaseAudioBlobUrl?.()
+    this.releaseAudioBlobUrl = null
   }
 
   /**
@@ -850,7 +877,6 @@ export class DashPlayer implements PlayerController {
     // 扩展到 duration 或 totalSize
     const maxIterations = 5000 // 防止无限循环
     let iter = 0
-    let extendedCount = 0
 
     while (currentTime < duration && iter < maxIterations) {
       // 如果 totalSize 已知且 byteOffset 接近或超过 totalSize，停止
@@ -865,7 +891,6 @@ export class DashPlayer implements PlayerController {
             byteOffset,
             byteSize: remainingBytes,
           })
-          extendedCount++
         }
         break
       }
@@ -880,7 +905,6 @@ export class DashPlayer implements PlayerController {
       currentTime += estDuration
       byteOffset += estSize
       iter++
-      extendedCount++
     }
 
     return extended
@@ -916,6 +940,8 @@ export class DashPlayer implements PlayerController {
       // 生成 blob URL（cleanup 时统一 revoke）
       this.videoBlobUrl = URL.createObjectURL(this.videoBlob)
       this.audioBlobUrl = URL.createObjectURL(this.audioBlob)
+      this.releaseVideoBlobUrl = trackPlayerResource('objectUrls')
+      this.releaseAudioBlobUrl = trackPlayerResource('objectUrls')
       videoUrl = this.videoBlobUrl
       audioUrl = this.audioBlobUrl
     } else {
@@ -997,26 +1023,43 @@ ${segmentUrls}
   }
 
   /** 等待 video metadata 加载完成（readyState >= 1） */
-  private waitForMetadata(): Promise<void> {
+  private waitForMetadata(signal?: AbortSignal): Promise<void> {
     if (this.video.readyState >= 1) return Promise.resolve()
     return new Promise((resolve, reject) => {
+      let releaseTimer: () => void = () => undefined
+      if (signal?.aborted) {
+        reject(createPlayerAbortError('dash.js metadata 等待已取消'))
+        return
+      }
+      const onAbort = () => {
+        releaseTimer()
+        this.video.removeEventListener('loadedmetadata', onLoaded)
+        this.video.removeEventListener('error', onError)
+        signal?.removeEventListener('abort', onAbort)
+        reject(createPlayerAbortError('dash.js metadata 等待已取消'))
+      }
       const timeout = setTimeout(() => {
         this.video.removeEventListener('loadedmetadata', onLoaded)
         this.video.removeEventListener('error', onError)
+        signal?.removeEventListener('abort', onAbort)
+        releaseTimer()
         reject(new Error('dash.js metadata 加载超时'))
       }, METADATA_TIMEOUT_MS)
+      releaseTimer = trackPlayerResource('timers', () => clearTimeout(timeout))
 
       const onLoaded = () => {
-        clearTimeout(timeout)
+        releaseTimer()
         this.video.removeEventListener('loadedmetadata', onLoaded)
         this.video.removeEventListener('error', onError)
+        signal?.removeEventListener('abort', onAbort)
         resolve()
       }
 
       const onError = () => {
-        clearTimeout(timeout)
+        releaseTimer()
         this.video.removeEventListener('loadedmetadata', onLoaded)
         this.video.removeEventListener('error', onError)
+        signal?.removeEventListener('abort', onAbort)
         const err = this.video.error
         reject(
           new Error(
@@ -1027,6 +1070,7 @@ ${segmentUrls}
 
       this.video.addEventListener('loadedmetadata', onLoaded, { once: true })
       this.video.addEventListener('error', onError, { once: true })
+      signal?.addEventListener('abort', onAbort, { once: true })
     })
   }
 

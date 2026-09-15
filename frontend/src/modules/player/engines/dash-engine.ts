@@ -14,7 +14,11 @@
 import type { PlayerEngine, PlayerSource, EngineAttachResult } from '../types'
 import { DashPlayer } from './dash'
 import dashjs from 'dashjs'
-import { resetVideoElement, waitForMetadata } from '../utils'
+import {
+  resetVideoElement,
+  waitForMetadata,
+  createPlayerAbortError,
+} from '../utils'
 import { resolveProxyUrl } from '../services/url-proxy'
 
 export const dashEngine: PlayerEngine = {
@@ -24,35 +28,51 @@ export const dashEngine: PlayerEngine = {
     video: HTMLVideoElement,
     source: PlayerSource
   ): Promise<EngineAttachResult> {
+    if (source.signal?.aborted) throw createPlayerAbortError()
     const audioUrl = source.audioUrl || ''
 
     // 标准 MPD：直接交给 dash.js。B站 DASH 则仍走下方双 m4s 包装路径。
     if (!audioUrl) {
       resetVideoElement(video)
       const player = dashjs.MediaPlayer().create()
+      let disposed = false
+      let cleaned = false
+      const onStreamInitialized = () => {
+        if (disposed || source.signal?.aborted) return
+        const levels = player.getBitrateInfoListFor('video')
+        const highest = levels.reduce((best, level) => (level.height || 0) > (best?.height || 0) || ((level.height || 0) === (best?.height || 0) && level.bitrate > (best?.bitrate ?? -1)) ? level : best, levels[0])
+        if (highest) player.setQualityFor('video', highest.qualityIndex)
+      }
+      const onError = () => {
+        if (!disposed && !source.signal?.aborted) video.dispatchEvent(new Event('error'))
+      }
+      const cleanup = () => {
+        if (cleaned) return
+        cleaned = true
+        disposed = true
+        source.signal?.removeEventListener('abort', cleanup)
+        try { player.off(dashjs.MediaPlayer.events.STREAM_INITIALIZED, onStreamInitialized) } catch { /* ignore */ }
+        try { player.off(dashjs.MediaPlayer.events.ERROR, onError) } catch { /* ignore */ }
+        try { player.reset() } catch { /* ignore */ }
+      }
+      source.signal?.addEventListener('abort', cleanup, { once: true })
       try {
         player.updateSettings({
           streaming: { buffer: { bufferTimeAtTopQuality: 30 }, abr: { autoSwitchBitrate: { video: false } } },
         })
-        player.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, () => {
-          const levels = player.getBitrateInfoListFor('video')
-          const highest = levels.reduce((best, level) => (level.height || 0) > (best?.height || 0) || ((level.height || 0) === (best?.height || 0) && level.bitrate > (best?.bitrate ?? -1)) ? level : best, levels[0])
-          if (highest) player.setQualityFor('video', highest.qualityIndex)
-        })
-        player.on(dashjs.MediaPlayer.events.ERROR, () => video.dispatchEvent(new Event('error')))
+        player.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, onStreamInitialized)
+        player.on(dashjs.MediaPlayer.events.ERROR, onError)
         player.initialize(
           video,
           resolveProxyUrl(source.url, source.headers, source.format, { noProxyFallback: source.noProxyFallback }),
           false
         )
-        await waitForMetadata(video)
+        await waitForMetadata(video, source.signal)
         return {
-          cleanup: () => {
-            player.reset()
-          },
+          cleanup,
         }
       } catch (err) {
-        player.reset()
+        cleanup()
         throw new Error('dash.js 加载 MPD 失败', { cause: err })
       }
     }
@@ -69,6 +89,7 @@ export const dashEngine: PlayerEngine = {
       audioBlob: source.audioBlob,
       // P2P 传输：仅在流模式启用，DashPlayer 内部会检查 isBufferMode
       p2pEnabled: source.p2pEnabled,
+      signal: source.signal,
     })
     try {
       const blobUrl = await dashPlayer.attach(source.startTime)

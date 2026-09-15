@@ -13,6 +13,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { subtitleCueIdentity } from '@/lib/subtitleParser'
 import type { ParsedCue } from '@/lib/subtitleParser'
 
 interface SubtitleOverlayProps {
@@ -101,7 +102,7 @@ export function SubtitleOverlay({
         }
       }
       // 仅当激活 cue 集合变化时更新 state
-      const key = active.map((c) => `${c.start}:${c.end}`).join('|')
+      const key = active.map((c) => subtitleCueIdentity(c)).join('|')
       if (key !== lastKeyRef.current) {
         lastKeyRef.current = key
         setActiveCues(active)
@@ -140,7 +141,7 @@ export function SubtitleOverlay({
 
         return (
           <div
-            key={`${cue.start}:${cue.end}:${i}`}
+            key={`${subtitleCueIdentity(cue)}:${i}`}
             dangerouslySetInnerHTML={{ __html: cue.text }}
             style={{
               position: 'absolute',

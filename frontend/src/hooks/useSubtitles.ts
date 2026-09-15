@@ -4,6 +4,7 @@ import { apiFetch } from '@/lib/api'
 import {
   detectFormat,
   parseSubtitle,
+  dedupeSubtitleCues,
   getSubtitleLabel,
   type SubtitleFormat,
   type ParsedCue,
@@ -14,11 +15,14 @@ import {
   streamMkvSubtitleTrack,
 } from '@/modules/subtitles/mkv-embedded'
 import { appendAuthToken } from '@/modules/player/services/url-proxy'
+import { fetchGenerationBoundSubtitleText } from '@/lib/subtitleLifecycle'
 
 export interface SubtitleTrack {
   cues: ParsedCue[]
   label: string
   lang?: string
+  /** Stable track identity; legacy broadcasts may omit it. */
+  id?: string
 }
 
 /** 服务器文件内嵌字幕轨道（含用于展示的 label）。 */
@@ -75,6 +79,8 @@ function embeddedTrackLabel(track: {
 }
 
 export interface SubtitleState {
+  /** Media source generation that owns these tracks. */
+  sourceGeneration?: number
   subtitleEnabled: boolean
   subtitleTracks: SubtitleTrack[]
   activeTrackIndex: number
@@ -94,6 +100,7 @@ export interface SubtitleState {
 }
 
 interface SubtitleBroadcastPayload {
+  sourceGeneration?: number
   enabled: boolean
   tracks: SubtitleTrack[]
   activeIndex: number
@@ -109,6 +116,7 @@ interface SubtitleBroadcastPayload {
 export interface UseSubtitlesOptions {
   roomId: string
   isHost: boolean
+  sourceGeneration?: number
 }
 
 const DEFAULT_SUBTITLE_STATE: SubtitleState = {
@@ -134,9 +142,16 @@ const DEFAULT_SUBTITLE_STATE: SubtitleState = {
  * 保留各格式的位置/对齐/样式信息，由自定义渲染层直接显示。
  * ParsedCue[] 是纯数据，可通过 socket 直接 JSON 序列化同步给观众。
  */
-export function useSubtitles({ roomId, isHost }: UseSubtitlesOptions) {
+export function useSubtitles({
+  roomId,
+  isHost,
+  sourceGeneration,
+}: UseSubtitlesOptions) {
   const { socket } = useSocket()
-  const [state, setState] = useState<SubtitleState>(DEFAULT_SUBTITLE_STATE)
+  const [state, setState] = useState<SubtitleState>(() => ({
+    ...DEFAULT_SUBTITLE_STATE,
+    sourceGeneration,
+  }))
 
   // 观众本地偏好标记：观众自行修改过字幕设置（开关/轨道/字号/偏移）后，
   // 房主广播的 subtitle-update 只更新轨道数据，不再覆盖观众的本地选择。
@@ -153,6 +168,8 @@ export function useSubtitles({ roomId, isHost }: UseSubtitlesOptions) {
    */
   const embeddedEpochRef = useRef(0)
   const embeddedAbortRef = useRef<AbortController | null>(null)
+  const externalSubtitleAbortRef = useRef<AbortController | null>(null)
+  const sourceGenerationRef = useRef(sourceGeneration)
   /**
    * 内嵌字幕自动加载防重入标记：
    * StrictMode 双执行 / sourceUrl·开关异步初始化会重跑加载 effect，
@@ -163,12 +180,43 @@ export function useSubtitles({ roomId, isHost }: UseSubtitlesOptions) {
   const embeddedAutoLoadRef = useRef<{
     url: string
     status: 'loading' | 'done'
+    sourceGeneration?: number
   } | null>(null)
+
+  useEffect(() => {
+    if (sourceGenerationRef.current === sourceGeneration) return
+    sourceGenerationRef.current = sourceGeneration
+    embeddedEpochRef.current++
+    embeddedAbortRef.current?.abort()
+    embeddedAbortRef.current = null
+    externalSubtitleAbortRef.current?.abort()
+    externalSubtitleAbortRef.current = null
+    embeddedAutoLoadRef.current = null
+    setState((prev) => ({
+      ...prev,
+      sourceGeneration,
+      subtitleTracks: [],
+      subtitleEnabled: false,
+      activeTrackIndex: -1,
+    }))
+  }, [sourceGeneration])
+
+  useEffect(
+    () => () => {
+      embeddedEpochRef.current++
+      embeddedAbortRef.current?.abort()
+      externalSubtitleAbortRef.current?.abort()
+      embeddedAbortRef.current = null
+      externalSubtitleAbortRef.current = null
+    },
+    []
+  )
 
   const broadcast = useCallback(
     (next: SubtitleState) => {
       if (!socket || !isHost) return
       const payload: SubtitleBroadcastPayload = {
+        sourceGeneration: next.sourceGeneration,
         enabled: next.subtitleEnabled,
         tracks: next.subtitleTracks,
         activeIndex: next.activeTrackIndex,
@@ -238,9 +286,10 @@ export function useSubtitles({ roomId, isHost }: UseSubtitlesOptions) {
 
       setState((prev) => {
         const track: SubtitleTrack = {
-          cues,
+          cues: dedupeSubtitleCues(cues, `external:${filename}:${format}`),
           label: label || `字幕 ${prev.subtitleTracks.length + 1}`,
           lang: lang?.trim() || undefined,
+          id: `external:${filename}:${format}`,
         }
         const next: SubtitleState = {
           ...prev,
@@ -259,17 +308,30 @@ export function useSubtitles({ roomId, isHost }: UseSubtitlesOptions) {
     async (url: string, label?: string, lang?: string) => {
       const trimmedUrl = url.trim()
       if (!trimmedUrl) return
+      const generation = sourceGenerationRef.current
 
       // fetch 内容后综合文件名+内容检测格式
+      externalSubtitleAbortRef.current?.abort()
+      const controller = new AbortController()
+      externalSubtitleAbortRef.current = controller
       try {
-        const res = await fetch(trimmedUrl)
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        const content = await res.text()
+        const content = await fetchGenerationBoundSubtitleText({
+          url: trimmedUrl,
+          generation,
+          getCurrentGeneration: () => sourceGenerationRef.current,
+          signal: controller.signal,
+        })
+        if (content === null) return
         const detected = detectFormat(trimmedUrl, content)
         const filename =
           trimmedUrl.split('/').pop()?.split('?')[0] || 'subtitle'
         addParsedTrack(content, filename, detected, label, lang)
       } catch (err) {
+        if (
+          controller.signal.aborted ||
+          sourceGenerationRef.current !== generation
+        )
+          return
         console.error('[useSubtitles] fetch subtitle URL failed:', err)
         // fetch 失败时添加空轨道
         setState((prev) => {
@@ -277,6 +339,7 @@ export function useSubtitles({ roomId, isHost }: UseSubtitlesOptions) {
             cues: [],
             label: label?.trim() || `字幕 ${prev.subtitleTracks.length + 1}`,
             lang: lang?.trim() || undefined,
+            id: `external:${trimmedUrl}`,
           }
           const next: SubtitleState = {
             ...prev,
@@ -367,9 +430,17 @@ export function useSubtitles({ roomId, isHost }: UseSubtitlesOptions) {
         // 解析所有字幕并构建轨道列表
         const newTracks: SubtitleTrack[] = found.map((sub) => {
           const format = sub.format as SubtitleFormat
-          const cues = parseSubtitle(sub.content, format)
+          const cues = dedupeSubtitleCues(
+            parseSubtitle(sub.content, format),
+            `external:${sub.filename}:${format}`
+          )
           const label = getSubtitleLabel(sub.filename) || sub.filename
-          return { cues, label, lang: undefined }
+          return {
+            cues,
+            label,
+            lang: undefined,
+            id: `external:${sub.filename}:${format}`,
+          }
         })
 
         // 一次性更新状态（清空旧轨道 + 加载新轨道）
@@ -414,38 +485,55 @@ export function useSubtitles({ roomId, isHost }: UseSubtitlesOptions) {
     ): Promise<void> => {
       // 捕获提取世代：clearTracks/切影片递增后，本流的所有 chunk 丢弃
       const epoch = embeddedEpochRef.current
+      const generation = sourceGenerationRef.current
+      const trackId = `embedded:${track.trackNumber}`
+      const ownController = signal ? null : new AbortController()
+      const taskSignal = signal ?? ownController.signal
+      if (ownController) embeddedAbortRef.current = ownController
       return new Promise<void>((resolve, reject) => {
         let trackIndex = -1
         let settled = false
         let broadcastDone = false
         streamMkvSubtitleTrack(url, track.trackNumber, {
           getPriorityTime,
-          signal,
+          signal: taskSignal,
           onChunk: (chunk) => {
-            if (embeddedEpochRef.current !== epoch) return
-            const cues = parseSubtitle(chunk.text, chunk.format)
+            if (
+              embeddedEpochRef.current !== epoch ||
+              sourceGenerationRef.current !== generation ||
+              taskSignal.aborted
+            )
+              return
+            const cues = dedupeSubtitleCues(
+              parseSubtitle(chunk.text, chunk.format),
+              trackId
+            )
             if (cues.length === 0) return
             setState((prev) => {
               if (trackIndex < 0) {
                 // 去重：相同 label 的轨道已存在（手动重复提取 / 并行流）
                 // 时复用它，避免重复建轨（如 2 条字幕轨变 4 条）
                 const existing = prev.subtitleTracks.findIndex(
-                  (t) => t.label === track.label
+                  (t) => t.id === trackId || t.label === track.label
                 )
                 if (existing >= 0) {
                   trackIndex = existing
-                  // 时间戳去重：观众本地提取与房主广播全量数据并存时，
-                  // 同一轨的 cue（start 相同）只保留一份，避免重复字幕
-                  const starts = new Set(
-                    prev.subtitleTracks[existing]!.cues.map((c) => c.start)
+                  const merged = dedupeSubtitleCues(
+                    [
+                      ...prev.subtitleTracks[existing]!.cues,
+                      ...cues,
+                    ],
+                    trackId
                   )
-                  const deduped = cues.filter((c) => !starts.has(c.start))
-                  if (deduped.length === 0) return prev
+                  if (
+                    merged.length === prev.subtitleTracks[existing]!.cues.length
+                  )
+                    return prev
                   return {
                     ...prev,
                     subtitleTracks: prev.subtitleTracks.map((t, i) =>
                       i === existing
-                        ? { ...t, cues: [...t.cues, ...deduped] }
+                        ? { ...t, id: t.id || trackId, cues: merged }
                         : t
                     ),
                   }
@@ -456,9 +544,10 @@ export function useSubtitles({ roomId, isHost }: UseSubtitlesOptions) {
                   subtitleTracks: [
                     ...prev.subtitleTracks,
                     {
-                      cues,
+                      cues: dedupeSubtitleCues(cues, trackId),
                       label: track.label,
                       lang: track.language || undefined,
+                      id: trackId,
                     },
                   ],
                   subtitleEnabled: true,
@@ -469,23 +558,40 @@ export function useSubtitles({ roomId, isHost }: UseSubtitlesOptions) {
               return {
                 ...prev,
                 subtitleTracks: prev.subtitleTracks.map((t, i) =>
-                  i === trackIndex ? { ...t, cues: [...t.cues, ...cues] } : t
+                  i === trackIndex
+                    ? {
+                        ...t,
+                        id: t.id || trackId,
+                        cues: dedupeSubtitleCues(
+                          [...t.cues, ...cues],
+                          trackId
+                        ),
+                      }
+                    : t
                 ),
               }
             })
-            if (!settled) {
+            if (!settled && sourceGenerationRef.current === generation) {
               settled = true
               resolve()
             }
           },
         }).then(
           () => {
+            if (ownController && embeddedAbortRef.current === ownController) {
+              embeddedAbortRef.current = null
+            }
             if (!settled) {
               settled = true
-              reject(new Error('字幕轨为空'))
+              if (sourceGenerationRef.current === generation) {
+                reject(new Error('字幕轨为空'))
+              } else {
+                resolve()
+              }
               return
             }
             // 提取完成：广播全量同步观众（updater 返回原引用不触发渲染）
+            if (sourceGenerationRef.current !== generation) return
             setState((prev) => {
               if (!broadcastDone) {
                 broadcastDone = true
@@ -495,14 +601,19 @@ export function useSubtitles({ roomId, isHost }: UseSubtitlesOptions) {
             })
           },
           (err) => {
+            if (ownController && embeddedAbortRef.current === ownController) {
+              embeddedAbortRef.current = null
+            }
             if (!settled) {
               settled = true
-              reject(err)
+              if (sourceGenerationRef.current === generation) reject(err)
+              else resolve()
             } else {
               console.error(
                 '[useSubtitles] 流式提取中断（保留已提取部分）：',
                 err instanceof Error ? err.message : err
               )
+              if (sourceGenerationRef.current !== generation) return
               setState((prev) => {
                 if (!broadcastDone) {
                   broadcastDone = true
@@ -538,11 +649,20 @@ export function useSubtitles({ roomId, isHost }: UseSubtitlesOptions) {
       // 本站 /api/ URL 必须附加 token query（与播放引擎 appendAuthToken 一致），
       // 否则 401 → 探测失败显示「未检测到内嵌字幕」。直链 URL 原样返回。
       const url = appendAuthToken(sourceUrl ?? buildServerFileProxyUrl(filePath))
+      const generation = sourceGenerationRef.current
 
       // 防并行重入：同一 URL 加载中（首路还在探测）或已完成时，
       // StrictMode/effect 重跑的二次调用直接跳过，避免重复建轨
-      if (embeddedAutoLoadRef.current?.url === url) return 0
-      embeddedAutoLoadRef.current = { url, status: 'loading' }
+      if (
+        embeddedAutoLoadRef.current?.url === url &&
+        embeddedAutoLoadRef.current.sourceGeneration === generation
+      )
+        return 0
+      embeddedAutoLoadRef.current = {
+        url,
+        status: 'loading',
+        sourceGeneration: generation,
+      }
 
       // 上一次提取流若还在跑（另一影片/URL），先取消防污染
       embeddedAbortRef.current?.abort()
@@ -550,7 +670,13 @@ export function useSubtitles({ roomId, isHost }: UseSubtitlesOptions) {
       embeddedAbortRef.current = controller
 
       const finish = (started: number): number => {
-        embeddedAutoLoadRef.current = { url, status: 'done' }
+        if (sourceGenerationRef.current === generation) {
+          embeddedAutoLoadRef.current = {
+            url,
+            status: 'done',
+            sourceGeneration: generation,
+          }
+        }
         return started
       }
 
@@ -560,9 +686,11 @@ export function useSubtitles({ roomId, isHost }: UseSubtitlesOptions) {
           undefined,
           controller.signal
         )
+        if (sourceGenerationRef.current !== generation) return 0
         const extractable = probed.filter((t) => t.supported)
         let started = 0
         for (const track of extractable) {
+          if (sourceGenerationRef.current !== generation) return 0
           try {
             // 逐轨 await 首段（秒级），后台继续补齐后续 cues
             await streamEmbeddedTrack(
@@ -717,6 +845,7 @@ export function useSubtitles({ roomId, isHost }: UseSubtitlesOptions) {
 
       // Emby/Jellyfin：后端调用其自带 Subtitles Stream 端点
       if (source.kind !== 'emby' && source.kind !== 'jellyfin') return 0
+      const generation = sourceGenerationRef.current
       try {
         const res = await apiFetch(
           `/api/subtitles/embedded-extract?movieId=${source.movieId}&index=${track.index}`
@@ -736,10 +865,13 @@ export function useSubtitles({ roomId, isHost }: UseSubtitlesOptions) {
           data.content,
           mapOutputFormat(data.format || 'srt')
         )
+        if (sourceGenerationRef.current !== generation) return 0
+        const trackId = `embedded:${source.kind}:${track.index}`
         const newTrack: SubtitleTrack = {
-          cues,
+          cues: dedupeSubtitleCues(cues, trackId),
           label: track.label || data.label || embeddedTrackLabel(track),
           lang: data.language ?? track.language ?? undefined,
+          id: trackId,
         }
         setState((prev) => {
           // 去重：相同 label 的轨道已存在（重复手动提取）时激活它而非重复建轨
@@ -869,6 +1001,13 @@ export function useSubtitles({ roomId, isHost }: UseSubtitlesOptions) {
       payload: Partial<SubtitleBroadcastPayload> | undefined
     ) => {
       if (!payload) return
+      if (
+        payload.sourceGeneration !== undefined &&
+        sourceGenerationRef.current !== undefined &&
+        payload.sourceGeneration !== sourceGenerationRef.current
+      ) {
+        return
+      }
       // 房主清空字幕（切影片）时，观众本地的内嵌提取流一并失效，
       // 防止旧影片的流继续 append 重建轨道
       if (Array.isArray(payload.tracks) && payload.tracks.length === 0) {
@@ -880,6 +1019,7 @@ export function useSubtitles({ roomId, isHost }: UseSubtitlesOptions) {
       // 数据；偏好字段保持观众本地选择。未改过则全量跟随房主。
       const touched = viewerPrefTouchedRef.current
       setState((prev) => ({
+        sourceGeneration: payload.sourceGeneration ?? prev.sourceGeneration,
         subtitleEnabled: touched
           ? prev.subtitleEnabled
           : payload.enabled ?? prev.subtitleEnabled,

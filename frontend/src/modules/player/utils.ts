@@ -3,6 +3,7 @@
  *
  * 从旧 msePlayer.ts 抽取的、与具体引擎无关的视频元素操作工具。
  */
+import { trackPlayerResource } from './lifecycle'
 
 /**
  * 将 video.error 的 MediaError code 映射为面向用户的可读文案。
@@ -53,13 +54,34 @@ export function resetVideoElement(video: HTMLVideoElement): void {
  */
 export const METADATA_TIMEOUT_MS = 30_000
 
-export function waitForMetadata(video: HTMLVideoElement): Promise<void> {
+export function createPlayerAbortError(message = '播放器操作已取消'): Error {
+  const error = new Error(message)
+  error.name = 'AbortError'
+  return error
+}
+
+export function isPlayerAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError'
+}
+
+export function waitForMetadata(
+  video: HTMLVideoElement,
+  signal?: AbortSignal
+): Promise<void> {
   if (video.readyState >= 1) return Promise.resolve()
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(createPlayerAbortError())
+      return
+    }
+    let releaseTimer: () => void = () => undefined
+    let removeAbort: () => void = () => undefined
     const cleanup = () => {
       video.removeEventListener('loadedmetadata', onLoaded)
       video.removeEventListener('error', onError)
-      clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+      releaseTimer()
+      removeAbort()
     }
     const onLoaded = () => {
       cleanup()
@@ -75,10 +97,19 @@ export function waitForMetadata(video: HTMLVideoElement): Promise<void> {
         )
       )
     }
+    const onAbort = () => {
+      cleanup()
+      reject(createPlayerAbortError())
+    }
     const timer = setTimeout(() => {
       cleanup()
       reject(new Error('等待媒体 metadata 超时（30s）'))
     }, METADATA_TIMEOUT_MS)
+    releaseTimer = trackPlayerResource('timers', () => clearTimeout(timer))
+    if (signal) {
+      signal.addEventListener('abort', onAbort, { once: true })
+      removeAbort = () => signal.removeEventListener('abort', onAbort)
+    }
 
     video.addEventListener('loadedmetadata', onLoaded)
     video.addEventListener('error', onError)

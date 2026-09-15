@@ -35,6 +35,12 @@ export function withMediaTransport(engine: PlayerEngine): PlayerEngine {
     let active: EngineAttachResult | undefined
     let stopped = false
     let switching = false
+    const onAbort = () => {
+      stopped = true
+      active?.cleanup?.()
+      active = undefined
+    }
+    source.signal?.addEventListener('abort', onAbort, { once: true })
     const attach = async (at: number, paused: boolean, rate: number): Promise<EngineAttachResult> => {
       let error: unknown
       const firstCandidateIndex = index
@@ -43,7 +49,7 @@ export function withMediaTransport(engine: PlayerEngine): PlayerEngine {
       initialAttempt = false
       const candidateIndices = Array.from({ length: Math.max(0, plan.candidates.length - index) }, (_, offset) => index + offset)
       for (let candidatePosition = 0; candidatePosition < candidateIndices.length; candidatePosition += 1) {
-        if (stopped) break
+        if (stopped || source.signal?.aborted) break
         const candidateIndex = candidateIndices[candidatePosition]
         const candidate = plan.candidates[candidateIndex]
         try {
@@ -100,6 +106,16 @@ export function withMediaTransport(engine: PlayerEngine): PlayerEngine {
       get isAttached() { return active?.player?.isAttached ?? false },
       get isSeeking() { return active?.player?.isSeeking ?? false },
     } : undefined
-    return { ...initial, player, cleanup() { stopped = true; video.removeEventListener('error', onError); active?.cleanup?.() } }
+    return {
+      ...initial,
+      player,
+      cleanup() {
+        stopped = true
+        source.signal?.removeEventListener('abort', onAbort)
+        video.removeEventListener('error', onError)
+        active?.cleanup?.()
+        active = undefined
+      },
+    }
   } }
 }

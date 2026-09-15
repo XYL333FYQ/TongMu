@@ -91,6 +91,7 @@ export function useBilibiliQuality(ctx: BilibiliQualityContext) {
 
       const state = useRoomStore.getState().watchTogether
       const { broadcast = false, resolved: preResolved } = options
+      const nextSourceGeneration = (state.sourceGeneration ?? 0) + 1
 
       // format 检查仅在内部解析路径（无 preResolved）时生效，
       // 因为 MP4 模式下清晰度由 B站 决定，无需手动切换。
@@ -138,6 +139,7 @@ export function useBilibiliQuality(ctx: BilibiliQualityContext) {
             const roomId = useRoomStore.getState().roomId
             mediaCore = await resolveMediaInput(movie.sourceInput || movie.url, {
               roomId,
+              sourceGeneration: nextSourceGeneration,
               requestedQn: qn,
               preferMp4: parsePrefs.preferMp4 === true,
               cid: movie.cid,
@@ -174,6 +176,7 @@ export function useBilibiliQuality(ctx: BilibiliQualityContext) {
 
         const newState: WatchTogetherState = {
           ...state,
+          sourceGeneration: nextSourceGeneration,
           sourceUrl: resolved.videoUrl,
           audioUrl: resolved.audioUrl,
           videoCodec: resolved.videoCodec,

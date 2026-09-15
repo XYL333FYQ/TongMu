@@ -218,7 +218,39 @@ Range correctness would amplify bad responses.
 
 **Goal**
 
-Eliminate stale source attachment and leaked media resources; bring voice identity, reconnect and moderation to the current ZViewer behavior without replacing TongMu transport planning.
+Eliminate stale source attachment and leaked media resources, then bring voice
+identity, reconnect and moderation to the current ZViewer behavior without
+replacing TongMu transport planning. Phase 4 is intentionally split into the
+player/subtitle boundary below and the deferred Voice boundary (Phase 4B).
+
+### Phase 4A — Player and subtitle lifecycle
+
+**Scope**
+
+- generation-owned source resolve/attach/cleanup with serialized replacement;
+- idempotent Direct/HLS/DASH/FLV/playsvideo cleanup and same-representation
+  transport fallback;
+- generation-aware media events, remount boundary, and test-only resource
+  instrumentation;
+- external/provider/embedded subtitle cancellation, identity/dedupe, late-state
+  guards, and bounded sparse MKV extraction.
+
+**Exit evidence**
+
+- stale A→B→A callbacks cannot commit the active player or subtitle state;
+- engine and failed-attach cleanup is repeatable and resource counters return to
+  baseline;
+- no runtime engine failure silently lowers representation quality;
+- backend/frontend/build, focused subtitle/lifecycle tests, Chromium media, and
+  Phase 3 cache enabled/disabled gates remain green.
+
+The detailed contract is recorded in `docs/integration-v2/player-lifecycle.md`.
+
+### Phase 4B — Voice lifecycle and identity
+
+Voice remains deferred. It includes real user identity/reconnect replacement,
+fixed 48 kHz/960-frame Opus behavior, decoder configuration dedupe/fallback,
+pending-source and ghost cleanup, and moderation/root invariants.
 
 **Why now**
 

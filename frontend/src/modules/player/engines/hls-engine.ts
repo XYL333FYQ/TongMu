@@ -10,9 +10,14 @@
  */
 import Hls from 'hls.js'
 import type { PlayerEngine, PlayerSource, EngineAttachResult } from '../types'
-import { resetVideoElement, waitForMetadata } from '../utils'
+import {
+  resetVideoElement,
+  waitForMetadata,
+  createPlayerAbortError,
+} from '../utils'
 import { resolveProxyUrl } from '../services/url-proxy'
 import { redactMediaError, redactMediaUrl } from '../services/media-redaction'
+import { trackPlayerResource } from '../lifecycle'
 
 /** Safari 等原生 HLS 支持检测 */
 function canPlayNativeHls(video: HTMLVideoElement): boolean {
@@ -30,9 +35,19 @@ function canPlayNativeHls(video: HTMLVideoElement): boolean {
  * 否则 hls.js 会基于代理 URL 解析 m3u8 中的相对路径 ts 分片，导致拼接错误。
  */
 /** 等待 hls.js 加载 m3u8 清单完成或失败，带超时 */
-function waitForHlsReady(hls: Hls, video: HTMLVideoElement, timeoutMs = 15000): Promise<void> {
+function waitForHlsReady(
+  hls: Hls,
+  video: HTMLVideoElement,
+  signal?: AbortSignal,
+  timeoutMs = 15000
+  ): Promise<void> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(createPlayerAbortError())
+      return
+    }
     let settled = false
+    let releaseTimer: () => void = () => undefined
 
     const onManifestParsed = () => {
       if (settled) return
@@ -55,6 +70,13 @@ function waitForHlsReady(hls: Hls, video: HTMLVideoElement, timeoutMs = 15000): 
       ))
     }
 
+    const onAbort = () => {
+      if (settled) return
+      settled = true
+      cleanup()
+      reject(createPlayerAbortError())
+    }
+
     const onTimeout = () => {
       if (settled) return
       settled = true
@@ -65,12 +87,15 @@ function waitForHlsReady(hls: Hls, video: HTMLVideoElement, timeoutMs = 15000): 
     function cleanup() {
       video.removeEventListener('loadedmetadata', onManifestParsed)
       hls.off(Hls.Events.ERROR, onError)
-      clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+      releaseTimer()
     }
 
     video.addEventListener('loadedmetadata', onManifestParsed)
     hls.on(Hls.Events.ERROR, onError)
     const timer = setTimeout(onTimeout, timeoutMs)
+    releaseTimer = trackPlayerResource('timers', () => clearTimeout(timer))
+    signal?.addEventListener('abort', onAbort, { once: true })
   })
 }
 
@@ -81,6 +106,7 @@ export const hlsEngine: PlayerEngine = {
     video: HTMLVideoElement,
     source: PlayerSource
   ): Promise<EngineAttachResult> {
+    if (source.signal?.aborted) throw createPlayerAbortError()
     resetVideoElement(video)
 
     const targetUrl = resolveProxyUrl(source.url, source.headers, source.format, { noProxyFallback: source.noProxyFallback })
@@ -106,16 +132,23 @@ export const hlsEngine: PlayerEngine = {
         maxMaxBufferLength: 120,
         backBufferLength: 90,
       })
+      let disposed = false
+      let cleaned = false
+      const releaseWorker = trackPlayerResource('workers')
+      const releaseMediaSource = trackPlayerResource('mediaSources')
 
       // 先注册事件监听器，再调用 attachMedia
-      hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+      const onMediaAttached = () => {
+        if (disposed || source.signal?.aborted) return
         console.log('[hls-engine] MEDIA_ATTACHED, calling loadSource')
         hls.loadSource(targetUrl)
-      })
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      }
+      const onManifestParsed = () => {
+        if (disposed || source.signal?.aborted) return
         hls.currentLevel = hls.levels.reduce((best, level, i, levels) => (level.height || 0) > (levels[best].height || 0) || ((level.height || 0) === (levels[best].height || 0) && level.bitrate > levels[best].bitrate) ? i : best, 0)
-      })
-      hls.on(Hls.Events.ERROR, (_event, data) => {
+      }
+      const onError = (_event: string, data: { type: string; details: string; fatal: boolean; url?: string; response?: { code?: number; text?: string } }) => {
+        if (disposed || source.signal?.aborted) return
         if (data.fatal && video.readyState >= 1) video.dispatchEvent(new Event('error'))
         console.error('[hls-engine] hls.js error', {
           type: data.type,
@@ -129,49 +162,66 @@ export const hlsEngine: PlayerEngine = {
               }
             : null,
         })
-      })
+      }
+      hls.on(Hls.Events.MEDIA_ATTACHED, onMediaAttached)
+      hls.on(Hls.Events.MANIFEST_PARSED, onManifestParsed)
+      hls.on(Hls.Events.ERROR, onError)
 
-      hls.attachMedia(video)
+      const destroy = () => {
+        if (cleaned) return
+        cleaned = true
+        disposed = true
+        source.signal?.removeEventListener('abort', destroy)
+        try { hls.off(Hls.Events.MEDIA_ATTACHED, onMediaAttached) } catch { /* ignore */ }
+        try { hls.off(Hls.Events.MANIFEST_PARSED, onManifestParsed) } catch { /* ignore */ }
+        try { hls.off(Hls.Events.ERROR, onError) } catch { /* ignore */ }
+        try { hls.destroy() } catch { /* ignore */ }
+        releaseWorker()
+        releaseMediaSource()
+      }
+      source.signal?.addEventListener('abort', destroy, { once: true })
 
       try {
+        hls.attachMedia(video)
         // 使用事件驱动等待替代 waitForMetadata，避免永久阻塞
-        await waitForHlsReady(hls, video)
+        await waitForHlsReady(hls, video, source.signal)
       } catch (err) {
-        try {
-          hls.destroy()
-        } catch {
-          /* ignore */
-        }
+        destroy()
         throw err
       }
 
       return {
-        cleanup: () => {
-          try {
-            hls.destroy()
-          } catch {
-            /* ignore */
-          }
-        },
+        cleanup: destroy,
       }
     }
 
     // 回退：原生 HLS（Safari/iOS），无法拦截 ts 分片请求
     if (canPlayNativeHls(video)) {
       console.log('[hls-engine] using native HLS (Safari fallback)')
-      video.src = targetUrl
-      video.load()
-      await waitForMetadata(video)
+      let cleaned = false
+      const cleanup = () => {
+        if (cleaned) return
+        cleaned = true
+        source.signal?.removeEventListener('abort', cleanup)
+        try {
+          video.pause()
+        } catch {
+          /* ignore */
+        }
+        video.removeAttribute('src')
+        video.load()
+      }
+      source.signal?.addEventListener('abort', cleanup, { once: true })
+      try {
+        video.src = targetUrl
+        video.load()
+        await waitForMetadata(video, source.signal)
+      } catch (err) {
+        cleanup()
+        throw err
+      }
       return {
-        cleanup: () => {
-          try {
-            video.pause()
-          } catch {
-            /* ignore */
-          }
-          video.removeAttribute('src')
-          video.load()
-        },
+        cleanup,
       }
     }
 

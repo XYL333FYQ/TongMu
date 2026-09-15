@@ -71,6 +71,13 @@ export function useVideoEventBindings({
     const updateAndBroadcast = (updateStore = true) => {
       if (suppressEventsRef.current) return
       const current = useRoomStore.getState().watchTogether
+      const attachedGeneration = video.dataset.playerSourceGeneration
+      if (
+        current.sourceGeneration !== undefined &&
+        attachedGeneration !== String(current.sourceGeneration)
+      ) {
+        return
+      }
       const state = buildStateFromVideo(video, current)
       if (updateStore) {
         setWatchTogether(state)
@@ -126,6 +133,13 @@ export function useVideoEventBindings({
       // 仅更新 store 的 currentTime 字段，不触发广播
       // 使用 partial update 避免 setWatchTogether 触发引用变化导致订阅组件 re-render
       const current = useRoomStore.getState().watchTogether
+      const attachedGeneration = video.dataset.playerSourceGeneration
+      if (
+        current.sourceGeneration !== undefined &&
+        attachedGeneration !== String(current.sourceGeneration)
+      ) {
+        return
+      }
       // 仅当差异 > 0.1s 才更新，避免无意义的 store 写入
       if (Math.abs(current.currentTime - video.currentTime) > 0.1) {
         setWatchTogether({

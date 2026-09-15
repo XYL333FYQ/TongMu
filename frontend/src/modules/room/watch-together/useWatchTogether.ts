@@ -1173,6 +1173,7 @@ export function useWatchTogether({
 
       // 3. 构建播放状态
       const buildNewState = (r: ResolvedMovieSource): WatchTogetherState => ({
+        sourceGeneration: seq,
         sourceUrl: r.sourceUrl,
         sourceType,
         audioUrl: r.audioUrl,

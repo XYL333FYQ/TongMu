@@ -6,7 +6,11 @@
  */
 import flvjs from 'flv.js'
 import type { PlayerEngine, PlayerSource, EngineAttachResult } from '../types'
-import { resetVideoElement, waitForMetadata } from '../utils'
+import {
+  resetVideoElement,
+  waitForMetadata,
+  createPlayerAbortError,
+} from '../utils'
 import { resolveProxyUrl } from '../services/url-proxy'
 
 export const flvEngine: PlayerEngine = {
@@ -16,6 +20,7 @@ export const flvEngine: PlayerEngine = {
     video: HTMLVideoElement,
     source: PlayerSource
   ): Promise<EngineAttachResult> {
+    if (source.signal?.aborted) throw createPlayerAbortError()
     if (!flvjs.isSupported()) {
       throw new Error('当前浏览器不支持 FLV 播放且 flv.js 不可用')
     }
@@ -38,7 +43,11 @@ export const flvEngine: PlayerEngine = {
       }
     )
 
+    let destroyed = false
     const destroy = () => {
+      if (destroyed) return
+      destroyed = true
+      source.signal?.removeEventListener('abort', destroy)
       try {
         player.pause()
         player.unload()
@@ -48,12 +57,12 @@ export const flvEngine: PlayerEngine = {
         /* ignore */
       }
     }
-
-    player.attachMediaElement(video)
-    player.load()
+    source.signal?.addEventListener('abort', destroy, { once: true })
 
     try {
-      await waitForMetadata(video)
+      player.attachMediaElement(video)
+      player.load()
+      await waitForMetadata(video, source.signal)
     } catch (err) {
       destroy()
       throw err

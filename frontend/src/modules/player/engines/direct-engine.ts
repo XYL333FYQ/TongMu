@@ -21,7 +21,12 @@
  * 供 useVideoDuration 回退使用。
  */
 import type { PlayerEngine, PlayerSource, EngineAttachResult } from '../types'
-import { resetVideoElement, formatVideoLoadError } from '../utils'
+import {
+  resetVideoElement,
+  formatVideoLoadError,
+  createPlayerAbortError,
+} from '../utils'
+import { trackPlayerResource } from '../lifecycle'
 import {
   resolveProxyUrl,
   buildProxyUrl,
@@ -46,9 +51,17 @@ const HEAD_TIMEOUT_MS = 5_000
  * - 超时：网络挂起（无 error 也无 metadata）时 reject 兜底，
  *   让上层串行队列得以继续、代理回退链路得以执行
  */
-function waitForMetadataOrError(video: HTMLVideoElement): Promise<void> {
+function waitForMetadataOrError(
+  video: HTMLVideoElement,
+  signal?: AbortSignal
+): Promise<void> {
   if (video.readyState >= 1) return Promise.resolve()
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(createPlayerAbortError())
+      return
+    }
+    let releaseTimer: () => void = () => undefined
     const timer = setTimeout(() => {
       cleanup()
       reject(
@@ -61,6 +74,8 @@ function waitForMetadataOrError(video: HTMLVideoElement): Promise<void> {
       clearTimeout(timer)
       video.removeEventListener('loadedmetadata', onLoaded)
       video.removeEventListener('error', onError)
+      signal?.removeEventListener('abort', onAbort)
+      releaseTimer()
     }
     const onLoaded = () => {
       cleanup()
@@ -72,8 +87,14 @@ function waitForMetadataOrError(video: HTMLVideoElement): Promise<void> {
       // 该错误会经 message.error 直接展示给用户
       reject(new Error(formatVideoLoadError(video.error?.code)))
     }
+    const onAbort = () => {
+      cleanup()
+      reject(createPlayerAbortError())
+    }
+    releaseTimer = trackPlayerResource('timers', () => clearTimeout(timer))
     video.addEventListener('loadedmetadata', onLoaded, { once: true })
     video.addEventListener('error', onError, { once: true })
+    signal?.addEventListener('abort', onAbort, { once: true })
   })
 }
 
@@ -87,12 +108,18 @@ function waitForMetadataOrError(video: HTMLVideoElement): Promise<void> {
  */
 async function probeContentDuration(
   url: string,
-  video: HTMLVideoElement
+  video: HTMLVideoElement,
+  signal?: AbortSignal
 ): Promise<void> {
+  const controller = new AbortController()
+  const onAbort = () => controller.abort()
+  signal?.addEventListener('abort', onAbort, { once: true })
+  const timer = setTimeout(() => controller.abort(), HEAD_TIMEOUT_MS)
+  const releaseTimer = trackPlayerResource('timers', () => clearTimeout(timer))
   try {
     const res = await fetch(url, {
       method: 'HEAD',
-      signal: AbortSignal.timeout(HEAD_TIMEOUT_MS),
+      signal: controller.signal,
     })
     const contentDuration = res.headers.get('X-Content-Duration')
     if (contentDuration) {
@@ -103,6 +130,10 @@ async function probeContentDuration(
     }
   } catch {
     // HEAD 请求失败（CORS 限制 / 超时），静默跳过
+  } finally {
+    clearTimeout(timer)
+    releaseTimer()
+    signal?.removeEventListener('abort', onAbort)
   }
 }
 
@@ -154,6 +185,7 @@ export const directEngine: PlayerEngine = {
     video: HTMLVideoElement,
     source: PlayerSource
   ): Promise<EngineAttachResult> {
+    if (source.signal?.aborted) throw createPlayerAbortError()
     resetVideoElement(video)
     // 统一代理策略：由 url-proxy.ts 根据 URL 特征与源格式决定。
     // 挂载直链模式（noProxyFallback）跳过混合内容代理分支，保持源站直传语义；
@@ -180,14 +212,34 @@ export const directEngine: PlayerEngine = {
       source.noProxyFallback !== true && canFallbackToProxy(targetUrl)
 
     const loadOnce = async (url: string): Promise<void> => {
+      if (source.signal?.aborted) throw createPlayerAbortError()
       video.src = url
       video.load()
-      await waitForMetadataOrError(video)
+      await waitForMetadataOrError(video, source.signal)
+    }
+
+    let cleaned = false
+    const cleanup = () => {
+      if (cleaned) return
+      cleaned = true
+      try {
+        video.pause()
+      } catch {
+        /* ignore */
+      }
+      delete video.dataset.serverDuration
+      try {
+        video.removeAttribute('src')
+        video.load()
+      } catch {
+        /* ignore */
+      }
     }
 
     try {
       await loadOnce(targetUrl)
     } catch (err) {
+      cleanup()
       if (!fallback) {
         if (source.noProxyFallback === true) {
           console.warn(
@@ -198,10 +250,12 @@ export const directEngine: PlayerEngine = {
         throw err
       }
       console.warn('[direct-engine] 直连失败，回退到服务器代理:', redactMediaError(err))
+      if (source.signal?.aborted) throw createPlayerAbortError()
       resetVideoElement(video)
       try {
         await loadOnce(buildProxyUrl(source.url))
       } catch (proxyErr) {
+        cleanup()
         // 包装两次失败上下文：cause 挂回退代理的错误（symptom 因果），
         // 首次直连错误已由上方 console.warn 记录
         throw new Error(
@@ -217,13 +271,15 @@ export const directEngine: PlayerEngine = {
     // HEAD；对最终加载的 URL（video.src 解析后的绝对地址）探测，普通源
     // 不发任何额外请求
     if (!Number.isFinite(video.duration) || video.duration === Infinity) {
-      await probeContentDuration(video.src, video)
+      await probeContentDuration(video.src, video, source.signal)
+    }
+    if (source.signal?.aborted) {
+      cleanup()
+      throw createPlayerAbortError()
     }
 
     return {
-      cleanup: () => {
-        delete video.dataset.serverDuration
-      },
+      cleanup,
     }
   },
 }

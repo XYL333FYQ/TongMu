@@ -45,6 +45,10 @@ const SPARSE_CONCURRENCY = 2
 const SPARSE_WINDOW = 64 * 1024
 /** 稀疏模式允许的 Cluster 解析失败比例（超过则判整体失败） */
 const SPARSE_MAX_FAIL_RATIO = 0.1
+/** Whole-operation transfer guard: a damaged 20GB file must never be scanned forever. */
+const DEFAULT_MAX_BYTES_PROBED = 512 * 1024 * 1024
+const DEFAULT_MAX_RANGES = 8192
+const DEFAULT_TIMEOUT_MS = 120_000
 
 export interface MkvSubtitleTrack {
   /** MKV TrackNumber（前端提取的轨道标识，与后端 ffmpeg stream index 不同） */
@@ -73,6 +77,89 @@ export interface ExtractOptions {
    * 会缺失；传入播放时间后 worker 优先提取播放位置附近，跳转即出字幕。
    */
   getPriorityTime?: () => number | null
+  /** Maximum bytes transferred by one probe/extraction operation. */
+  maxBytesProbed?: number
+  /** Maximum Range requests, including retries and sparse windows. */
+  maxRanges?: number
+  /** Whole-operation deadline, including sparse fallback work. */
+  timeoutMs?: number
+}
+
+export class MkvExtractionBudgetError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'MkvExtractionBudgetError'
+  }
+}
+
+class MkvExtractionBudget {
+  readonly maxBytes: number
+  readonly maxRanges: number
+  private bytes = 0
+  private ranges = 0
+  private readonly deadline: number
+  private readonly controller = new AbortController()
+  private readonly timer: ReturnType<typeof setTimeout>
+  private readonly removeExternalAbort: (() => void) | null
+
+  constructor(opts: ExtractOptions) {
+    this.maxBytes = opts.maxBytesProbed ?? DEFAULT_MAX_BYTES_PROBED
+    this.maxRanges = opts.maxRanges ?? DEFAULT_MAX_RANGES
+    this.deadline = Date.now() + (opts.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+    this.timer = setTimeout(() => this.controller.abort(), opts.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+    if (opts.signal) {
+      const onAbort = () => this.controller.abort()
+      opts.signal.addEventListener('abort', onAbort, { once: true })
+      this.removeExternalAbort = () => opts.signal?.removeEventListener('abort', onAbort)
+    } else {
+      this.removeExternalAbort = null
+    }
+  }
+
+  get signal(): AbortSignal {
+    return this.controller.signal
+  }
+
+  get aborted(): boolean {
+    return this.controller.signal.aborted
+  }
+
+  claimRange(bytes: number): void {
+    this.throwIfAborted()
+    if (this.ranges >= this.maxRanges) {
+      throw new MkvExtractionBudgetError(`MKV 字幕 Range 请求超过上限（${this.maxRanges}）`)
+    }
+    if (this.bytes + bytes > this.maxBytes) {
+      throw new MkvExtractionBudgetError(`MKV 字幕读取超过字节上限（${this.maxBytes}）`)
+    }
+    this.ranges++
+  }
+
+  consume(bytes: number): void {
+    this.throwIfAborted()
+    this.bytes += bytes
+    if (this.bytes > this.maxBytes) {
+      throw new MkvExtractionBudgetError(`MKV 字幕读取超过字节上限（${this.maxBytes}）`)
+    }
+  }
+
+  throwIfAborted(): void {
+    if (this.deadline <= Date.now()) {
+      throw new MkvExtractionBudgetError('MKV 字幕提取超时')
+    }
+    if (this.controller.signal.aborted) {
+      throw new Error('MKV 字幕提取已中止')
+    }
+  }
+
+  dispose(): void {
+    clearTimeout(this.timer)
+    this.removeExternalAbort?.()
+  }
+}
+
+function createMkvExtractionBudget(opts: ExtractOptions): MkvExtractionBudget {
+  return new MkvExtractionBudget(opts)
 }
 
 /** 字幕轨编码 → 是否前端可提取（文本类） */
@@ -95,17 +182,22 @@ export async function probeMkvSubtitleTracks(
   headers?: Record<string, string>,
   signal?: AbortSignal
 ): Promise<MkvSubtitleTrack[]> {
-  const { tracks } = await probeHead(url, headers, signal)
-  return tracks
-    .filter((t) => t.trackType === TRACK_TYPE.SUBTITLE)
-    .map((t) => ({
-      trackNumber: t.trackNumber,
-      codecId: t.codecId,
-      language: t.language,
-      title: t.name,
-      label: trackLabel(t),
-      supported: isTextSubtitleCodec(t.codecId),
-    }))
+  const budget = createMkvExtractionBudget({ headers, signal })
+  try {
+    const { tracks } = await probeHead(url, headers, signal, budget)
+    return tracks
+      .filter((t) => t.trackType === TRACK_TYPE.SUBTITLE)
+      .map((t) => ({
+        trackNumber: t.trackNumber,
+        codecId: t.codecId,
+        language: t.language,
+        title: t.name,
+        label: trackLabel(t),
+        supported: isTextSubtitleCodec(t.codecId),
+      }))
+  } finally {
+    budget.dispose()
+  }
 }
 
 /** Matroska 音轨 CodecID → 通用小写编码名（与 ffprobe 一致） */
@@ -134,14 +226,19 @@ export async function probeMkvMediaInfo(
   headers?: Record<string, string>,
   signal?: AbortSignal
 ): Promise<MkvMediaInfo> {
-  const { tracks } = await probeHead(url, headers, signal)
-  const audioCodecs = tracks
-    .filter((t) => t.trackType === TRACK_TYPE.AUDIO && t.codecId)
-    .map((t) => matroskaAudioCodecName(t.codecId))
-  const textSubtitleTracks = tracks.filter(
-    (t) => t.trackType === TRACK_TYPE.SUBTITLE && isTextSubtitleCodec(t.codecId)
-  ).length
-  return { audioCodecs, textSubtitleTracks }
+  const budget = createMkvExtractionBudget({ headers, signal })
+  try {
+    const { tracks } = await probeHead(url, headers, signal, budget)
+    const audioCodecs = tracks
+      .filter((t) => t.trackType === TRACK_TYPE.AUDIO && t.codecId)
+      .map((t) => matroskaAudioCodecName(t.codecId))
+    const textSubtitleTracks = tracks.filter(
+      (t) => t.trackType === TRACK_TYPE.SUBTITLE && isTextSubtitleCodec(t.codecId)
+    ).length
+    return { audioCodecs, textSubtitleTracks }
+  } finally {
+    budget.dispose()
+  }
 }
 
 interface HeadInfo {
@@ -161,11 +258,13 @@ interface HeadInfo {
 async function probeHead(
   url: string,
   headers?: Record<string, string>,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  budget = createMkvExtractionBudget({ headers, signal })
 ): Promise<HeadInfo> {
+  budget.claimRange(PROBE_HEAD_BYTES)
   const res = await fetch(url, {
     headers: { ...headers, Range: `bytes=0-${PROBE_HEAD_BYTES - 1}` },
-    signal,
+    signal: budget.signal,
   })
   if (!res.ok && res.status !== 206) {
     throw new Error(`探测失败：HTTP ${res.status}`)
@@ -200,6 +299,7 @@ async function probeHead(
     for (;;) {
       const { done, value } = await reader.read()
       if (done) break
+      budget.consume(value.byteLength)
       if (!firstChunk && value.length > 0) firstChunk = value
       demuxer.append(value)
       if (tracks) {
@@ -322,10 +422,30 @@ export async function extractMkvSubtitleTracks(
   trackNumbers: number[],
   opts: ExtractOptions = {}
 ): Promise<Map<number, ExtractedSubtitle>> {
+  const budget = createMkvExtractionBudget(opts)
+  try {
+    return await extractMkvSubtitleTracksWithBudget(
+      url,
+      trackNumbers,
+      opts,
+      budget
+    )
+  } finally {
+    budget.dispose()
+  }
+}
+
+async function extractMkvSubtitleTracksWithBudget(
+  url: string,
+  trackNumbers: number[],
+  opts: ExtractOptions,
+  budget: MkvExtractionBudget
+): Promise<Map<number, ExtractedSubtitle>> {
   const { tracks, tsScaleMs, size, segmentDataStart } = await probeHead(
     url,
     opts.headers,
-    opts.signal
+    opts.signal,
+    budget
   )
   const trackMap = new Map<number, DemuxedTrack>()
   for (const n of trackNumbers) {
@@ -348,18 +468,22 @@ export async function extractMkvSubtitleTracks(
         size,
         segmentDataStart,
         tsScaleMs,
-        opts
+        opts,
+        budget
       )
       usedSparse = true
     } catch (err) {
+      if (budget.aborted || err instanceof MkvExtractionBudgetError) {
+        throw err
+      }
       console.info(
-        '[mkv-embedded] 稀疏提取不可用，回退全量扫描：',
+        '[mkv-embedded] Cues 稀疏提取不可用，回退有上限的 Cluster 顺序扫描：',
         err instanceof Error ? err.message : err
       )
-      framesByTrack = await extractFullStream(url, trackMap, opts)
+      framesByTrack = await extractFullStream(url, trackMap, opts, budget)
     }
   } else {
-    framesByTrack = await extractFullStream(url, trackMap, opts)
+    framesByTrack = await extractFullStream(url, trackMap, opts, budget)
   }
   void usedSparse
 
@@ -385,9 +509,11 @@ export async function extractMkvSubtitleTracks(
 async function extractFullStream(
   url: string,
   trackMap: Map<number, DemuxedTrack>,
-  opts: ExtractOptions
+  opts: ExtractOptions,
+  budget: MkvExtractionBudget
 ): Promise<Map<number, RawSubtitleFrame[]>> {
-  const res = await fetch(url, { headers: opts.headers, signal: opts.signal })
+  budget.throwIfAborted()
+  const res = await fetch(url, { headers: opts.headers, signal: budget.signal })
   if (!res.ok) throw new Error(`提取失败：HTTP ${res.status}`)
   const reader = res.body?.getReader()
   if (!reader) throw new Error('响应无数据流')
@@ -408,6 +534,7 @@ async function extractFullStream(
     for (;;) {
       const { done, value } = await reader.read()
       if (done) break
+      budget.consume(value.byteLength)
       demuxer.append(value)
     }
   } finally {
@@ -441,10 +568,12 @@ async function inflateTrackFrames(
 class RangeFetcher {
   private url: string
   private opts: ExtractOptions
+  private budget: MkvExtractionBudget
 
-  constructor(url: string, opts: ExtractOptions) {
+  constructor(url: string, opts: ExtractOptions, budget: MkvExtractionBudget) {
     this.url = url
     this.opts = opts
+    this.budget = budget
   }
 
   async fetchRange(start: number, len: number): Promise<Uint8Array> {
@@ -452,19 +581,28 @@ class RangeFetcher {
     let lastErr: unknown
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
+        this.budget.claimRange(len)
         const res = await fetch(this.url, {
           headers: {
             ...this.opts.headers,
             Range: `bytes=${start}-${start + len - 1}`,
           },
-          signal: this.opts.signal,
+          signal: this.budget.signal,
         })
         if (res.status !== 206) {
           throw new Error(`服务器不支持 Range 请求（HTTP ${res.status}）`)
         }
-        return new Uint8Array(await res.arrayBuffer())
+        const data = new Uint8Array(await res.arrayBuffer())
+        this.budget.consume(data.byteLength)
+        return data
       } catch (err) {
-        if (this.opts.signal?.aborted) throw err
+        if (
+          this.opts.signal?.aborted ||
+          this.budget.aborted ||
+          err instanceof MkvExtractionBudgetError
+        ) {
+          throw err
+        }
         lastErr = err
         await new Promise((r) => setTimeout(r, 200))
       }
@@ -551,11 +689,12 @@ async function extractSparse(
   size: number,
   segmentDataStart: number,
   tsScaleMs: number,
-  opts: ExtractOptions
+  opts: ExtractOptions,
+  budget: MkvExtractionBudget
 ): Promise<Map<number, RawSubtitleFrame[]>> {
   // 1. 尾部读取并解析 Cues → Cluster 锚点（含时间戳）
   const tailLen = Math.min(8 * 1024 * 1024, size)
-  const rf = new RangeFetcher(url, opts)
+  const rf = new RangeFetcher(url, opts, budget)
   const tail = await rf.fetchRange(size - tailLen, tailLen)
   const anchors = parseCuesAnchors(tail, segmentDataStart, tsScaleMs)
   if (anchors.length === 0) {
@@ -575,7 +714,7 @@ async function extractSparse(
     for (;;) {
       // abort 后立即退出：fetchRange 对已中止信号会即刻抛错，
       // 不检查会导致 294 个锚点逐个失败（数百次无效请求级联）
-      if (opts.signal?.aborted) throw new Error('提取已中止')
+      budget.throwIfAborted()
       const pt = opts.getPriorityTime?.() ?? null
       const i = scheduler.pick(pt != null && Number.isFinite(pt) ? pt * 1000 : null)
       if (i < 0) break
@@ -585,7 +724,7 @@ async function extractSparse(
         await walkAnchorSegment(w, start, next, trackMap, framesByTrack, tsScaleMs)
       } catch (err) {
         // abort 引起的失败不是解析失败：不计数、不重试下一个锚点
-        if (opts.signal?.aborted) throw err
+        if (opts.signal?.aborted || budget.aborted) throw err
         failList.push(i)
         if (failList.length > Math.ceil(total * SPARSE_MAX_FAIL_RATIO) + 2) {
           throw err
@@ -978,10 +1117,25 @@ export async function streamMkvSubtitleTrack(
   trackNumber: number,
   opts: StreamOptions
 ): Promise<void> {
+  const budget = createMkvExtractionBudget(opts)
+  try {
+    await streamMkvSubtitleTrackWithBudget(url, trackNumber, opts, budget)
+  } finally {
+    budget.dispose()
+  }
+}
+
+async function streamMkvSubtitleTrackWithBudget(
+  url: string,
+  trackNumber: number,
+  opts: StreamOptions,
+  budget: MkvExtractionBudget
+): Promise<void> {
   const { tracks, tsScaleMs, size, segmentDataStart } = await probeHead(
     url,
     opts.headers,
-    opts.signal
+    opts.signal,
+    budget
   )
   const track = tracks.find((t) => t.trackNumber === trackNumber)
   if (
@@ -1062,7 +1216,8 @@ export async function streamMkvSubtitleTrack(
 
   /** 全量流式路径（小文件 / 无 Cues / 大小未知）：顺序读 + 增量交付 */
   const streamFullScan = async (): Promise<void> => {
-    const res = await fetch(url, { headers: opts.headers, signal: opts.signal })
+    budget.throwIfAborted()
+    const res = await fetch(url, { headers: opts.headers, signal: budget.signal })
     if (!res.ok) throw new Error(`提取失败：HTTP ${res.status}`)
     const reader = res.body?.getReader()
     if (!reader) throw new Error('响应无数据流')
@@ -1077,6 +1232,7 @@ export async function streamMkvSubtitleTrack(
       for (;;) {
         const { done, value } = await reader.read()
         if (done) break
+        budget.consume(value.byteLength)
         demuxer.append(value)
         await maybeFlush()
       }
@@ -1095,7 +1251,7 @@ export async function streamMkvSubtitleTrack(
 
   // 大文件：稀疏路径 + seek 感知调度 + 完成即交付
   const tailLen = Math.min(8 * 1024 * 1024, size)
-  const rf = new RangeFetcher(url, opts)
+  const rf = new RangeFetcher(url, opts, budget)
   const tail = await rf.fetchRange(size - tailLen, tailLen)
   const anchors = parseCuesAnchors(tail, segmentDataStart, tsScaleMs)
   if (anchors.length === 0) {
@@ -1116,7 +1272,7 @@ export async function streamMkvSubtitleTrack(
     for (;;) {
       // abort 后立即退出：fetchRange 对已中止信号会即刻抛错，
       // 不检查会导致全部锚点逐个失败（数百次无效请求级联）
-      if (opts.signal?.aborted) throw new Error('提取已中止')
+      budget.throwIfAborted()
       const pt = opts.getPriorityTime?.() ?? null
       const priorityMs = pt != null && Number.isFinite(pt) ? pt * 1000 : null
       const i = scheduler.pick(priorityMs)
@@ -1135,7 +1291,7 @@ export async function streamMkvSubtitleTrack(
         )
       } catch (err) {
         // abort 引起的失败不是解析失败：不计数、立即终止 worker
-        if (opts.signal?.aborted) throw err
+        if (opts.signal?.aborted || budget.aborted) throw err
         hardFail++
         if (hardFail > Math.ceil(total * SPARSE_MAX_FAIL_RATIO) + 2) throw err
         console.warn(

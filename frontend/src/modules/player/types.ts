@@ -142,6 +142,13 @@ export interface PlayerSource {
    * 会让服务器带宽悄悄跑满，且掩盖了源站/直链本身的问题。
    */
   noProxyFallback?: boolean
+  /**
+   * Player-owned cancellation signal. This is runtime-only and must never be
+   * serialized into room/media DTOs or used as an authorization credential.
+   */
+  signal?: AbortSignal
+  /** Server/room source generation used in addition to the local generation. */
+  sourceGeneration?: number
 }
 
 /**

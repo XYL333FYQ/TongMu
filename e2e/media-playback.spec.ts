@@ -1128,3 +1128,109 @@ test('Phase 3B cache keeps authorized Range quality and bounds upstream reads', 
     entry.path === '/normal.mp4' && entry.method === 'GET');
   expect(upstreamReads.length).toBe(process.env.SLICE_CACHE_ENABLED === 'true' ? 1 : 2);
 });
+
+test('Phase 4A rapid A to B to A keeps only the newest source generation active', async ({ page }) => {
+  await page.goto('/login');
+  const result = await page.evaluate(async () => {
+    const {
+      createPlayerGeneration,
+      disposePlayerGeneration,
+      isCurrentPlayerGeneration,
+      getPlayerResourceSnapshot,
+    } = await import('/src/modules/player/lifecycle.ts');
+    const a1 = createPlayerGeneration(1, 401);
+    let current = a1;
+    const committed: string[] = [];
+    const lateCommit = (generation: typeof a1, label: string, delay: number) =>
+      new Promise<void>((resolve) => {
+        setTimeout(() => {
+          if (isCurrentPlayerGeneration(current, generation)) committed.push(label);
+          resolve();
+        }, delay);
+      });
+    const first = lateCommit(a1, 'A1', 80);
+    disposePlayerGeneration(a1);
+    const b = createPlayerGeneration(2, 402);
+    current = b;
+    const second = lateCommit(b, 'B', 50);
+    disposePlayerGeneration(b);
+    const a2 = createPlayerGeneration(3, 403);
+    current = a2;
+    const third = lateCommit(a2, 'A2', 5);
+    await Promise.all([first, second, third]);
+    disposePlayerGeneration(a2);
+    return { committed, resources: getPlayerResourceSnapshot() };
+  });
+  expect(result.committed).toEqual(['A2']);
+  expect(result.resources.activePlayerFetchControllers).toBe(0);
+});
+
+test('Phase 4A HLS to DASH replacement retires the previous engine resources', async ({ page }) => {
+  await loginAndCreateRoom(page);
+  const requests: string[] = [];
+  page.on('request', (request) => requests.push(request.url()));
+  const hls = `${FIXTURE_ORIGIN}/hls/master.m3u8?generation=phase4a-hls`;
+  const dash = `${FIXTURE_ORIGIN}/dash/manifest.mpd?generation=phase4a-dash`;
+
+  await page.route(`${FIXTURE_ORIGIN}/**`, route => route.abort('blockedbyclient'));
+  await addAndPlay(page, hls, /Engine: hls/);
+  const hlsRequestsBeforeReplacement = requests.filter((url) => /\/hls\//.test(url)).length;
+
+  await addAndPlay(page, dash, /Engine: dash/);
+  await page.waitForTimeout(1_000);
+  expect(requests.filter((url) => /\/hls\//.test(url)).length).toBe(hlsRequestsBeforeReplacement);
+});
+
+test('Phase 4A external subtitle work cannot cross a source-generation switch', async ({ page }) => {
+  await page.goto('/login');
+  await page.route('**/phase4a-old.srt', async route => {
+    await new Promise(resolve => setTimeout(resolve, 250));
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/plain',
+      body: '1\n00:00:00,000 --> 00:00:01,000\nold-generation\n',
+    });
+  });
+  await page.route('**/phase4a-new.srt', async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/plain',
+      body: '1\n00:00:00,000 --> 00:00:01,000\nnew-generation\n',
+    });
+  });
+  const result = await page.evaluate(async () => {
+    const { fetchGenerationBoundSubtitleText } = await import('/src/lib/subtitleLifecycle.ts');
+    const { parseSubtitle, subtitleCueIdentity } = await import('/src/lib/subtitleParser.ts');
+    const generation = { current: 421 };
+    const oldTextPromise = fetchGenerationBoundSubtitleText({
+      url: '/phase4a-old.srt',
+      generation: generation.current,
+      getCurrentGeneration: () => generation.current,
+    });
+    generation.current = 422;
+    const newText = await fetchGenerationBoundSubtitleText({
+      url: '/phase4a-new.srt',
+      generation: generation.current,
+      getCurrentGeneration: () => generation.current,
+    });
+    const oldText = await oldTextPromise;
+    const oldCues = parseSubtitle(oldText ?? '', 'srt');
+    const newCues = parseSubtitle(newText ?? '', 'srt');
+    return {
+      generation: generation.current,
+      oldCommitted: oldText !== null,
+      newCommitted: newText !== null,
+      oldIdentity: oldCues[0] ? subtitleCueIdentity(oldCues[0], 'external:old') : null,
+      newIdentity: newCues[0] ? subtitleCueIdentity(newCues[0], 'external:new') : null,
+      oldText: oldCues[0]?.text,
+      newText: newCues[0]?.text,
+    };
+  });
+  expect(result.generation).toBe(422);
+  expect(result.oldCommitted).toBe(false);
+  expect(result.newCommitted).toBe(true);
+  expect(result.oldIdentity).toBeNull();
+  expect(result.newIdentity).toBeTruthy();
+  expect(result.oldText).toBeUndefined();
+  expect(result.newText).toBe('new-generation');
+});
