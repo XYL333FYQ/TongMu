@@ -3,9 +3,11 @@
 ## Scope
 
 Phase 5A centralizes room authorization decisions for video, viewer
-management, host transfer, room settings, and Voice moderation. It does not
-change Voice identity, reconnect, ghost cleanup, audio, or decoder lifecycle.
-Those Phase 4B lifecycle guarantees remain in place.
+management, host transfer, room settings, and Voice moderation. Phase 5B-1
+extends the same decision boundary with MusicSyncDomain queue, host-control,
+viewer-request, heartbeat, ended, and track-ACK actions. It does not change
+Voice identity, reconnect, ghost cleanup, audio, or decoder lifecycle. Those
+Phase 4B lifecycle guarantees remain in place.
 
 Role facts and permission decisions are separate. The core adapts TongMu's
 existing identities without changing database identity semantics:
@@ -28,14 +30,22 @@ The finite action set is:
 - `viewer.kick`, `viewer.mute`
 - `voice.mute`, `voice.kick`
 - `moderator.manage`, `host.transfer`, `room.settings`
+- `music.queue.add`, `music.queue.remove`, `music.queue.reorder`,
+  `music.queue.clear`
+- `music.play`, `music.pause`, `music.seek`, `music.next`, `music.previous`,
+  `music.track.select`, `music.mode.change`, `music.heartbeat`,
+  `music.track.ended`
+- `music.control.request`, `music.track.ack`
 
 The default policy is deliberately conservative. System and the current owner
 may perform room-authoritative playback, movie, subtitle, settings, transfer,
-and moderation actions. Moderators may perform the explicitly supported
-moderation actions against lower roles, but cannot act on system, owner, or a
-peer moderator. Members and guests cannot invoke privileged room actions.
-Every socket handler calls the same `canPerform(...)` decision or a
-compatibility method that delegates to it.
+and moderation actions. Moderators may manage the music queue, but only the
+current host/system may perform authoritative music playback, mode, heartbeat,
+ended, and track-selection actions. Authenticated members may submit music
+control requests and track ACKs; the host decides whether a request is
+applied. Guests cannot use the music request/ACK path. Every socket handler
+calls the same `canPerform(...)` decision or a compatibility method that
+delegates to it.
 
 ## Anti-escalation
 
@@ -73,8 +83,9 @@ permissions or a second Voice lifecycle implementation.
 
 ## Validation
 
-The Phase 5A backend tests cover the role/action matrix, guest/member/
+The Phase 5A/5B-1 backend tests cover the role/action matrix, guest/member/
 moderator/owner/system behavior, protected targets, self-target behavior,
-invalid payloads, and serialized room locking. Existing Voice tests and the
-Chromium fake-media Voice flow remain regression gates. Music queue, Together
-Listen, NCM, and Phase 6 schema/release migrations remain deferred.
+invalid payloads, serialized room locking, music queue authority, stale
+music generations, and video/music isolation. Existing Voice tests and the
+Chromium fake-media Voice flow remain regression gates. NCM and Phase 6
+schema/release migrations remain deferred.

@@ -14,6 +14,7 @@ import { RoomLayout } from '@/modules/room/components/RoomLayout'
 import { RoomInfoPanel } from '@/modules/room/components/RoomInfoPanel'
 import { MovieListPanel } from '@/modules/room/components/MovieListPanel'
 import { MoviePushPanel } from '@/modules/room/components/MoviePushPanel'
+import { TogetherListenPanel } from '@/modules/music'
 import { CommentPanel } from '@/components/CommentPanel'
 import { Spinner } from '@/components/ui/Spinner'
 import { message } from '@/components/ui/message'
@@ -396,6 +397,7 @@ function RoomPage() {
           <RoomInfoPanel roomId={roomId} isHost />
           <MovieListPanel isHost />
           <MoviePushPanel isHost />
+          <TogetherListenPanel roomId={roomId} isHost />
         </>
       )
 
@@ -422,7 +424,7 @@ function RoomPage() {
           controlLabels={
             mode === 'screen-share'
               ? ['房间状态']
-              : ['房间状态', '影片列表', '添加影片']
+              : ['房间状态', '影片列表', '添加影片', '一起听']
           }
           webFullscreen={isWebFullscreen}
         />

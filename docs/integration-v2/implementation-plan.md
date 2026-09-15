@@ -363,13 +363,96 @@ Copying the music module first would duplicate old socket assumptions. Identity,
 - A future MusicSyncDomain must not read or mutate VideoSyncDomain state.
 - Database/state migration and socket compatibility remain Phase 6 concerns.
 
-## Phase 5B — MusicSyncDomain, Together Listen and NCM
+## Phase 5B-1 — MusicSyncDomain, persistent queue and Together Listen
 
-Phase 5B remains planned. It may use `RealtimeSyncCore` for identity, version,
-snapshot, reconnect, permissions, and targeted events, but owns its own queue,
-track, play-mode, and audio state. It includes queue persistence, Together
-Listen UI, NCM provider behavior, and explicit audio quality handling. It does
-not change the Phase 5A video domain contract.
+**Status: COMPLETE within the approved single-node, fixture/provider-neutral
+boundary.**
+
+Music uses `RealtimeSyncCore` ordering, deduplication, room locks, targeted
+delivery, and disconnect cleanup through an independent music clock. The
+music module owns queue items, current selection, `musicGeneration`, version,
+play mode, position, host facts, heartbeat, reconnect snapshots, viewer
+control requests, and track ACKs. It does not read or mutate VideoSyncDomain,
+video `sourceGeneration`, movie state, readiness, subtitle state, or video
+playback.
+
+**Implemented files/modules**
+
+- `backend/src/modules/music/*`
+- `backend/src/entities/MusicQueueItem.ts`
+- `backend/src/entities/MusicRoomState.ts`
+- `backend/src/modules/realtime-sync-core/*` music-domain primitives
+- `backend/src/modules/room/permission-core.ts` music actions
+- `frontend/src/modules/music/*`
+- Together Listen integration in the existing room and watch controls
+- `backend/test/phase5b-music.test.js`, `frontend/test/music.test.cjs`, and
+  `e2e/phase5b-music.spec.ts`
+
+**Contract decisions**
+
+- Queue IDs are generated stable identities, independent of song ID, title,
+  array position, and duplicate entries.
+- Queue rows store only bounded provider-neutral `music://...` references and
+  metadata. Cookies, authorization headers, signed/raw stream URLs, and
+  provider credentials are rejected and never become public DTO fields.
+- Queue add/remove/reorder/clear/select and play-mode changes are server-side,
+  permission-checked, versioned, and bounds-checked. Multirow order changes
+  use one SQLite/TypeORM transaction.
+- Current selection and play mode survive restart. Position and playing state
+  are ephemeral and reset honestly; no fake exact resume is emitted.
+- Track switches increment only `musicGeneration`; stale old-track playback,
+  heartbeat, ACK, and ended events are rejected. ACKs are targeted and
+  expiring, and slow viewers do not block authority.
+- The active sharer remains the host. Disconnect/reconnect sends a fresh
+  snapshot and exposes `hostOffline`; viewers never self-promote.
+- Viewer control is request -> exact host target -> response by request ID,
+  room, actor, generation, version, and expiry. Host approval is required for
+  member play/pause/seek/next/previous/select requests.
+- The first UI uses deterministic local WAV fixtures only. It preserves the
+  audio element's generation-owned listeners, abort/cleanup, and bounded drift
+  correction, and does not silently lower audio quality.
+
+**Required verification**
+
+- Backend music domain, persistence/restart, shuffle/repeat, stale generation,
+  stale version, ACK, permission, timestamp, and video/music isolation tests.
+- Frontend music authority, delay/drift, and audio lifecycle tests.
+- Chromium Together Listen flow with fixture loading, Range, duplicate queue
+  identity, viewer request/host approval, and state propagation.
+- Existing backend/frontend regressions, builds, targeted lint, and
+  `git diff --check`; full frontend lint remains a pre-existing baseline gate
+  if it still reports unrelated repository/vendor findings.
+
+**Final acceptance closure (2026-09-15)**
+
+Phase 5B-1 is complete. The historical blocked state is retained: the initial
+full Chromium run and two focused Voice runs exposed a failure in the existing
+Voice fake-media path. Diagnosis showed that the first missing event was the
+authenticated Socket.IO `connect` after forced disconnect, not `voice-join`.
+The old socket-ID assertion could accept a cleared ID as a false-positive
+reconnect. The underlying failure was a stale pre-login auth refresh racing with
+login and poisoning the new session, amplified by competing socket-auth
+recovery handlers. The minimal fix added shared refresh-generation protection,
+single-flight socket-auth recovery, and an assertion requiring a real connected
+socket with a new non-empty ID. Voice protocol/UI code was not changed.
+
+Final evidence: backend tests 117 pass / 1 Windows symlink skip, frontend tests
+23/23 pass, backend lint/build pass, frontend build pass, targeted changed-file
+ESLint pass, Music Chromium 1/1 pass, three independent focused Voice runs
+pass, and the full Chromium suite passes with 24 pass / 1 intentional skip / 0
+failures. The repository-wide frontend ESLint baseline remains separately
+blocked by pre-existing findings and was not weakened.
+
+## Phase 5B-2 — NCM provider and product surface
+
+**Status: DEFERRED / not part of Phase 5B-1.**
+
+NCM login, cookie/session handling, search, playlists, albums, artists, FM,
+cloud music, lyrics, comments, likes, upstream music APIs, and provider
+specific quality fallback require a separate security, provenance, API-terms,
+and product review. No NCM code, credentials, dependency, route, API, or UI
+is added by Phase 5B-1. Any future NCM work must keep secrets server-side and
+must not copy ZViewer's silent quality downgrade behavior.
 
 ## Phase 6 — historical migrations, packaging, CI and measured extensions
 

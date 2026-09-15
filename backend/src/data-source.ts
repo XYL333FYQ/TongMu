@@ -13,6 +13,8 @@ import { ServerFolder } from './entities/ServerFolder';
 import { DanmakuTrack } from './entities/DanmakuTrack';
 import { RoomDanmakuMeta } from './entities/RoomDanmakuMeta';
 import { AuditLog } from './entities/AuditLog';
+import { MusicQueueItem } from './entities/MusicQueueItem';
+import { MusicRoomState } from './entities/MusicRoomState';
 import { DATABASE_PATH } from './services/paths';
 import { AddMediaCoreMetadata1789160000000 } from './migrations/1789160000000-AddMediaCoreMetadata';
 
@@ -30,7 +32,7 @@ export const AppDataSource = new DataSource({
   // it can classify fresh vs existing installs before applying versioned work.
   migrationsRun: false,
   logging: process.env.NODE_ENV === 'development',
-  entities: [Room, Session, User, Comment, BilibiliCredential, Movie, UserMount, SystemSettings, PlaybackState, ServerFolder, DanmakuTrack, RoomDanmakuMeta, AuditLog],
+  entities: [Room, Session, User, Comment, BilibiliCredential, Movie, UserMount, SystemSettings, PlaybackState, ServerFolder, DanmakuTrack, RoomDanmakuMeta, AuditLog, MusicQueueItem, MusicRoomState],
   migrations: [AddMediaCoreMetadata1789160000000],
   subscribers: [],
 });

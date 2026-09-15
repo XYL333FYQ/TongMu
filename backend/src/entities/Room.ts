@@ -8,6 +8,7 @@ import {
 } from "typeorm";
 import { Session } from "./Session";
 import { Movie } from "./Movie";
+import { MusicQueueItem } from './MusicQueueItem';
 
 export type RoomStatus = "active" | "closed";
 export type RoomMode = "screen-share" | "watch-together";
@@ -115,4 +116,7 @@ export class Room {
 
   @OneToMany(() => Movie, (movie) => movie.room, { cascade: true })
   movies_relation!: Movie[];
+
+  @OneToMany(() => MusicQueueItem, (item) => item.room, { cascade: true })
+  musicQueueItems!: MusicQueueItem[];
 }

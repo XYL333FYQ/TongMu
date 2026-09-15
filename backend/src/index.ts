@@ -79,6 +79,7 @@ import { CliHandler } from './modules/cli';
 import { nmsService, StreamPushHandler, streamPushRouter } from './modules/stream-push';
 import { SignalingHandler, ViewerEventsHandler } from './modules/webrtc-signaling';
 import { VoiceChatHandler } from './modules/voice-chat';
+import { createMusicFixtureRouter, MusicSyncHandler, musicSyncService } from './modules/music';
 import { ensureUploadsRoot } from './services/server-files/pathResolver';
 import {
   AVATARS_DIR,
@@ -114,6 +115,7 @@ export async function deleteRoomAndRelations(
   await movieRepo.delete({ roomId });
   await commentRepo.delete({ roomId });
   await playbackStateRepo.delete({ roomId });
+  await musicSyncService.deletePersistedRoomData(roomId);
 
   // 删除房间
   await roomRepo.delete({ roomId });
@@ -314,6 +316,10 @@ async function bootstrap() {
   app.use('/api/system/update', updaterRoutes);
   app.use('/api/stats', statsRoutes);
   app.use('/api/stream-push', streamPushRouter);
+  // Phase 5B-1 ships only deterministic local audio fixtures. Provider
+  // resolution remains behind the MusicProvider boundary and is not mixed
+  // into the video/media routes.
+  app.use('/api/music', createMusicFixtureRouter());
 
   app.get('/health', (_req, res) => {
     res.json({
@@ -482,7 +488,8 @@ async function bootstrap() {
     .add(new SignalingHandler())
     .add(new ViewerEventsHandler())
     // 语音聊天服务器中转（从 signaling.ts 中分离）
-    .add(new VoiceChatHandler());
+    .add(new VoiceChatHandler())
+    .add(new MusicSyncHandler());
 
   // 挂载新模块的 REST 路由
   app.use('/api/rooms', createMovieRouter(io));

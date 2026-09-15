@@ -4,7 +4,7 @@
 
 This file is the persistent checkpoint for the TongMu V2 integration program. Phase 0 is an audit and design phase only: no product code, dependency, database, configuration, CI, or reference source was changed.
 
-Current state: **Phase 2, Phase 3A, Phase 3B, Phase 4A, Phase 4B Voice, and Phase 5A RealtimeSyncCore/Permissions are complete within their approved boundaries. Phase 5B and the Phase 6 migration/release gate remain open.**
+Current state: **Phase 2, Phase 3A, Phase 3B, Phase 4A, Phase 4B Voice, Phase 5A RealtimeSyncCore/Permissions, and Phase 5B-1 MusicSyncDomain/Together Listen are complete within their approved boundaries. The Phase 5B-1 final acceptance gate is closed after the Voice fake-media Chromium regression was diagnosed and minimally fixed; Phase 5B-2 NCM and the Phase 6 migration/release gate remain open.**
 
 Phase 2 has a working core checkpoint: the versioned client profile, server
 viability filter, client-owned planner path, provider contract/registry, and
@@ -79,7 +79,7 @@ to do that work safely.
 1. Phase 3A typed HLS/DASH resource mapping and its Chromium browser exit gate are complete; the fixture's Inspector/client-blocked diagnostics are intentional route aborts used to verify fallback.
 2. Live publishing/ingest lifecycle (RTMP/WHIP/WHEP) remains outside public HLS/HTTP-FLV source convergence and is explicitly deferred.
 3. Phase 3A's typed DASH mapper covers `SegmentBase`, representation indexes, bitstream-switching resources, `Location`, xlink, timing URLs, and bounded recursion in unit/backend tests; nested fixture MPD playback is covered by the completed Chromium suite.
-4. Realtime video and future music synchronization now share the documented Phase 5A `RealtimeSyncCore`; MusicSyncDomain, queue state, and Together Listen remain Phase 5B.
+4. Realtime video and music synchronization now share the documented `RealtimeSyncCore` primitives while keeping independent clocks and state. Phase 5B-1 MusicSyncDomain, queue state, and Together Listen are complete; its final acceptance gate is closed. The historical Voice fake-media Chromium blocker and its auth-refresh race fix are recorded in the Phase 5B-1 closure below. NCM remains Phase 5B-2.
 5. Voice lifecycle, identity, reconnect replacement, decoder ownership, ghost cleanup, and voice-local moderation remain Phase 4B behavior; Phase 5A now supplies the shared permission decision boundary.
 6. Phase 4A player/subtitle lifetime hardening and Phase 4B Voice are complete within their scoped boundaries.
 7. Release artifacts still retain historical ZViewer-era names for compatibility; full TongMu renaming, checksum/signature verification, staged extraction, and rollback remain Phase 6 work.
@@ -106,7 +106,8 @@ to do that work safely.
 - [x] Phase 4A — Player / Subtitle lifecycle.
 - [x] Phase 4B — Voice lifecycle / identity / moderation.
 - [x] Phase 5A — `RealtimeSyncCore` / VideoSyncDomain / Room Permissions.
-- [ ] Phase 5B — `MusicSyncDomain` / Together Listen / NCM.
+- [x] Phase 5B-1 — `MusicSyncDomain` / persistent queue / Together Listen (implementation and final regression gate complete within the approved boundary).
+- [ ] Phase 5B-2 — NCM provider and product surface.
 - [ ] Phase 6 — Historical migrations / Packaging / CI / Observability / release gate.
 
 See `implementation-plan.md` for dependencies, file targets, tests, exit criteria, and risks.
@@ -420,9 +421,69 @@ Voice fake-media and Phase 4A browser regressions PASS. Frontend full ESLint
 remains the pre-existing repository baseline failure and was not relaxed or
 auto-fixed. Phase 3 cache checks remain the previously recorded PASS baseline.
 
-The detailed contracts are in `realtime-sync-core.md` and
-`room-permissions.md`. MusicSyncDomain, Together Listen, queue persistence,
-play modes, NCM, and Phase 6 migration/release work remain planned.
+The detailed contracts are in `realtime-sync-core.md`, `room-permissions.md`,
+`music-sync-domain.md`, and `together-listen.md`. NCM and Phase 6
+migration/release work remain intentionally open.
+
+### Phase 5B-1 final status
+
+**COMPLETE within the MusicSyncDomain, persistent queue, Together Listen, and
+single-node realtime boundary.** Music has its own `musicGeneration`, version,
+server timestamp, queue identity, current selection, play mode, playback state,
+heartbeat, reconnect snapshot, host-offline fact, viewer control
+request/response, and generation/version-bound track ACK. The shared
+`RealtimeSyncCore` supplies ordering, deduplication, room locks, targeted
+delivery, and disconnect cleanup through an independent music clock; it never
+reads or mutates video state, `sourceGeneration`, readiness, subtitles, or the
+current movie.
+
+Queue items are persisted in the existing TypeORM/SQLite boundary with stable
+generated IDs, normalized order, duplicate-track support, transaction-backed
+add/remove/reorder/clear operations, and persisted current selection/play mode.
+Position and playing state remain ephemeral across restart, so a restart does
+not claim exact playback recovery. Queue source refs are opaque, bounded, and
+provider-neutral; raw cookies, authorization headers, signed stream URLs, and
+provider credentials are rejected and never stored.
+
+The browser UI is a basic Together Listen panel using only deterministic local
+`music://fixture/...` WAV sources. It exercises audio generation cleanup,
+bounded drift correction, host controls, viewer requests, play modes, queue
+selection/reorder/remove, and reconnect snapshot-first behavior. There is no
+NCM login, cookie, search, playlist, album, FM, cloud, lyrics, comment, like,
+or upstream music API in Phase 5B-1. Phase 5B-2 remains the explicit NCM
+decision/review gate.
+
+The historical blocked state is retained for auditability: the first full
+Chromium run had one failure in the existing Voice fake-media test, and two
+independent focused Voice runs failed before the music behavior was exercised.
+The first genuinely missing event was the authenticated Socket.IO `connect`
+after forced disconnect; no new `voice-join` followed. The test's old socket-ID
+poll accepted a cleared ID as a false-positive reconnect signal. The underlying
+cause was a stale pre-login auth refresh racing with login and marking the new
+session expired; multiple `useSocket` consumers could then start competing
+socket recovery. The minimal closure fix added session-generation guards to the
+shared refresh path and one shared socket-auth recovery promise, and tightened
+the test to require `socket.connected` plus a new non-empty ID. No Voice
+protocol or UI source was changed, and Music did not remove Voice listeners or
+resources. A build alone is not treated as behavioral proof.
+
+### Phase 5B-1 verification
+
+| Check | Command | Result | Evidence / limitation |
+|---|---|---:|---|
+| Backend typecheck | `npm run lint -w backend` | PASS | TypeScript no-emit check passes after the final queue deletion/rollback fix |
+| Backend tests | `npm test -w backend` | PASS with 1 skip | 117 passing; Windows symlink-escape case skipped because this environment does not permit creating a symlink |
+| Frontend tests | `npm test -w frontend` | PASS | 23/23, including 4 music authority/timing/lifecycle cases |
+| Frontend production build | `npm run build -w frontend` | PASS | Existing MediaBunny dynamic-import and large-chunk warnings remain |
+| Focused changed-file ESLint | `npx eslint src/hooks/useSocket.ts src/lib/api.ts src/modules/music src/modules/room/RoomPage.tsx src/modules/screen-sharing/components/WatchPage.tsx --ext ts,tsx --report-unused-disable-directives --max-warnings 0` (from `frontend`) | PASS | No findings in the changed frontend paths |
+| Frontend full ESLint | `npm run lint -w frontend` | BASELINE BLOCKED | Existing repository/vendor findings remain; current run reported 6,731 problems, and no rule was weakened or full-tree auto-fix applied |
+| Music Chromium E2E | `npx playwright test e2e/phase5b-music.spec.ts --reporter=line --workers=1` | PASS | 1/1; two viewers, duplicate queue identity, fixture readiness/Range, viewer request/host approval, switch ACKs, stale ended rejection, and reconnect snapshot |
+| Full Chromium E2E | `npx playwright test --reporter=line --workers=1` | PASS | 24 passed, 1 intentional skip, 0 failed; video, cache, Phase 5A, Voice, and music cases completed naturally |
+| Focused Voice regression — run 1/3 | `npx playwright test e2e/voice-lifecycle.spec.ts --reporter=line --workers=1` | PASS | Independent serialized run, 1/1 |
+| Focused Voice regression — run 2/3 | `npx playwright test e2e/voice-lifecycle.spec.ts --reporter=line --workers=1` | PASS | Independent serialized run, 1/1 |
+| Focused Voice regression — run 3/3 | `npx playwright test e2e/voice-lifecycle.spec.ts --reporter=line --workers=1` | PASS | Independent serialized run, 1/1 |
+| Diff whitespace | `git diff --check` | PASS | Only Git's existing LF/CRLF normalization warnings were reported |
+| Reference/dependency boundary | `git diff --name-only -- references`; manifest diff | PASS | No reference files changed; no package or lockfile drift |
 
 ### Phase 2 closure audit
 

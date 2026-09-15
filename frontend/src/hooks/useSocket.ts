@@ -1,18 +1,19 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { io, type Socket } from 'socket.io-client'
 import { useAuthStore, type User } from '@/store/authStore'
 import {
   apiFetch,
   getSocketUrl,
-  getRefreshToken,
   saveAuthTokens,
   resetSessionExpired,
+  refreshAccessToken,
 } from '@/lib/api'
 import { buildSocketAuth } from '@/lib/authTransport'
 
 let globalSocket: Socket | null = null
 let refCount = 0
 let disconnectTimer: ReturnType<typeof setTimeout> | null = null
+let socketAuthRecoveryPromise: Promise<boolean> | null = null
 
 /**
  * 创建 Socket.IO 连接。
@@ -85,11 +86,70 @@ export function resetSocket(): void {
   }
 }
 
+/**
+ * Socket.IO 只有一个全局连接，但房间内有多个 useSocket() 消费者。
+ * 认证失效时必须共享一次 refresh/guest 恢复，否则每个消费者都会并发
+ * 刷新并触发 disconnect/connect，可能把一次可恢复的重连变成竞态风暴。
+ */
+function recoverSocketAuthentication(logout: () => void): Promise<boolean> {
+  if (socketAuthRecoveryPromise) return socketAuthRecoveryPromise
+
+  const recovery = (async () => {
+    try {
+      // 复用 HTTP 鉴权层的并发安全 refresh，并同步更新 access token。
+      if (await refreshAccessToken()) {
+        reconnectSocket()
+        return true
+      }
+
+      // refresh 失败时保留现有的 guest 降级行为。
+      const guestRes = await apiFetch('/api/auth/guest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      })
+      if (guestRes.ok) {
+        const guestData = (await guestRes.json()) as {
+          success?: boolean
+          user?: {
+            id: string
+            username: string
+            role: string
+            status?: 'active' | 'pending'
+            avatar?: string | null
+          }
+          accessToken?: string
+        }
+        if (guestData.success && guestData.user) {
+          if (guestData.accessToken) saveAuthTokens(guestData.accessToken)
+          resetSessionExpired()
+          useAuthStore.getState().setUser({
+            id: guestData.user.id,
+            username: guestData.user.username,
+            role: guestData.user.role as User['role'],
+            status: guestData.user.status,
+            avatar: guestData.user.avatar,
+          })
+          reconnectSocket()
+          return true
+        }
+      }
+
+      logout()
+    } catch {
+      // 网络错误不主动登出；Socket.IO 会继续按自身策略重试。
+    }
+    return false
+  })()
+
+  socketAuthRecoveryPromise = recovery
+  void recovery.finally(() => {
+    if (socketAuthRecoveryPromise === recovery) socketAuthRecoveryPromise = null
+  })
+  return recovery
+}
+
 export function useSocket() {
   const logout = useAuthStore((s) => s.logout)
-
-  // 防止 connect_error 触发多次并发 refresh
-  const isRefreshingRef = useRef(false)
 
   // 已认证或游客身份均需要建立 socket（游客也有 accessToken cookie）
   // 这里只判断是否已通过 AuthInitializer 完成 autoLogin，避免过早创建 socket
@@ -99,7 +159,7 @@ export function useSocket() {
   const socket = useMemo(() => {
     if (!shouldCreateSocket) return null
     return getSocket()
-  }, [shouldCreateSocket, autoLoginStatus])
+  }, [shouldCreateSocket])
 
   const [connected, setConnected] = useState(() => socket?.connected ?? false)
 
@@ -136,71 +196,14 @@ export function useSocket() {
         msg.includes('unauthorized') ||
         msg.includes('not authenticated')
 
-      if (!isAuthError || isRefreshingRef.current) {
+      if (!isAuthError) {
         setConnected(false)
         return
       }
 
-      isRefreshingRef.current = true
-      try {
-        // Step 1: 尝试 refresh access token
-        const res = await apiFetch('/api/auth/refresh', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ refreshToken: getRefreshToken() }),
-        })
-        if (res.ok) {
-          const data = (await res.json()) as {
-            success?: boolean
-            accessToken?: string
-          }
-          if (data.success) {
-            if (data.accessToken) saveAuthTokens(data.accessToken)
-            reconnectSocket()
-            return
-          }
-        }
-
-        // Step 2: refresh 失败 → 获取 guest token 作为降级身份
-        const guestRes = await apiFetch('/api/auth/guest', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-        })
-        if (guestRes.ok) {
-          const guestData = (await guestRes.json()) as {
-            success?: boolean
-            user?: {
-              id: string
-              username: string
-              role: string
-              status?: 'active' | 'pending'
-              avatar?: string | null
-            }
-            accessToken?: string
-          }
-          if (guestData.success && guestData.user) {
-            if (guestData.accessToken) saveAuthTokens(guestData.accessToken)
-            resetSessionExpired()
-            useAuthStore.getState().setUser({
-              id: guestData.user.id,
-              username: guestData.user.username,
-              role: guestData.user.role as User['role'],
-              status: guestData.user.status,
-              avatar: guestData.user.avatar,
-            })
-            reconnectSocket()
-            return
-          }
-        }
-
-        // Step 3: guest token 也失败 → 登出作为最后手段
-        logout()
-      } catch {
-        // 网络错误 → 不登出，等待 socket.io 自动重试
-      } finally {
-        isRefreshingRef.current = false
-      }
-      setConnected(false)
+      void recoverSocketAuthentication(logout).then((recovered) => {
+        if (!recovered) setConnected(false)
+      })
     }
 
     socket.on('connect', onConnect)

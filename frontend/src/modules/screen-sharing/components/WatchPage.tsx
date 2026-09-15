@@ -26,6 +26,7 @@ import { usePlayerRemountKey } from '@/modules/room/watch-together/usePlayerRemo
 import { RoomLayout } from '@/modules/room/components/RoomLayout'
 import { RoomInfoPanel } from '@/modules/room/components/RoomInfoPanel'
 import { MovieListPanel } from '@/modules/room/components/MovieListPanel'
+import { TogetherListenPanel } from '@/modules/music'
 import { useJoinRoom } from '../hooks/useJoinRoom'
 import { useStreamStatus } from '../hooks/useStreamStatus'
 import { useShareMethod } from '../hooks/useShareMethod'
@@ -103,9 +104,10 @@ function WatchPage() {
           <>
             <RoomInfoPanel roomId={roomId ?? ''} isHost={false} />
             <MovieListPanel isHost={false} />
+            <TogetherListenPanel roomId={roomId ?? ''} isHost={false} />
           </>
         }
-        controlLabels={['房间状态', '影片列表']}
+        controlLabels={['房间状态', '影片列表', '一起听']}
         webFullscreen={isWebFullscreen}
       />
     )

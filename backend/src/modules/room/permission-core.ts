@@ -15,7 +15,22 @@ export type RoomPermissionAction =
   | 'voice.kick'
   | 'moderator.manage'
   | 'host.transfer'
-  | 'room.settings';
+  | 'room.settings'
+  | 'music.queue.add'
+  | 'music.queue.remove'
+  | 'music.queue.reorder'
+  | 'music.queue.clear'
+  | 'music.play'
+  | 'music.pause'
+  | 'music.seek'
+  | 'music.next'
+  | 'music.previous'
+  | 'music.track.select'
+  | 'music.mode.change'
+  | 'music.control.request'
+  | 'music.track.ack'
+  | 'music.heartbeat'
+  | 'music.track.ended';
 
 export type RoomActorRole = 'system' | 'owner' | 'moderator' | 'member' | 'guest';
 
@@ -52,6 +67,25 @@ const MODERATION_ACTIONS = new Set<RoomPermissionAction>([
   'voice.kick',
 ]);
 
+const MUSIC_QUEUE_ACTIONS = new Set<RoomPermissionAction>([
+  'music.queue.add',
+  'music.queue.remove',
+  'music.queue.reorder',
+  'music.queue.clear',
+]);
+
+const MUSIC_HOST_ACTIONS = new Set<RoomPermissionAction>([
+  'music.play',
+  'music.pause',
+  'music.seek',
+  'music.next',
+  'music.previous',
+  'music.track.select',
+  'music.mode.change',
+  'music.heartbeat',
+  'music.track.ended',
+]);
+
 export function canPerformRoomAction(
   facts: RoomRoleFacts,
   action: RoomPermissionAction,
@@ -62,6 +96,23 @@ export function canPerformRoomAction(
   if (target?.isSelf && action !== 'room.settings') return { allowed: false, reason: '不能对自己执行此操作' };
 
   if (facts.actorRole === 'guest') return { allowed: false, reason: '游客无此权限' };
+  if (action === 'music.control.request') {
+    return { allowed: true };
+  }
+  if (action === 'music.track.ack') {
+    return { allowed: true };
+  }
+  if (MUSIC_QUEUE_ACTIONS.has(action)) {
+    return facts.actorRole === 'owner' || facts.actorRole === 'moderator' || facts.actorRole === 'system'
+      ? { allowed: true }
+      : { allowed: false, reason: '仅房主、房管或系统管理员可管理音乐队列' };
+  }
+  if (MUSIC_HOST_ACTIONS.has(action)) {
+    if (facts.actorRole === 'system') return { allowed: true };
+    return facts.actorRole === 'owner' && facts.isHost
+      ? { allowed: true }
+      : { allowed: false, reason: '仅当前房主或系统管理员可控制音乐' };
+  }
   if (HOST_ONLY_ACTIONS.has(action)) {
     return facts.actorRole === 'owner' || facts.actorRole === 'system'
       ? { allowed: true }

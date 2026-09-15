@@ -106,17 +106,21 @@ test("Voice fake-media join, socket replacement, and unmount release resources",
     return id;
   });
   await expect
-    .poll(() =>
-      page.evaluate(
-        () =>
-          (
+    .poll(
+      () =>
+        page.evaluate((previousSocketId) => {
+          const socket = (
             window as unknown as {
-              __debugSocket?: { id?: string };
+              __debugSocket?: { id?: string; connected?: boolean };
             }
-          ).__debugSocket?.id ?? "",
-      ),
+          ).__debugSocket;
+          return socket?.connected && socket.id !== previousSocketId
+            ? (socket.id ?? "")
+            : "";
+        }, oldSocketId),
+      { timeout: 20_000 },
     )
-    .not.toBe(oldSocketId);
+    .toMatch(/.+/);
   await expect(page.getByText("1 人在线", { exact: true })).toBeVisible({
     timeout: 20_000,
   });

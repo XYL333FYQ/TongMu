@@ -1,6 +1,9 @@
 import type {
+  DomainMutationEnvelope,
+  DomainMutationGuardResult,
   MutationEnvelope,
   MutationGuardResult,
+  RealtimeDomain,
   RealtimeVersion,
 } from './types';
 import {
@@ -13,7 +16,7 @@ import {
 
 interface RoomClock {
   version: RealtimeVersion;
-  sourceGeneration: number;
+  generation: number;
   serverTimestamp: number;
   seenMutations: Map<string, number>;
   readiness: Map<string, number>;
@@ -26,6 +29,8 @@ interface RoomClock {
  */
 export class RealtimeSyncCore {
   private readonly rooms = new Map<string, RoomClock>();
+  /** Music has an independent clock so it can never advance video ordering. */
+  private readonly musicRooms = new Map<string, RoomClock>();
   private readonly roomLocks = new Map<string, Promise<void>>();
 
   private getRoom(roomId: string): RoomClock {
@@ -33,7 +38,7 @@ export class RealtimeSyncCore {
     if (!clock) {
       clock = {
         version: 0,
-        sourceGeneration: 0,
+        generation: 0,
         serverTimestamp: Date.now(),
         seenMutations: new Map(),
         readiness: new Map(),
@@ -43,12 +48,27 @@ export class RealtimeSyncCore {
     return clock;
   }
 
+  private getMusicRoom(roomId: string): RoomClock {
+    let clock = this.musicRooms.get(roomId);
+    if (!clock) {
+      clock = {
+        version: 0,
+        generation: 0,
+        serverTimestamp: Date.now(),
+        seenMutations: new Map(),
+        readiness: new Map(),
+      };
+      this.musicRooms.set(roomId, clock);
+    }
+    return clock;
+  }
+
   /** Hydrate ordering metadata from a domain snapshot after process restart. */
   hydrate(roomId: string, version: number | undefined, sourceGeneration: number | undefined, serverTimestamp?: number): void {
     const clock = this.getRoom(roomId);
     if (isValidVersion(version) && version > clock.version) clock.version = version;
-    if (isValidVersion(sourceGeneration) && sourceGeneration > clock.sourceGeneration) {
-      clock.sourceGeneration = sourceGeneration;
+    if (isValidVersion(sourceGeneration) && sourceGeneration > clock.generation) {
+      clock.generation = sourceGeneration;
     }
     if (typeof serverTimestamp === 'number' && Number.isFinite(serverTimestamp)) {
       clock.serverTimestamp = Math.max(clock.serverTimestamp, serverTimestamp);
@@ -59,7 +79,7 @@ export class RealtimeSyncCore {
     const clock = this.getRoom(roomId);
     return {
       version: clock.version,
-      sourceGeneration: clock.sourceGeneration,
+      sourceGeneration: clock.generation,
       serverTimestamp: clock.serverTimestamp,
     };
   }
@@ -77,11 +97,11 @@ export class RealtimeSyncCore {
       return { ok: false, code: 'DUPLICATE', message: '重复 mutation 已忽略' };
     }
 
-    const incomingGeneration = envelope.sourceGeneration ?? clock.sourceGeneration;
+    const incomingGeneration = envelope.sourceGeneration ?? clock.generation;
     if (!isValidVersion(incomingGeneration)) {
       return { ok: false, code: 'STALE_GENERATION', message: 'sourceGeneration 无效' };
     }
-    if (incomingGeneration < clock.sourceGeneration) {
+    if (incomingGeneration < clock.generation) {
       return { ok: false, code: 'STALE_GENERATION', message: '旧 sourceGeneration 已失效' };
     }
     if (envelope.baseVersion !== undefined &&
@@ -96,7 +116,94 @@ export class RealtimeSyncCore {
     if (!guard.ok) return guard;
     const clock = this.getRoom(roomId);
     clock.version = guard.version;
-    clock.sourceGeneration = guard.sourceGeneration;
+    clock.generation = guard.sourceGeneration;
+    clock.serverTimestamp = guard.serverTimestamp;
+    if (envelope.mutationId) {
+      clock.seenMutations.set(envelope.mutationId, now);
+      if (clock.seenMutations.size > 512) {
+        const cutoff = now - MAX_CLIENT_CLOCK_SKEW_MS * 2;
+        for (const [id, timestamp] of clock.seenMutations) {
+          if (timestamp < cutoff || clock.seenMutations.size > 512) clock.seenMutations.delete(id);
+        }
+      }
+    }
+    return guard;
+  }
+
+  /** Read a domain-specific clock without exposing domain state. */
+  currentDomain(
+    roomId: string,
+    domain: RealtimeDomain = 'music',
+  ): { version: number; generation: number; serverTimestamp: number } {
+    const clock = domain === 'music' ? this.getMusicRoom(roomId) : this.getRoom(roomId);
+    return {
+      version: clock.version,
+      generation: clock.generation,
+      serverTimestamp: clock.serverTimestamp,
+    };
+  }
+
+  /** Hydrate only the selected domain's ordering metadata after a restart. */
+  hydrateDomain(
+    roomId: string,
+    version: number | undefined,
+    generation: number | undefined,
+    serverTimestamp?: number,
+    domain: RealtimeDomain = 'music',
+  ): void {
+    const clock = domain === 'music' ? this.getMusicRoom(roomId) : this.getRoom(roomId);
+    if (isValidVersion(version) && version > clock.version) clock.version = version;
+    if (isValidVersion(generation) && generation > clock.generation) {
+      clock.generation = generation;
+    }
+    if (typeof serverTimestamp === 'number' && Number.isFinite(serverTimestamp)) {
+      clock.serverTimestamp = Math.max(clock.serverTimestamp, serverTimestamp);
+    }
+  }
+
+  guardDomainMutation(
+    roomId: string,
+    envelope: DomainMutationEnvelope,
+    now = Date.now(),
+    domain: RealtimeDomain = 'music',
+  ): DomainMutationGuardResult {
+    const clock = domain === 'music' ? this.getMusicRoom(roomId) : this.getRoom(roomId);
+    if (!validateClientTimestamp(envelope.clientTimestamp, now)) {
+      return { ok: false, code: 'INVALID_TIMESTAMP', message: '客户端时间戳超出允许范围' };
+    }
+    if (envelope.mutationId !== undefined &&
+      (typeof envelope.mutationId !== 'string' || envelope.mutationId.length === 0 || envelope.mutationId.length > MAX_MUTATION_ID_LENGTH)) {
+      return { ok: false, code: 'DUPLICATE', message: 'mutationId 无效' };
+    }
+    if (envelope.mutationId && clock.seenMutations.has(envelope.mutationId)) {
+      return { ok: false, code: 'DUPLICATE', message: '重复 mutation 已忽略' };
+    }
+
+    const incomingGeneration = envelope.generation ?? clock.generation;
+    if (!isValidVersion(incomingGeneration)) {
+      return { ok: false, code: 'STALE_GENERATION', message: 'generation 无效' };
+    }
+    if (incomingGeneration < clock.generation) {
+      return { ok: false, code: 'STALE_GENERATION', message: '旧 generation 已失效' };
+    }
+    if (envelope.baseVersion !== undefined &&
+      (!isValidVersion(envelope.baseVersion) || envelope.baseVersion !== clock.version)) {
+      return { ok: false, code: 'STALE_VERSION', message: '基于旧 version 的 mutation 已失效' };
+    }
+    return { ok: true, version: clock.version + 1, generation: incomingGeneration, serverTimestamp: now };
+  }
+
+  commitDomain(
+    roomId: string,
+    envelope: DomainMutationEnvelope,
+    now = Date.now(),
+    domain: RealtimeDomain = 'music',
+  ): DomainMutationGuardResult {
+    const guard = this.guardDomainMutation(roomId, envelope, now, domain);
+    if (!guard.ok) return guard;
+    const clock = domain === 'music' ? this.getMusicRoom(roomId) : this.getRoom(roomId);
+    clock.version = guard.version;
+    clock.generation = guard.generation;
     clock.serverTimestamp = guard.serverTimestamp;
     if (envelope.mutationId) {
       clock.seenMutations.set(envelope.mutationId, now);
@@ -118,17 +225,19 @@ export class RealtimeSyncCore {
 
   recordReadiness(roomId: string, socketId: string, sourceGeneration: number): boolean {
     const clock = this.getRoom(roomId);
-    if (sourceGeneration !== clock.sourceGeneration) return false;
+    if (sourceGeneration !== clock.generation) return false;
     clock.readiness.set(socketId, sourceGeneration);
     return true;
   }
 
   clearSocket(socketId: string): void {
     for (const clock of this.rooms.values()) clock.readiness.delete(socketId);
+    for (const clock of this.musicRooms.values()) clock.readiness.delete(socketId);
   }
 
   clearRoom(roomId: string): void {
     this.rooms.delete(roomId);
+    this.musicRooms.delete(roomId);
     this.roomLocks.delete(roomId);
   }
 

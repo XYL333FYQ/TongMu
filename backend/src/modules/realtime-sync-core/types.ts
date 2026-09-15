@@ -2,6 +2,12 @@ import type { UserRole } from '../../entities/User';
 
 export type RealtimeVersion = number;
 
+/**
+ * Domain names are used only for shared ordering primitives.  The domain
+ * payload and its persistence remain owned by the corresponding module.
+ */
+export type RealtimeDomain = 'video' | 'music';
+
 export interface RealtimeSessionIdentity {
   roomId: string;
   sessionId: string;
@@ -36,6 +42,31 @@ export interface MutationEnvelope {
 export type MutationGuardResult =
   | { ok: true; version: number; sourceGeneration: number; serverTimestamp: number }
   | { ok: false; code: 'DUPLICATE' | 'STALE_VERSION' | 'STALE_GENERATION' | 'INVALID_TIMESTAMP'; message: string };
+
+/** Music/domain-neutral mutation envelope.  `generation` is intentionally
+ * separate from video's `sourceGeneration`. */
+export interface DomainMutationEnvelope {
+  baseVersion?: number;
+  generation?: number;
+  mutationId?: string;
+  clientTimestamp?: number;
+}
+
+export type DomainMutationGuardResult =
+  | { ok: true; version: number; generation: number; serverTimestamp: number }
+  | { ok: false; code: 'DUPLICATE' | 'STALE_VERSION' | 'STALE_GENERATION' | 'INVALID_TIMESTAMP'; message: string };
+
+/** Snapshot metadata for a non-video domain. */
+export interface DomainAuthoritativeSnapshot<TDomainState> {
+  roomId: string;
+  session: RealtimeSessionIdentity;
+  domain: RealtimeDomain;
+  version: RealtimeVersion;
+  generation: number;
+  serverTimestamp: number;
+  state: TDomainState;
+  host: RealtimeHostFacts;
+}
 
 export const MAX_ROOM_ID_LENGTH = 128;
 export const MAX_SOCKET_ID_LENGTH = 256;

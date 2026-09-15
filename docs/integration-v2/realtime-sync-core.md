@@ -3,8 +3,9 @@
 ## Scope
 
 Phase 5A provides the shared server-side realtime invariants for synchronized
-video. It does not implement MusicSyncDomain, Together Listen, queue
-persistence, play modes, NCM, Redis, clustering, or cross-node realtime.
+video. Phase 5B-1 now reuses those primitives for MusicSyncDomain and Together
+Listen through a separate music clock. It does not implement NCM, Redis,
+clustering, or cross-node realtime.
 
 `RealtimeSyncCore` is domain-neutral. It owns room-scoped identity and
 ordering facts, while `VideoSyncDomain` owns video playback facts. A future
@@ -13,16 +14,20 @@ state.
 
 ## Version model
 
-Each room has an in-memory authoritative version. An accepted authoritative
-mutation increments the version and records the server timestamp. Client
-timestamps are timing facts only; they never decide event ordering or
-authority.
+Each domain has an independent room-scoped authoritative version. An accepted
+authoritative mutation increments only that domain's version and records its
+server timestamp. Client timestamps are timing facts only; they never decide
+event ordering or authority. Video uses its existing `sourceGeneration` clock;
+music uses `musicGeneration` and a separate version clock. A music mutation
+cannot advance or rewrite the video clock.
 
-Mutations carry a bounded mutation id, the client base version, the current
-`sourceGeneration`, and a bounded client timestamp. The server rejects a
-duplicate mutation, a stale base version, a reordered version, or a generation
-that is no longer current. A restart starts with fresh server authority; the
-server does not claim to persist the in-memory realtime version.
+Video mutations carry a bounded mutation id, the client base version, the
+current `sourceGeneration`, and a bounded client timestamp. Music mutations
+carry the same shared safeguards with `generation`/`musicGeneration` instead
+of `sourceGeneration`. The server rejects a duplicate mutation, a stale base
+version, a reordered version, or a generation that is no longer current. A
+restart hydrates only the domain's persisted ordering metadata; ephemeral
+playback position is not presented as exact recovery.
 
 The frontend applies an event only when its generation is current and its
 version is newer than the applied authority. A snapshot may replace an equal
@@ -44,10 +49,12 @@ remain in the player path.
 
 ## Authoritative snapshot and reconnect
 
-`get-state` returns a room/session identity, authoritative version,
+Video `get-state` returns a room/session identity, authoritative version,
 `sourceGeneration`, trusted server timestamp, current video domain state, and
-host facts. Existing event names remain available through a compatibility
-adapter, but there is one authoritative mutation path.
+host facts. Music `get-state` returns its own session, version,
+`musicGeneration`, queue/current item, play mode, playback state, and host
+facts. Existing event names remain available through compatibility adapters,
+but each domain has one authoritative mutation path.
 
 On socket reconnect the client re-authenticates through the existing Socket.IO
 auth path, validates room membership, requests a fresh snapshot, and only then
@@ -76,10 +83,12 @@ events use the server timestamp.
 ## Readiness and targeted events
 
 `ready(sourceGeneration)` is generation-bound and is discarded when it does not
-match the room's current generation. The same core exposes a targeted emission
-helper: the target socket must be connected, a member of the room, and pass the
-server-side relationship check. A client cannot select an arbitrary socket id
-to receive a privileged event.
+match the room's current video generation. Music track ACKs use the same
+targeted/expiry idea but bind to `musicGeneration`, queue item, version, room,
+and actor; slow viewers do not block the host. The same core exposes a targeted
+emission helper: the target socket must be connected, a member of the room, and
+pass the server-side relationship check. A client cannot select an arbitrary
+socket id to receive a privileged event.
 
 The viewer-control request primitive carries a bounded `requestId`, actor,
 target, room, generation, base version, and expiry. A response is accepted only
@@ -88,5 +97,7 @@ for a live request, by an authorized host, and for the original target/room.
 ## Compatibility boundary
 
 Legacy video event names and payload aliases remain at the socket boundary for
-existing clients. They are converted into the shared core/domain path. No
-legacy handler is allowed to independently mutate authoritative playback state.
+existing clients. Music compatibility aliases are converted into the music
+domain path. They are converted into their respective shared core/domain path;
+no handler is allowed to independently mutate another domain's authoritative
+state.

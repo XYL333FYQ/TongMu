@@ -242,10 +242,15 @@ type RequestOptions = Omit<RequestInit, 'headers'> & {
  */
 let inflightRefresh: Promise<boolean> | null = null
 let sessionExpired = false
+let sessionGeneration = 0
 
 /** 重置 session 过期状态（登录成功后调用） */
 export function resetSessionExpired(): void {
   sessionExpired = false
+  sessionGeneration += 1
+  // 旧会话的 refresh 不能阻塞新登录；旧请求本身无法取消，下面的
+  // generation 检查会阻止它再修改新会话的过期状态。
+  inflightRefresh = null
 }
 
 export async function refreshAccessToken(): Promise<boolean> {
@@ -253,7 +258,8 @@ export async function refreshAccessToken(): Promise<boolean> {
   if (sessionExpired) return false
   if (inflightRefresh) return inflightRefresh
 
-  inflightRefresh = (async () => {
+  const generation = sessionGeneration
+  const refreshPromise = (async () => {
     try {
       const refreshToken = getRefreshToken()
       const res = await fetch(`${getApiUrl()}/api/auth/refresh`, {
@@ -272,25 +278,27 @@ export async function refreshAccessToken(): Promise<boolean> {
           user?: unknown
         }
         if (data.success) {
+          if (generation !== sessionGeneration) return false
           // 保存返回的 access token（跨站 HTTP fallback 用）
           if (data.accessToken) saveAuthTokens(data.accessToken)
           return true
         }
       }
 
-      // refresh 接口明确拒绝（401/403）→ refresh token 也过期
-      // 标记 session 已过期，阻止后续请求反复尝试 refresh
-      sessionExpired = true
+      // refresh 接口明确拒绝（401/403）→ refresh token 也过期。
+      // 但旧会话的请求不能污染登录后新会话的状态。
+      if (generation === sessionGeneration) sessionExpired = true
       return false
     } catch {
       // 网络错误（服务器重启中）→ 不登出，让上层重试
       return false
     } finally {
-      inflightRefresh = null
+      if (inflightRefresh === refreshPromise) inflightRefresh = null
     }
   })()
 
-  return inflightRefresh
+  inflightRefresh = refreshPromise
+  return refreshPromise
 }
 
 /**
