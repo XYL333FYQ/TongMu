@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { CONFIG_DIR } from '../paths';
 import { redactMediaError } from './redact';
+import type { ManifestHandleKind } from './manifest/model';
 
 const DEFAULT_TTL_MS = 12 * 60 * 60 * 1000;
 const ROOM_GRANT_TTL_MS = process.env.NODE_ENV === 'test' ? Number(process.env.MEDIA_ROOM_GRANT_TTL_MS) || 12 * 60 * 60 * 1000 : 12 * 60 * 60 * 1000;
@@ -17,6 +18,19 @@ export interface MediaHandleResource {
   credentialOrigins?: string[];
   contentType?: string;
   rewriteManifest?: boolean;
+  /** Typed role for manifest resources; sealed and checked before serving. */
+  resourceKind?: ManifestHandleKind | 'media' | 'session';
+  /** Resource identity and recursion metadata are server-private handle claims. */
+  parentResourceId?: string;
+  rootSourceIdentity?: string;
+  recursiveDepth?: number;
+  allowRange?: boolean;
+  representationIdentity?: string;
+  /** A DASH BaseURL directory may serve only descendants below this path. */
+  assetPathPrefix?: string;
+  /** Server-generated manifest body; upstream media URLs remain sealed here. */
+  manifestBody?: string;
+  cachePolicyHint?: 'no-store' | 'future-slice-cache';
   transportMode?: import('./protocol').TransportMode;
   /** Server-only gateway adapter data; sealed inside the handle. */
   providerId?: string;

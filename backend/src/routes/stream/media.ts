@@ -30,12 +30,6 @@ import { proxyHttpUpstream } from '../../services/proxy/http-proxy';
 import { fetchWithProxyPolicy, fetchWithProxyPolicyDetailed } from '../../services/proxy/safe-fetch';
 import rateLimit from 'express-rate-limit';
 import type { MediaDescriptor } from '../../services/media/types';
-import {
-  DOMParser,
-  XMLSerializer,
-  type Element as XmlElement,
-  type Node as XmlNode,
-} from '@xmldom/xmldom';
 import { authenticateToken, extractAccessToken, verifyAccessToken } from '../../middleware/auth';
 import { authorizeRoomMediaGrant } from '../../services/media/room-access';
 import { pipeProviderMediaHandle } from '../../services/media/provider-gateway';
@@ -43,10 +37,25 @@ import { mediaProviderRegistry, providerContextFromResolverContext } from '../..
 import { buildMediaServerReference } from '../../services/media/providers/media-server-reference';
 import { providerPlaybackSessionCoordinator } from '../../services/media/provider-playback-session';
 import { legacyPlaybackClientProfile } from '../../services/media/playback-profile';
+import {
+  rewriteManifest as rewriteTypedManifest,
+  DEFAULT_MAX_MANIFEST_DEPTH,
+  DEFAULT_MAX_MANIFEST_RESOURCES,
+} from '../../services/media/manifest/mapper';
+import {
+  manifestHandleKind,
+  type DashResourceKind,
+  type HlsResourceKind,
+  type ManifestHandleKind,
+} from '../../services/media/manifest/model';
+import { buildBilibiliUnifiedManifest } from '../../services/media/manifest/bilibili';
 
 const router = Router();
 const canPublishTarget = (url: string) => canDirect({ finalUrl: url } as MediaDescriptor);
 const MAX_MANIFEST_BYTES = 4 * 1024 * 1024;
+const MAX_MANIFEST_RESOURCES = DEFAULT_MAX_MANIFEST_RESOURCES;
+const MAX_MANIFEST_DEPTH = DEFAULT_MAX_MANIFEST_DEPTH;
+const MAX_HLS_KEY_BYTES = 1024 * 1024;
 const mediaResolveLimiter = rateLimit({
   windowMs: 60_000,
   limit: 20,
@@ -129,26 +138,6 @@ export function shouldRewriteManifest(descriptor: MediaDescriptor): boolean {
   );
 }
 
-function handleFor(resource: MediaHandleResource, target: string, rewriteManifest?: boolean): string {
-  const absolute = new URL(target, resource.url).toString();
-  const assisted = resource.transportMode === 'MANIFEST_ASSISTED' || resource.transportMode === 'PARTIAL_PROXY';
-  if (assisted && rewriteManifest !== true && canPublishTarget(absolute)) return absolute;
-  const headers = headersForTarget(resource, absolute);
-  const issued = issueMediaHandle({
-    url: absolute, scope: resource.scope, headers,
-    credentialOrigins: resource.credentialOrigins,
-    expiresAt: resource.expiresAt,
-    transportMode: resource.transportMode,
-    providerId: resource.providerId,
-    providerData: resource.providerData,
-    targetPolicy: resource.targetPolicy,
-    trustedPrivateHosts: resource.trustedPrivateHosts,
-    sourceGeneration: resource.sourceGeneration,
-    rewriteManifest: rewriteManifest ?? /\.(?:m3u8|mpd)(?:[?#]|$)/i.test(absolute),
-  });
-  return withSourceGeneration(issued.url, resource.sourceGeneration);
-}
-
 function isCredentialHeader(name: string): boolean {
   const lower = name.toLowerCase();
   return lower === 'cookie' || lower === 'authorization' || lower.includes('token') || /(?:^|[-_])api[-_]?key$/.test(lower);
@@ -171,17 +160,6 @@ export function credentialOriginsFor(
   if (!headers || !Object.keys(headers).some(isCredentialHeader)) return undefined;
   if (provenance) return provenance;
   return [new URL(url).origin];
-}
-
-function childBaseResource(resource: MediaHandleResource, baseUrl: string): { id: string; resource: MediaHandleResource } {
-  const child: MediaHandleResource = {
-    ...resource,
-    url: baseUrl,
-    headers: headersForTarget(resource, baseUrl),
-    rewriteManifest: false,
-  };
-  const issued = issueMediaHandle(child);
-  return { id: issued.id, resource: child };
 }
 
 function appendAccessToken(url: string, token?: string): string {
@@ -246,151 +224,34 @@ export function highestHlsMaster(body: string): string {
   return lines.filter((_line, index) => !removed.has(index)).join('\n');
 }
 
+/** Compatibility facade for callers that used the old route-local mapper. */
 export function rewriteManifest(
-  body: string, contentType: string, resource: MediaHandleResource,
-  handle: { id: string; token?: string; roomGrant?: string },
-): string {
-  if (/mpegurl|m3u8/i.test(contentType) || body.trimStart().startsWith('#EXTM3U')) {
-    let nextUriIsPlaylist = false;
-    return highestHlsMaster(body).split(/\r?\n/).map((line) => {
-      if (line && !line.startsWith('#')) {
-        const rewritten = appendRoomGrant(appendAccessToken(handleFor(resource, line.trim(), nextUriIsPlaylist || undefined), handle.token), handle.roomGrant);
-        nextUriIsPlaylist = false;
-        return rewritten;
-      }
-      if (/^#EXT-X-STREAM-INF:/i.test(line)) nextUriIsPlaylist = true;
-      const attributeIsPlaylist = /^#EXT-X-(?:MEDIA|I-FRAME-STREAM-INF):/i.test(line);
-      return line.replace(/URI="([^"]+)"/g, (_all, value: string) => {
-        return `URI="${appendRoomGrant(appendAccessToken(handleFor(/^#EXT-X-(?:SESSION-)?KEY:/.test(line) && resource.transportMode === 'PARTIAL_PROXY' ? { ...resource, transportMode: 'FULL_PROXY' } : resource, value, attributeIsPlaylist || undefined), handle.token), handle.roomGrant)}"`;
-      });
-    }).join('\n');
-  }
-  return rewriteDashManifest(body, resource, handle);
-}
-
-function directChildrenByName(node: XmlElement, name: string): XmlElement[] {
-  const output: XmlElement[] = [];
-  for (let index = 0; index < node.childNodes.length; index += 1) {
-    const child = node.childNodes.item(index);
-    if (child?.nodeType === 1 && (child as XmlElement).localName === name) output.push(child as XmlElement);
-  }
-  return output;
-}
-
-function effectiveDashBase(node: XmlElement, manifestUrl: string): string {
-  const chain: XmlElement[] = [];
-  for (let current: XmlNode | null = node; current?.nodeType === 1; current = current.parentNode) {
-    chain.unshift(current as XmlElement);
-  }
-  let base = manifestUrl;
-  for (const current of chain) {
-    const baseNode = directChildrenByName(current, 'BaseURL')[0];
-    const value = baseNode?.textContent?.trim();
-    if (value) base = new URL(value, base).toString();
-  }
-  return base;
-}
-
-function effectiveDashTemplate(node: XmlElement, name: 'SegmentTemplate' | 'SegmentList'): XmlElement | undefined {
-  const chain: XmlElement[] = [];
-  for (let current: XmlNode | null = node; current?.nodeType === 1; current = current.parentNode) {
-    chain.unshift(current as XmlElement);
-  }
-  const templates = chain.flatMap((current) => directChildrenByName(current, name));
-  if (templates.length === 0) return undefined;
-
-  const effective = templates[0].cloneNode(true) as XmlElement;
-  for (const template of templates.slice(1)) {
-    for (let index = 0; index < template.attributes.length; index += 1) {
-      const attribute = template.attributes.item(index);
-      if (attribute) effective.setAttribute(attribute.name, attribute.value);
-    }
-    const childNames = name === 'SegmentTemplate'
-      ? ['SegmentTimeline']
-      : ['Initialization', 'SegmentURL'];
-    for (const childName of childNames) {
-      const children = directChildrenByName(template, childName);
-      if (children.length === 0) continue;
-      for (const oldChild of directChildrenByName(effective, childName)) effective.removeChild(oldChild);
-      for (const child of children) effective.appendChild(child.cloneNode(true));
-    }
-  }
-  return effective;
-}
-
-function rewriteDashManifest(
   body: string,
+  contentType: string,
   resource: MediaHandleResource,
   handle: { id: string; token?: string; roomGrant?: string },
 ): string {
-  const document = new DOMParser().parseFromString(body, 'application/xml');
-  if (resource.transportMode === 'MANIFEST_ASSISTED' || resource.transportMode === 'PARTIAL_PROXY') {
-    // A public MPD may reference private token-bearing resources. Never expose
-    // those through assisted mode; the client can try the full encrypted gateway.
-    if (/[?&](?:[^=\s"<>]*token|auth[^=\s"<>]*|cookie|password|api.?key)=/i.test(body.replace(/&amp;/g, '&'))) {
-      throw new Error('MPD 子资源含私有凭证，需使用完整媒体中转');
-    }
-    const root = document.documentElement!;
-    const bases = directChildrenByName(root, 'BaseURL');
-    if (bases.length) for (const base of bases) base.textContent = new URL(base.textContent || '.', resource.url).toString();
-    else { const base = document.createElement('BaseURL'); base.textContent = new URL('.', resource.url).toString(); root.insertBefore(base, root.firstChild); }
-    return new XMLSerializer().serializeToString(document);
-  }
-  if (document.getElementsByTagName('parsererror').length) throw new Error('DASH MPD XML 解析失败');
-
-  const representations = Array.from(document.getElementsByTagName('Representation'));
-  for (const representation of representations) {
-    const base = effectiveDashBase(representation, resource.url);
-    const baseHandle = childBaseResource(resource, base);
-    const template = effectiveDashTemplate(representation, 'SegmentTemplate');
-    if (template) {
-      const local = template;
-      for (const attribute of ['media', 'initialization']) {
-        const value = local.getAttribute(attribute);
-        if (value) local.setAttribute(attribute, dashAssetUrl(baseHandle.id, value, handle.token, handle.roomGrant, resource.sourceGeneration).replace(/&amp;/g, '&'));
-      }
-      for (const existing of directChildrenByName(representation, 'SegmentTemplate')) representation.removeChild(existing);
-      representation.appendChild(local);
-    }
-
-    const segmentList = effectiveDashTemplate(representation, 'SegmentList');
-    if (segmentList) {
-      const local = segmentList;
-      for (const elementName of ['Initialization', 'SegmentURL']) {
-        const elements = Array.from(local.getElementsByTagName(elementName));
-        for (const element of elements) {
-          for (const attribute of ['sourceURL', 'media']) {
-            const value = element.getAttribute(attribute);
-            if (value) element.setAttribute(attribute, appendRoomGrant(appendAccessToken(handleFor(baseHandle.resource, value), handle.token), handle.roomGrant));
-          }
-        }
-      }
-      for (const existing of directChildrenByName(representation, 'SegmentList')) representation.removeChild(existing);
-      representation.appendChild(local);
-    }
-
-    // A Representation containing only BaseURL points directly at a media file.
-    if (!template && !segmentList) {
-      const directBase = directChildrenByName(representation, 'BaseURL')[0];
-      if (directBase) directBase.textContent = appendRoomGrant(appendAccessToken(handleFor(resource, base), handle.token), handle.roomGrant);
-    } else {
-      for (const baseNode of directChildrenByName(representation, 'BaseURL')) representation.removeChild(baseNode);
-    }
-  }
-
-  // Rewritten Representation URLs are absolute gateway URLs; retaining inherited
-  // BaseURL nodes would make dash.js prepend the upstream path a second time.
-  for (const name of ['MPD', 'Period', 'AdaptationSet']) {
-    for (const element of Array.from(document.getElementsByTagName(name))) {
-      for (const baseNode of directChildrenByName(element, 'BaseURL')) element.removeChild(baseNode);
-    }
-  }
-  for (const name of ['SegmentTemplate', 'SegmentList']) {
-    for (const element of Array.from(document.getElementsByTagName(name))) {
-      if (element.parentNode?.localName !== 'Representation') element.parentNode?.removeChild(element);
-    }
-  }
-  return new XMLSerializer().serializeToString(document);
+  const protocol: 'hls' | 'dash' = resource.resourceKind?.startsWith('hls-') ||
+    /mpegurl|m3u8/i.test(contentType) || body.trimStart().startsWith('#EXTM3U') ? 'hls' : 'dash';
+  const mapped = rewriteTypedManifest(body, contentType, {
+    protocol,
+    sourceUrl: resource.url,
+    parentResourceId: handle.id,
+    recursiveDepth: resource.recursiveDepth ?? 0,
+    maxRecursiveDepth: MAX_MANIFEST_DEPTH,
+    maxResources: MAX_MANIFEST_RESOURCES,
+    // The historical exported helper always meant a full gateway rewrite.
+    // Live routing above supplies the real Direct/Assisted/Partial mode.
+    mapResource: (mapping) => mapTypedManifestResource(
+      resource.transportMode ? resource : { ...resource, transportMode: 'FULL_PROXY' },
+      mapping,
+      handle,
+    ),
+  }).body;
+  // Historical callers expected inherited BaseURL nodes to be materialized
+  // into concrete attributes. The live route keeps typed BaseURL candidates;
+  // this facade preserves the old serialized shape only.
+  return mapped.replace(/<BaseURL(?:\s[^>]*)?>[^<]*<\/BaseURL>/g, '');
 }
 
 async function readManifest(response: Awaited<ReturnType<typeof fetchWithProxyPolicy>>): Promise<string> {
@@ -406,6 +267,44 @@ async function readManifest(response: Awaited<ReturnType<typeof fetchWithProxyPo
     }
   } finally { await reader.cancel().catch(() => undefined); }
   return Buffer.concat(chunks, total).toString('utf8');
+}
+
+async function pipeHlsKey(req: AuthenticatedRequest, res: import('express').Response, resource: MediaHandleResource): Promise<void> {
+  if (req.headers.range) { res.status(416).end(); return; }
+  const fetched = await fetchWithProxyPolicyDetailed(
+    resource.url,
+    { method: 'GET', headers: resource.headers },
+    resource.targetPolicy ?? 'public-only',
+    resource.trustedPrivateHosts,
+  );
+  const upstream = fetched.response;
+  if (!upstream.ok) { await upstream.body?.cancel(); res.sendStatus(upstream.status); return; }
+  const declared = Number(upstream.headers.get('content-length') ?? 0);
+  if (declared > MAX_HLS_KEY_BYTES) { await upstream.body?.cancel(); res.status(502).json({ success: false, message: 'HLS key 超出大小限制' }); return; }
+  if (!upstream.body) { res.status(upstream.status).end(); return; }
+  const reader = upstream.body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  try {
+    while (total <= MAX_HLS_KEY_BYTES) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.length;
+      if (total > MAX_HLS_KEY_BYTES) {
+        await reader.cancel();
+        res.status(502).json({ success: false, message: 'HLS key 超出大小限制' });
+        return;
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  res.status(upstream.status);
+  res.setHeader('Content-Type', upstream.headers.get('content-type') ?? 'application/octet-stream');
+  res.setHeader('Content-Length', String(total));
+  res.setHeader('Cache-Control', 'no-store, no-transform');
+  res.send(Buffer.concat(chunks, total));
 }
 
 function appendRoomGrant(url: string, roomGrant?: string): string {
@@ -474,6 +373,123 @@ function sessionContextForRequest(
     playbackClientProfile: legacyPlaybackClientProfile(),
     qualityChangingTranscode: 'disabled',
   });
+}
+
+function isManifestHandleKind(kind: ManifestHandleKind): boolean {
+  return kind === 'hls-manifest' || kind === 'dash-manifest' || kind === 'dash-recursive-manifest';
+}
+
+function splitDashTemplateTarget(target: string): { scopeUrl: string; suffix: string; assetPathPrefix: string } {
+  const url = new URL(target);
+  const segments = url.pathname.split('/');
+  const dynamicIndex = segments.findIndex((segment) => /\$/.test(segment));
+  const dynamicQuery = /\$(?:\$|RepresentationID|Number|Time|Bandwidth)/i.test(url.search);
+  if (dynamicIndex < 0) {
+    const directory = new URL('.', target);
+    const file = segments[segments.length - 1] || '';
+    directory.search = '';
+    directory.hash = '';
+    return {
+      scopeUrl: directory.toString(),
+      suffix: `${file}${url.search}${url.hash}`,
+      assetPathPrefix: directory.pathname,
+    };
+  }
+  const prefix = segments.slice(0, dynamicIndex).join('/');
+  const pathPrefix = prefix.endsWith('/') ? prefix : `${prefix}/`;
+  const suffix = `${segments.slice(dynamicIndex).join('/')}${dynamicQuery ? url.search : ''}${url.hash}`;
+  const scope = new URL(target);
+  scope.pathname = pathPrefix;
+  if (dynamicQuery) {
+    scope.search = '';
+  }
+  scope.hash = '';
+  return { scopeUrl: scope.toString(), suffix, assetPathPrefix: pathPrefix };
+}
+
+function mapTypedManifestResource(
+  resource: MediaHandleResource,
+  mapping: {
+    protocol: 'hls' | 'dash';
+    kind: HlsResourceKind | DashResourceKind;
+    upstreamUrl: string;
+    parentResourceId: string;
+    recursiveDepth: number;
+    allowRange: boolean;
+    representationIdentity?: string;
+    template?: boolean;
+  },
+  handle: { token?: string; roomGrant?: string },
+): string {
+  const manifestKind = manifestHandleKind(mapping.protocol, mapping.kind);
+  const target = new URL(mapping.upstreamUrl).toString();
+  const targetHeaders = headersForTarget(resource, target);
+  const isKey = manifestKind === 'hls-key';
+  const isBase = manifestKind === 'dash-base';
+  const effectiveResource = isKey && resource.transportMode !== 'FULL_PROXY'
+    ? { ...resource, transportMode: 'FULL_PROXY' as const }
+    : resource;
+
+  // Assisted/partial mode deliberately retains public same-representation
+  // child URLs. The mapper still classifies them; only private or manifest
+  // children need a sealed server resource.
+  const isAssistedManifest = effectiveResource.transportMode === 'MANIFEST_ASSISTED' ||
+    effectiveResource.transportMode === 'PARTIAL_PROXY';
+  if (
+    isAssistedManifest &&
+    !isManifestHandleKind(manifestKind) &&
+    !isKey &&
+    !isBase &&
+    canPublishTarget(target)
+  ) return target;
+
+  let childUrl = target;
+  let suffix = '';
+  let assetPathPrefix: string | undefined;
+  if (mapping.protocol === 'dash' && mapping.template) {
+    const split = splitDashTemplateTarget(target);
+    const sourceDirectory = new URL('.', resource.url).pathname;
+    childUrl = split.assetPathPrefix === sourceDirectory ? resource.url : split.scopeUrl;
+    suffix = split.suffix;
+    assetPathPrefix = split.assetPathPrefix;
+  }
+  const issued = issueMediaHandle({
+    kind: 'media',
+    url: childUrl,
+    scope: effectiveResource.scope,
+    headers: targetHeaders,
+    credentialOrigins: effectiveResource.credentialOrigins,
+    contentType: isManifestHandleKind(manifestKind)
+      ? (mapping.protocol === 'hls' ? 'application/vnd.apple.mpegurl' : 'application/dash+xml')
+      : effectiveResource.contentType,
+    rewriteManifest: isManifestHandleKind(manifestKind),
+    resourceKind: manifestKind,
+    parentResourceId: mapping.parentResourceId,
+    rootSourceIdentity: effectiveResource.rootSourceIdentity ?? resource.url,
+    recursiveDepth: mapping.recursiveDepth,
+    allowRange: mapping.allowRange,
+    representationIdentity: mapping.representationIdentity,
+    assetPathPrefix: mapping.template
+      ? assetPathPrefix
+      : isBase
+        ? new URL(childUrl).pathname
+        : undefined,
+    cachePolicyHint: 'future-slice-cache',
+    transportMode: effectiveResource.transportMode,
+    providerId: effectiveResource.providerId,
+    providerData: effectiveResource.providerData,
+    session: effectiveResource.session,
+    targetPolicy: effectiveResource.targetPolicy,
+    trustedPrivateHosts: effectiveResource.trustedPrivateHosts,
+    sourceGeneration: effectiveResource.sourceGeneration,
+    expiresAt: effectiveResource.expiresAt,
+  });
+  const issuedUrl = mapping.protocol === 'dash' && mapping.template
+    ? dashAssetUrl(issued.id, suffix, handle.token, handle.roomGrant, effectiveResource.sourceGeneration)
+    : isBase
+      ? withSourceGeneration(`${issued.url}/base/`, effectiveResource.sourceGeneration)
+    : withSourceGeneration(issued.url, effectiveResource.sourceGeneration);
+  return appendRoomGrant(appendAccessToken(issuedUrl, handle.token), handle.roomGrant);
 }
 
 export function sessionActorIsCurrentUser(
@@ -645,6 +661,29 @@ router.post('/media/resolve', authenticateToken, mediaResolveLimiter, async (req
     for (const providerCandidate of providerCandidates) {
       const handleUrl = providerCandidate?.url || privateSource.finalUrl || descriptor.finalUrl;
       const handleHeaders = privateSource.headers ?? descriptor.headers;
+      const bilibiliUnifiedManifest = providerId === 'bilibili' && providerCandidate?.transport === 'dash'
+        ? buildBilibiliUnifiedManifest({
+            videoUrl: providerCandidate.url,
+            audioUrl: providerCandidate.audioUrl,
+            videoCodec: providerCandidate.exactCodecStrings?.find((value) => /^(?:avc|hev|hvc|av01|vp)/i.test(value)) ?? descriptor.videoCodec,
+            audioCodec: providerCandidate.exactCodecStrings?.find((value) => /^(?:mp4a|opus|vorbis|ac-?3|ec-?3|dts|flac)/i.test(value)) ?? descriptor.audioCodec,
+            videoBandwidth: descriptor.actualBandwidth ?? descriptor.bitrate,
+            duration: descriptor.duration,
+            quality: providerCandidate.actualQuality ?? descriptor.actualQuality,
+          })
+        : undefined;
+      const candidateIsManifest = Boolean(bilibiliUnifiedManifest) || (
+        providerCandidate
+          ? providerCandidate.transport === 'hls' || providerCandidate.transport === 'dash' || shouldRewriteManifest(descriptor)
+          : shouldRewriteManifest(descriptor)
+      );
+      const candidateResourceKind: ManifestHandleKind | 'media' = bilibiliUnifiedManifest
+        ? 'dash-manifest'
+        : providerCandidate?.transport === 'hls' || (!providerCandidate && descriptor.transport === 'hls')
+          ? 'hls-manifest'
+          : providerCandidate?.transport === 'dash' || (!providerCandidate && descriptor.transport === 'dash')
+            ? 'dash-manifest'
+            : 'media';
       const handle = issueMediaHandle({
         kind: 'media',
         url: handleUrl,
@@ -655,12 +694,18 @@ router.post('/media/resolve', authenticateToken, mediaResolveLimiter, async (req
           handleHeaders,
           privateSource.credentialOrigins ?? descriptor.credentialOrigins,
         ),
-        contentType: providerCandidate?.container === 'hls' ? 'application/vnd.apple.mpegurl' : descriptor.contentType,
-        // Magic handles octet-stream manifests; Bilibili's dual m4s "dash"
-        // descriptor deliberately has video/mp4 and must not be parsed as MPD XML.
-        rewriteManifest: providerCandidate
-          ? providerCandidate.transport === 'hls' || providerCandidate.transport === 'dash' || shouldRewriteManifest(descriptor)
-          : shouldRewriteManifest(descriptor),
+        contentType: bilibiliUnifiedManifest
+          ? 'application/dash+xml'
+          : providerCandidate?.container === 'hls' ? 'application/vnd.apple.mpegurl' : descriptor.contentType,
+        rewriteManifest: candidateIsManifest,
+        resourceKind: candidateResourceKind,
+        parentResourceId: 'root',
+        rootSourceIdentity: privateSource.finalUrl || descriptor.finalUrl,
+        recursiveDepth: 0,
+        allowRange: true,
+        cachePolicyHint: 'future-slice-cache',
+        transportMode: 'FULL_PROXY',
+        manifestBody: bilibiliUnifiedManifest,
         providerId,
         providerData,
         session: providerCandidate?.session ?? providerResolution.session,
@@ -670,7 +715,9 @@ router.post('/media/resolve', authenticateToken, mediaResolveLimiter, async (req
         expiresAt: handleExpiresAt,
       });
       resolvedExpiry = handle.expiresAt;
-      const audioUrl = providerCandidate?.audioUrl || (!providerCandidate ? descriptor.audioUrl : undefined);
+      const audioUrl = bilibiliUnifiedManifest
+        ? undefined
+        : providerCandidate?.audioUrl || (!providerCandidate ? descriptor.audioUrl : undefined);
       const audioHandle = audioUrl ? issueMediaHandle({
         kind: 'media',
         url: audioUrl,
@@ -714,6 +761,13 @@ router.post('/media/resolve', authenticateToken, mediaResolveLimiter, async (req
               url: handleUrl,
               scope,
               rewriteManifest: true,
+              resourceKind: candidateResourceKind === 'media' ? 'dash-manifest' : candidateResourceKind,
+              parentResourceId: 'root',
+              rootSourceIdentity: privateSource.finalUrl || descriptor.finalUrl,
+              recursiveDepth: 0,
+              allowRange: true,
+              cachePolicyHint: 'future-slice-cache',
+              manifestBody: bilibiliUnifiedManifest,
               transportMode: mode,
               headers: handleHeaders,
               credentialOrigins: credentialOriginsFor(handleUrl, handleHeaders, privateSource.credentialOrigins ?? descriptor.credentialOrigins),
@@ -791,15 +845,52 @@ router.post('/media/:id/session/cleanup', authenticateToken, async (req: Authent
   await handlePlaybackSessionRequest(req, res, 'cleanup');
 });
 
+async function pipeDashBaseResource(req: AuthenticatedRequest, res: import('express').Response): Promise<void> {
+  const resource = await authorizedResource(req);
+  if (!resource || resource.resourceKind !== 'dash-base' || !resource.assetPathPrefix) {
+    res.status(403).end();
+    return;
+  }
+  const rawPath = Array.isArray(req.params.splat) ? req.params.splat.join('/') : String(req.params.splat ?? '');
+  let target: URL;
+  try { target = new URL(rawPath || '.', resource.url); } catch { res.status(400).end(); return; }
+  if (target.origin !== new URL(resource.url).origin || !target.pathname.startsWith(resource.assetPathPrefix)) {
+    res.status(403).end();
+    return;
+  }
+  await proxyHttpUpstream(req, res, {
+    url: target.toString(),
+    targetPolicy: resource.targetPolicy ?? 'public-only',
+    trustedPrivateHosts: resource.trustedPrivateHosts,
+    headers: { extra: headersForTarget(resource, target.toString()) },
+    cors: 'global',
+    logTag: 'media-dash-base',
+    errorMessage: 'DASH BaseURL 请求失败',
+  });
+}
+
+router.get('/media/:id/base', pipeDashBaseResource);
+router.get('/media/:id/base/*splat', pipeDashBaseResource);
+
 router.get('/media/:id/asset', async (req: AuthenticatedRequest, res) => {
   const id = String(req.params.id);
   const resource = await authorizedResource(req);
   const relativePath = typeof req.query.path === 'string' ? req.query.path : '';
-  if (!resource || !relativePath) { res.status(403).end(); return; }
+  const assetKinds = new Set([
+    'dash-media', 'dash-initialization', 'dash-index', 'dash-bitstream-switching',
+    'dash-timing', 'dash-auxiliary',
+  ]);
+  if (!resource || !relativePath || !resource.resourceKind || !assetKinds.has(resource.resourceKind) || !resource.assetPathPrefix) {
+    res.status(403).end(); return;
+  }
+  if (resource.allowRange === false && req.headers.range) { res.status(416).end(); return; }
   let target: URL;
   try { target = new URL(relativePath, resource.url); } catch { res.status(400).end(); return; }
   // Template requests can vary only within the manifest's origin; they cannot turn a handle into an open proxy.
   if (target.origin !== new URL(resource.url).origin) { res.status(403).end(); return; }
+  if (resource.assetPathPrefix && !target.pathname.startsWith(resource.assetPathPrefix)) {
+    res.status(403).end(); return;
+  }
   await proxyHttpUpstream(req, res, {
       url: target.toString(), targetPolicy: resource.targetPolicy ?? 'public-only',
       trustedPrivateHosts: resource.trustedPrivateHosts,
@@ -811,6 +902,15 @@ router.get('/media/:id/asset', async (req: AuthenticatedRequest, res) => {
 router.get('/media/:id', async (req: AuthenticatedRequest, res) => {
   const resource = await authorizedResource(req);
   if (!resource || resource.kind === 'session') { res.status(403).json({ success: false, message: '媒体凭证无效或已过期' }); return; }
+  if (resource.allowRange === false && req.headers.range) { res.status(416).end(); return; }
+  if (resource.resourceKind === 'hls-key') {
+    try {
+      await pipeHlsKey(req, res, resource);
+    } catch (error) {
+      res.status(502).json({ success: false, message: redactMediaError(error) });
+    }
+    return;
+  }
   if (!resource.rewriteManifest) {
     if (await pipeProviderMediaHandle(req, res, resource)) return;
     await proxyHttpUpstream(req, res, {
@@ -822,28 +922,47 @@ router.get('/media/:id', async (req: AuthenticatedRequest, res) => {
     return;
   }
   try {
-    const fetched = await fetchWithProxyPolicyDetailed(
-      resource.url,
-      { method: 'GET', headers: resource.headers },
-      resource.targetPolicy ?? 'public-only',
-      resource.trustedPrivateHosts,
-    );
-    const upstream = fetched.response;
-    if (!upstream.ok) { await upstream.body?.cancel(); res.sendStatus(upstream.status); return; }
-    const contentType = upstream.headers.get('content-type') ?? resource.contentType ?? 'application/octet-stream';
-    const body = await readManifest(upstream);
-    const finalResource: MediaHandleResource = {
-      ...resource,
-      url: fetched.finalUrl,
-      headers: fetched.headers,
-      credentialOrigins: fetched.credentialOrigins,
-    };
+    let contentType = resource.contentType ?? 'application/octet-stream';
+    let body: string;
+    let finalResource: MediaHandleResource = resource;
+    if (resource.manifestBody !== undefined) {
+      body = resource.manifestBody;
+    } else {
+      const fetched = await fetchWithProxyPolicyDetailed(
+        resource.url,
+        { method: 'GET', headers: resource.headers },
+        resource.targetPolicy ?? 'public-only',
+        resource.trustedPrivateHosts,
+      );
+      const upstream = fetched.response;
+      if (!upstream.ok) { await upstream.body?.cancel(); res.sendStatus(upstream.status); return; }
+      contentType = upstream.headers.get('content-type') ?? contentType;
+      body = await readManifest(upstream);
+      finalResource = {
+        ...resource,
+        url: fetched.finalUrl,
+        headers: fetched.headers,
+        credentialOrigins: fetched.credentialOrigins,
+      };
+    }
+    const protocol: 'hls' | 'dash' =
+      finalResource.resourceKind?.startsWith('hls-') || /mpegurl|m3u8/i.test(contentType) || body.trimStart().startsWith('#EXTM3U')
+        ? 'hls'
+        : 'dash';
     res.type(contentType).setHeader('Cache-Control', 'private, max-age=15');
-    res.send(rewriteManifest(body, contentType, finalResource, {
-      id: String(req.params.id),
-      token: typeof req.query.token === 'string' ? req.query.token : undefined,
-      roomGrant: roomGrantToken(req),
-    }));
+    const mapped = rewriteTypedManifest(body, contentType, {
+      protocol,
+      sourceUrl: finalResource.url,
+      parentResourceId: String(req.params.id),
+      recursiveDepth: finalResource.recursiveDepth ?? 0,
+      maxRecursiveDepth: MAX_MANIFEST_DEPTH,
+      maxResources: MAX_MANIFEST_RESOURCES,
+      mapResource: (mapping) => mapTypedManifestResource(finalResource, mapping, {
+        token: typeof req.query.token === 'string' ? req.query.token : undefined,
+        roomGrant: roomGrantToken(req),
+      }),
+    });
+    res.send(mapped.body);
   } catch (error) {
     res.status(502).json({ success: false, message: redactMediaError(error) });
   }

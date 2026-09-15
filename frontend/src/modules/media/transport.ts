@@ -8,7 +8,9 @@ export function isProxiedMediaTransport(url: string) { const mode = activeModes.
 const plans = new Map<string, NonNullable<MediaDescriptor['transportPlan']>>()
 const absolute = (url: string) => url.startsWith('/') ? new URL(url, `${getApiUrl()}/`).toString() : url
 function isInitialManifestFailure(error: unknown): boolean {
-  return error instanceof Error && /manifestLoadError|HLS加载失败.*manifest/i.test(error.message)
+  return error instanceof Error && (
+    /manifestLoadError|HLS加载失败.*manifest|dash\.js 加载 MPD 失败/i.test(error.message)
+  )
 }
 export function registerMediaTransport(media: MediaDescriptor) {
   if (!media.transportPlan?.candidates.length) return

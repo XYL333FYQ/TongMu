@@ -4,7 +4,7 @@
 
 This file is the persistent checkpoint for the TongMu V2 integration program. Phase 0 is an audit and design phase only: no product code, dependency, database, configuration, CI, or reference source was changed.
 
-Current state: **Phase 2 implementation is complete within its approved Media Core scope; the Phase 6 migration/release gate remains intentionally open.**
+Current state: **Phase 2 and Phase 3A are complete within their approved Media Core scope. Phase 3B and the Phase 6 migration/release gate remain open.**
 
 Phase 2 has a working core checkpoint: the versioned client profile, server
 viability filter, client-owned planner path, provider contract/registry, and
@@ -76,9 +76,9 @@ to do that work safely.
 
 ### P1 — high-priority integration and reliability gaps
 
-1. HLS rewriting is useful but untyped and lacks bounded manifest-resource protection comparable to SyncTV's mapper; this is a Phase 3 hardening item.
+1. Phase 3A typed HLS/DASH resource mapping and its Chromium browser exit gate are complete; the fixture's Inspector/client-blocked diagnostics are intentional route aborts used to verify fallback.
 2. Live publishing/ingest lifecycle (RTMP/WHIP/WHEP) remains outside public HLS/HTTP-FLV source convergence and is explicitly deferred.
-3. DASH rewriting does not yet cover the full MPD surface needed for `SegmentBase`, representation indexes, bitstream-switching resources, `Location`, and xlink semantics.
+3. Phase 3A's typed DASH mapper covers `SegmentBase`, representation indexes, bitstream-switching resources, `Location`, xlink, timing URLs, and bounded recursion in unit/backend tests; nested fixture MPD playback is covered by the completed Chromium suite.
 4. Realtime video and future music synchronization do not yet share a documented `RealtimeSyncCore`; sequence, generation, reconnect, host loss, request/ack, and stale-event rules are duplicated or incomplete.
 5. Voice lifecycle and identity handling are weaker than the current ZViewer implementation, especially 48 kHz/frame consistency, same-user replacement, ghost cleanup, pending-source disposal, and moderator/root invariants.
 6. Player switching still needs one explicit cancellation/lifetime contract covering fetch streams, MSE, workers, source generations, and remounts across all engines.
@@ -289,6 +289,47 @@ is now centralized.
 | Real public HLS/HTTP-FLV source | external source | NOT RUN | No stable external stream was supplied; Chromium fixture covers HLS, while real HTTP-FLV decode is not run because the fixture/browser environment does not provide a stable FLV live source |
 | Docker/ffmpeg/live ingest | host tools | NOT RUN | Docker and ffmpeg are unavailable; managed ingest is deferred |
 
+## Phase 3A typed manifest checkpoint
+
+Phase 3A is **COMPLETE within the typed-manifest and browser-verification
+boundary**. Slice Cache is intentionally not implemented and remains Phase 3B.
+
+- `backend/src/services/media/manifest/` now owns the typed HLS/DASH resource
+  model, lifecycle classifier, URL/resource/depth bounds, safe XML parsing,
+  and the HLS/MPD mapper. The old route-local rewrite implementation was
+  removed; the exported route helper is a compatibility facade over the mapper.
+- HLS roles include manifests, segments, parts, keys, init resources and
+  auxiliaries. Key requests have a dedicated bounded full-proxy path. Master
+  mapping preserves all variants and groups; it does not silently select a
+  lower quality after a transport error.
+- DASH covers nested and sibling BaseURL scope, SegmentTemplate/List/Base,
+  initialization/index/bitstream-switching resources, Location, xlink,
+  URL-valued UTCTiming, template path confinement, and DTD/entity rejection.
+- Bilibili DASH candidates selected by Phase 2 exact quality/codec viability are
+  represented by a sealed static MPD containing only the selected video and
+  compatible audio tracks. Raw signed m4s URLs remain in the encrypted handle.
+
+### Phase 3A validation
+
+| Check | Command | Result | Evidence / limitation |
+| --- | --- | ---: | --- |
+| Backend lint/typecheck | `npm run lint -w backend` | PASS | TypeScript no-emit check |
+| Backend tests | `npm test -w backend` | PASS with 1 skip | 90 passing, 1 Windows symlink-escape skip; room-grant tamper coverage is deterministic |
+| Focused mapper tests | included in backend suite | PASS | HLS lifecycle/roles/bounds/recursion, DASH graph/security, Bilibili selected MPD |
+| Frontend tests | `npm test -w frontend` | PASS | 9/9 |
+| Frontend build | `npm run build -w frontend` | PASS | Existing MediaBunny dynamic-import and large-chunk warnings |
+| Frontend lint | `npm run lint -w frontend` | BASELINE BLOCKED | Repository-wide existing formatting/vendor/compiler findings remain; no lint rule was weakened |
+| Chromium targeted media E2E | `npx playwright test e2e/media-playback.spec.ts -g "real HLS master|credentialed Live HLS|HLS reattaches|real DASH nested|DASH reattaches|AES key CORS failure" --reporter=line --workers=1` | PASS | HLS, credentialed live HLS, HLS reconnect, nested DASH, DASH reconnect, and AES key assisted-proxy flows passed; Inspector/client-blocked diagnostics are intentional direct-source aborts |
+| Frontend tests | `npm test -w frontend` | PASS | 9/9 |
+| Full Chromium media E2E | `npx playwright test e2e/media-playback.spec.ts --reporter=line --workers=1` | PASS | 18/18; provider/storage flows, private-source authorization, mobile overflow, HLS/DASH, reconnect, and Bilibili-like MPD browser paths completed |
+| Diff whitespace | `git diff --check` | PASS | Only Git's existing LF/CRLF normalization warnings were reported |
+
+The backend, frontend, targeted browser flows, and full Chromium suite now all
+pass within the Phase 3A boundary. The root fixture diagnostics are expected:
+the E2E route intentionally aborts direct fixture requests with
+`route.abort('blockedbyclient')` to prove the gateway fallback. Phase 3B remains
+deferred.
+
 ### Phase 2 closure audit
 
 - Target-2 provider registry rows are converged: storage, Emby/Jellyfin,
@@ -352,6 +393,7 @@ is now centralized.
 - `implementation-plan.md`
 - `upstream-notes-zviewer.md`
 - `upstream-notes-synctv.md`
+- `manifest-resource-model.md`
 - `progress.md`
 
 Phase 1 updated `progress.md`, `upstream-adoption-matrix.md`, and

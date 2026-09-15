@@ -737,7 +737,8 @@ test('room media handles require a live socket capability and never trust userId
     undefined,
     'kick/leave revokes new requests immediately',
   );
-  assert.equal(resolveRoomMediaGrant(`${ownerGrantToken.slice(0, -1)}x`), undefined);
+  const tamperedOwnerGrant = `${ownerGrantToken.slice(0, -1)}${ownerGrantToken.endsWith('x') ? 'y' : 'x'}`;
+  assert.equal(resolveRoomMediaGrant(tamperedOwnerGrant), undefined);
 });
 
 test('server restart cleanup invalidates stale active room grants before rejoin', async () => {

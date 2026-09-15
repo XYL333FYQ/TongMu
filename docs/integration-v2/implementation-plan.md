@@ -146,16 +146,25 @@ contract so later player and security work has one source boundary.
 
 ## Phase 3 — Manifest, proxy and optional single-node slice cache
 
-Slice Cache starts in this phase only. It is explicitly outside Phase 1; Phase 1
-provides the Range and upstream-validation contract that a later cache may rely on.
+Slice Cache starts in this phase only. It is explicitly outside Phase 3A; Phase 1
+provides the Range and upstream-validation contract that Phase 3B may rely on.
+
+Current checkpoint: **Phase 3A is COMPLETE within the typed-manifest and
+browser-verification boundary.** Phase 3B has not started.
 
 **Goal**
 
-Make HLS/DASH resource mapping complete and typed, then add a bounded cache only where it materially reduces repeated proxy traffic.
+Phase 3A makes HLS/DASH resource mapping complete and typed. Phase 3B may then
+add a bounded cache only where it materially reduces repeated proxy traffic.
 
 **Why now**
 
-Current HLS rewriting is broadly functional but untyped and lacks a URL-count ceiling. Current DASH rewriting handles key BaseURL/Template/List cases but not the full set of `SegmentBase`, `RepresentationIndex`, `BitstreamSwitching`, `Location` and xlink semantics. Caching before URL and Range correctness would amplify bad responses.
+Before this checkpoint, HLS rewriting was broadly functional but untyped and
+lacked a URL-count ceiling. The Phase 3A mapper now types HLS roles/lifecycle,
+adds byte/resource/depth bounds, and covers the complete scoped DASH graph,
+including `SegmentBase`, `RepresentationIndex`, `BitstreamSwitching`,
+`Location`, xlink and URL-valued timing. Caching before URL, authorization and
+Range correctness would amplify bad responses.
 
 **Dependencies**
 
@@ -166,7 +175,9 @@ Current HLS rewriting is broadly functional but untyped and lacks a URL-count ce
 
 - `backend/src/routes/stream/media.ts`
 - `backend/src/services/proxy/{safe-fetch,http-proxy,range-stream}.ts`
-- new focused manifest mapper/cache modules under `backend/src/services/media/` or `proxy/`
+- `backend/src/services/media/manifest/{model,mapper,bilibili}.ts`
+- the existing sealed media handle and gateway routes
+- Phase 3B cache modules are intentionally not present yet
 - media protocol and E2E fixtures
 
 **Upstream references**
@@ -177,16 +188,18 @@ Current HLS rewriting is broadly functional but untyped and lacks a URL-count ce
 
 **Required tests**
 
-- HLS Master/Live/Event/VOD; line URIs and quoted URI; audio/subtitle/variant/key/init/part/auxiliary; relative, absolute and redirected children; byte and URL limits.
-- DASH nested/sibling BaseURL, Template formatting tokens, List, Base, init/index/bitstream switching, Location/xlink and hostile traversal/scope escapes.
+- HLS Master/Live/Event/VOD; line URIs and quoted URI; audio/subtitle/variant/key/init/part/auxiliary; relative, absolute and redirected children; byte, URL and recursion limits.
+- DASH nested/sibling BaseURL, Template formatting tokens, List, SegmentBase, init/index/bitstream switching, Location/xlink, timing URL handling and hostile traversal/scope escapes.
+- Bilibili selected-representation-only MPD construction without lower-quality or unsupported codec reintroduction.
 - Cross-origin sensitive-header stripping for every child fetch.
-- Cache hit/miss/single-flight, HEAD fallback, upstream 200/206, ETag/Last-Modified changes, If-Range/conditionals, cancellation, eviction, corruption and passthrough.
+- Phase 3B cache hit/miss/single-flight, HEAD fallback, upstream 200/206, ETag/Last-Modified changes, If-Range/conditionals, cancellation, eviction, corruption and passthrough (not started).
 
 **Exit criteria**
 
 - Every emitted manifest URL has a typed authorization path.
 - Unsupported constructs fail clearly or pass through safely; none are half-rewritten.
-- Cache can be disabled and cache failure preserves uncached playback.
+- Phase 3A: every emitted manifest URL has a typed authorization path; unsupported constructs fail clearly or pass through safely; proxy never changes quality.
+- Phase 3B: cache can be disabled and cache failure preserves uncached playback.
 - Proxy never changes quality.
 
 **Major risks**

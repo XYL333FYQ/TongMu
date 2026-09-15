@@ -798,14 +798,17 @@ for (const [asset, engine] of [['/hls/master.m3u8', /Engine: hls/], ['/dash/mani
   });
 }
 
-test('AES key CORS failure uses PARTIAL_PROXY while segment bytes remain Direct', async ({ page }) => {
+test('AES key CORS failure uses a manifest-assisted key proxy while segment bytes remain Direct', async ({ page }) => {
   await loginAndCreateRoom(page);
   await page.route(`${FIXTURE_ORIGIN}/hls/key`, route => route.abort('blockedbyclient'));
   const segmentRequests: string[] = [];
   page.on('request', request => { if (request.url() === `${FIXTURE_ORIGIN}/hls/segment`) segmentRequests.push(request.url()); });
   await addAndPlay(page, `${FIXTURE_ORIGIN}/hls/master.m3u8`, /Engine: hls/);
-  expect(await page.locator('video').first().evaluate((v: HTMLVideoElement) => v.dataset.mediaTransport)).toBe('PARTIAL_PROXY');
-  expect(segmentRequests.length).toBeGreaterThan(0);
+  const video = page.locator('video').first();
+  await expect
+    .poll(() => video.evaluate((v: HTMLVideoElement) => v.dataset.mediaTransport), { timeout: 15_000 })
+    .toBe('MANIFEST_ASSISTED');
+  await expect.poll(() => segmentRequests.length, { timeout: 15_000 }).toBeGreaterThan(0);
 });
 
 test('private source token stays out of media resolve and Socket movie-list; host refresh uses movie reference', async ({ page }) => {
