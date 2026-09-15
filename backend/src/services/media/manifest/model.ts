@@ -25,6 +25,8 @@ export type DashResourceKind =
 
 export type ManifestProtocol = 'hls' | 'dash';
 
+export type ManifestResourceLifecycle = 'vod' | 'live' | 'event' | 'unknown';
+
 export type ManifestHandleKind =
   | 'hls-manifest'
   | 'hls-segment'
@@ -59,6 +61,7 @@ export interface ManifestResource {
   allowRange: boolean;
   recursiveDepth: number;
   representationIdentity?: string;
+  lifecycle?: ManifestResourceLifecycle;
   cachePolicyHint: 'no-store' | 'future-slice-cache';
 }
 
@@ -70,6 +73,7 @@ export interface ManifestResourceMapping {
   recursiveDepth: number;
   allowRange: boolean;
   representationIdentity?: string;
+  lifecycle?: ManifestResourceLifecycle;
   /** True for SegmentTemplate attributes containing DASH substitution tokens. */
   template?: boolean;
 }
@@ -81,6 +85,7 @@ export interface ManifestMapperOptions {
   recursiveDepth: number;
   maxRecursiveDepth?: number;
   maxResources?: number;
+  lifecycle?: ManifestResourceLifecycle;
   mapResource: (mapping: ManifestResourceMapping) => string;
 }
 

@@ -150,7 +150,8 @@ Slice Cache starts in this phase only. It is explicitly outside Phase 3A; Phase 
 provides the Range and upstream-validation contract that Phase 3B may rely on.
 
 Current checkpoint: **Phase 3A is COMPLETE within the typed-manifest and
-browser-verification boundary.** Phase 3B has not started.
+browser-verification boundary. Phase 3B is COMPLETE as an opt-in bounded
+single-node memory cache; the Phase 6 migration/release gate remains open.**
 
 **Goal**
 
@@ -177,7 +178,8 @@ Range correctness would amplify bad responses.
 - `backend/src/services/proxy/{safe-fetch,http-proxy,range-stream}.ts`
 - `backend/src/services/media/manifest/{model,mapper,bilibili}.ts`
 - the existing sealed media handle and gateway routes
-- Phase 3B cache modules are intentionally not present yet
+- `backend/src/services/proxy/slice-cache.ts` implements the optional bounded
+  memory store, validators, single-flight and fail-open slice assembly
 - media protocol and E2E fixtures
 
 **Upstream references**
@@ -192,14 +194,18 @@ Range correctness would amplify bad responses.
 - DASH nested/sibling BaseURL, Template formatting tokens, List, SegmentBase, init/index/bitstream switching, Location/xlink, timing URL handling and hostile traversal/scope escapes.
 - Bilibili selected-representation-only MPD construction without lower-quality or unsupported codec reintroduction.
 - Cross-origin sensitive-header stripping for every child fetch.
-- Phase 3B cache hit/miss/single-flight, HEAD fallback, upstream 200/206, ETag/Last-Modified changes, If-Range/conditionals, cancellation, eviction, corruption and passthrough (not started).
+- Phase 3B cache hit/miss/single-flight, HEAD fallback, upstream 200/206/416,
+  ETag/Last-Modified changes, If-Range/conditionals, cancellation, eviction,
+  corruption and fail-open passthrough are covered by the focused backend
+  suite and the cache-enabled/disabled Chromium fixture check.
 
 **Exit criteria**
 
 - Every emitted manifest URL has a typed authorization path.
 - Unsupported constructs fail clearly or pass through safely; none are half-rewritten.
 - Phase 3A: every emitted manifest URL has a typed authorization path; unsupported constructs fail clearly or pass through safely; proxy never changes quality.
-- Phase 3B: cache can be disabled and cache failure preserves uncached playback.
+- Phase 3B: cache can be disabled, remains authorization-safe, preserves
+  Range semantics and cache failure preserves uncached playback.
 - Proxy never changes quality.
 
 **Major risks**

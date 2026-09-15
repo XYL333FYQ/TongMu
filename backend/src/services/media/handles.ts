@@ -28,6 +28,8 @@ export interface MediaHandleResource {
   representationIdentity?: string;
   /** A DASH BaseURL directory may serve only descendants below this path. */
   assetPathPrefix?: string;
+  /** Lifecycle fact inherited from the typed manifest mapper. */
+  cacheLifecycle?: 'vod' | 'live' | 'event' | 'unknown';
   /** Server-generated manifest body; upstream media URLs remain sealed here. */
   manifestBody?: string;
   cachePolicyHint?: 'no-store' | 'future-slice-cache';

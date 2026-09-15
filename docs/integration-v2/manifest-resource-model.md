@@ -89,7 +89,8 @@ uses the typed mapper directly; the old route-local HLS/DASH implementation was
 removed. Existing client/player URLs remain compatible with the opaque gateway
 contract.
 
-No slice cache, validator store, single-flight, LRU/TTL, corruption recovery,
-or cache-specific `If-Range` behavior is implemented here. `future-slice-cache`
-is metadata only and is reserved for Phase 3B after resource identity and
-authorization have been validated in production-like flows.
+The optional Phase 3B Slice Cache consumes `future-slice-cache` only after this
+resource identity and authorization path has succeeded. It admits only the
+documented VOD binary kinds; manifests, keys, live/event resources, conditional
+requests and multi-range requests bypass it. See `slice-cache.md` for the
+validator, partition, single-flight, bounded-storage and fail-open contract.

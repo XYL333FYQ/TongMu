@@ -39,6 +39,7 @@ import { providerPlaybackSessionCoordinator } from '../../services/media/provide
 import { legacyPlaybackClientProfile } from '../../services/media/playback-profile';
 import {
   rewriteManifest as rewriteTypedManifest,
+  classifyHlsPlaylist,
   DEFAULT_MAX_MANIFEST_DEPTH,
   DEFAULT_MAX_MANIFEST_RESOURCES,
 } from '../../services/media/manifest/mapper';
@@ -49,6 +50,7 @@ import {
   type ManifestHandleKind,
 } from '../../services/media/manifest/model';
 import { buildBilibiliUnifiedManifest } from '../../services/media/manifest/bilibili';
+import type { SliceCacheLifecycle, SliceCacheRequestContext } from '../../services/proxy/slice-cache';
 
 const router = Router();
 const canPublishTarget = (url: string) => canDirect({ finalUrl: url } as MediaDescriptor);
@@ -238,6 +240,7 @@ export function rewriteManifest(
     sourceUrl: resource.url,
     parentResourceId: handle.id,
     recursiveDepth: resource.recursiveDepth ?? 0,
+    lifecycle: manifestLifecycle(body, protocol),
     maxRecursiveDepth: MAX_MANIFEST_DEPTH,
     maxResources: MAX_MANIFEST_RESOURCES,
     // The historical exported helper always meant a full gateway rewrite.
@@ -252,6 +255,36 @@ export function rewriteManifest(
   // into concrete attributes. The live route keeps typed BaseURL candidates;
   // this facade preserves the old serialized shape only.
   return mapped.replace(/<BaseURL(?:\s[^>]*)?>[^<]*<\/BaseURL>/g, '');
+}
+
+function manifestLifecycle(body: string, protocol: 'hls' | 'dash'): SliceCacheLifecycle {
+  if (protocol === 'hls') {
+    const playlist = classifyHlsPlaylist(body);
+    return playlist === 'VodMedia' ? 'vod' : playlist === 'EventMedia' ? 'event' : playlist === 'LiveMedia' ? 'live' : 'unknown';
+  }
+  return /\btype\s*=\s*["']dynamic["']/i.test(body) || /\bminimumUpdatePeriod\s*=/i.test(body)
+    ? 'live'
+    : 'vod';
+}
+
+function rootCacheLifecycle(descriptor: MediaDescriptor, candidate?: PlaybackCandidate): SliceCacheLifecycle | undefined {
+  if (descriptor.isLive || descriptor.transport === 'flv' || candidate?.transport === 'flv') return 'live';
+  return undefined;
+}
+
+function sliceCacheContext(resource: MediaHandleResource, _target: string): SliceCacheRequestContext {
+  return {
+    resourceIdentity: resource.rootSourceIdentity ?? resource.url,
+    resourceKind: resource.resourceKind ?? 'media',
+    cachePolicyHint: resource.cachePolicyHint,
+    representationIdentity: resource.representationIdentity,
+    sourceGeneration: resource.sourceGeneration,
+    authorizationIdentity: resource.scope,
+    credentialOrigins: resource.credentialOrigins,
+    lifecycle: resource.cacheLifecycle,
+    targetPolicy: resource.targetPolicy ?? 'public-only',
+    trustedPrivateHosts: resource.trustedPrivateHosts,
+  };
 }
 
 async function readManifest(response: Awaited<ReturnType<typeof fetchWithProxyPolicy>>): Promise<string> {
@@ -417,6 +450,7 @@ function mapTypedManifestResource(
     recursiveDepth: number;
     allowRange: boolean;
     representationIdentity?: string;
+    lifecycle?: SliceCacheLifecycle;
     template?: boolean;
   },
   handle: { token?: string; roomGrant?: string },
@@ -469,6 +503,7 @@ function mapTypedManifestResource(
     recursiveDepth: mapping.recursiveDepth,
     allowRange: mapping.allowRange,
     representationIdentity: mapping.representationIdentity,
+    cacheLifecycle: mapping.lifecycle,
     assetPathPrefix: mapping.template
       ? assetPathPrefix
       : isBase
@@ -704,6 +739,7 @@ router.post('/media/resolve', authenticateToken, mediaResolveLimiter, async (req
         recursiveDepth: 0,
         allowRange: true,
         cachePolicyHint: 'future-slice-cache',
+        cacheLifecycle: rootCacheLifecycle(descriptor, providerCandidate),
         transportMode: 'FULL_PROXY',
         manifestBody: bilibiliUnifiedManifest,
         providerId,
@@ -767,6 +803,7 @@ router.post('/media/resolve', authenticateToken, mediaResolveLimiter, async (req
               recursiveDepth: 0,
               allowRange: true,
               cachePolicyHint: 'future-slice-cache',
+              cacheLifecycle: rootCacheLifecycle(descriptor, providerCandidate),
               manifestBody: bilibiliUnifiedManifest,
               transportMode: mode,
               headers: handleHeaders,
@@ -863,6 +900,7 @@ async function pipeDashBaseResource(req: AuthenticatedRequest, res: import('expr
     targetPolicy: resource.targetPolicy ?? 'public-only',
     trustedPrivateHosts: resource.trustedPrivateHosts,
     headers: { extra: headersForTarget(resource, target.toString()) },
+    sliceCache: sliceCacheContext(resource, target.toString()),
     cors: 'global',
     logTag: 'media-dash-base',
     errorMessage: 'DASH BaseURL 请求失败',
@@ -895,6 +933,7 @@ router.get('/media/:id/asset', async (req: AuthenticatedRequest, res) => {
       url: target.toString(), targetPolicy: resource.targetPolicy ?? 'public-only',
       trustedPrivateHosts: resource.trustedPrivateHosts,
       headers: { extra: headersForTarget(resource, target.toString()) },
+      sliceCache: sliceCacheContext(resource, target.toString()),
     cors: 'global', logTag: 'media-segment', errorMessage: 'DASH 分片请求失败',
   });
 });
@@ -917,6 +956,7 @@ router.get('/media/:id', async (req: AuthenticatedRequest, res) => {
       url: resource.url, targetPolicy: resource.targetPolicy ?? 'public-only',
       trustedPrivateHosts: resource.trustedPrivateHosts,
       headers: { extra: resource.headers },
+      sliceCache: sliceCacheContext(resource, resource.url),
       defaultContentType: resource.contentType, cors: 'global', logTag: 'media-handle', errorMessage: '媒体网关请求失败',
     });
     return;
@@ -955,6 +995,7 @@ router.get('/media/:id', async (req: AuthenticatedRequest, res) => {
       sourceUrl: finalResource.url,
       parentResourceId: String(req.params.id),
       recursiveDepth: finalResource.recursiveDepth ?? 0,
+      lifecycle: manifestLifecycle(body, protocol),
       maxRecursiveDepth: MAX_MANIFEST_DEPTH,
       maxResources: MAX_MANIFEST_RESOURCES,
       mapResource: (mapping) => mapTypedManifestResource(finalResource, mapping, {

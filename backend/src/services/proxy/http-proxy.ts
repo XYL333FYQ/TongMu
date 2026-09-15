@@ -28,6 +28,10 @@ import {
   resolveByteRange,
   type ByteRangeRequest,
 } from './byte-range';
+import {
+  tryServeSliceCache,
+  type SliceCacheRequestContext,
+} from './slice-cache';
 
 /** 将字节数格式化为人类可读单位 */
 function formatBytes(bytes: number): string {
@@ -95,6 +99,8 @@ export interface ProxyHttpOptions {
   logTag: string;
   /** 502 错误响应的 message 文案 */
   errorMessage: string;
+  /** Optional cache context. The caller must have authorized the media handle. */
+  sliceCache?: SliceCacheRequestContext;
 }
 
 /** 需要透传给客户端的上游响应头（白名单） */
@@ -130,6 +136,17 @@ function buildUpstreamHeaders(
     ? req.headers['if-none-match'][0]
     : req.headers['if-none-match'];
   if (ifNoneMatch) headers['If-None-Match'] = ifNoneMatch;
+  const conditionalHeaders = [
+    ['if-modified-since', 'If-Modified-Since'],
+    ['if-match', 'If-Match'],
+    ['if-unmodified-since', 'If-Unmodified-Since'],
+  ] as const;
+  for (const [requestName, upstreamName] of conditionalHeaders) {
+    const value = Array.isArray(req.headers[requestName])
+      ? req.headers[requestName][0]
+      : req.headers[requestName];
+    if (value) headers[upstreamName] = value;
+  }
   const ifRange = Array.isArray(req.headers['if-range'])
     ? req.headers['if-range'][0]
     : req.headers['if-range'];
@@ -231,12 +248,26 @@ export async function proxyHttpUpstream(
       });
       return;
     }
+    const upstreamHeaders = buildUpstreamHeaders(req, h);
     const startUpstreamFetch = () =>
       fetchWithProxyPolicy(requestUrl, {
         method: req.method,
-        headers: buildUpstreamHeaders(req, h),
+        headers: upstreamHeaders,
         signal: controller.signal,
       }, opts.targetPolicy, opts.trustedPrivateHosts);
+
+    if (opts.sliceCache) {
+      const cacheHandled = await tryServeSliceCache(req, res, {
+        url: requestUrl,
+        context: opts.sliceCache,
+        headers: upstreamHeaders,
+        defaultContentType,
+        cors,
+        cacheControl,
+        logTag,
+      });
+      if (cacheHandled) return;
+    }
 
     // 转发原始 HTTP 方法：HEAD 请求转发为 HEAD（避免上游下载整个视频体），
     // GET 请求转发为 GET（含 Range 头时上游返回 206 部分内容）。

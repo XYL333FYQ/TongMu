@@ -1077,3 +1077,54 @@ for (const provider of ['emby', 'jellyfin'] as const) {
     }
   });
 }
+
+test('Phase 3B cache keeps authorized Range quality and bounds upstream reads', async ({ page }) => {
+  test.skip(process.env.SLICE_CACHE_E2E !== 'true', 'run with SLICE_CACHE_E2E=true');
+  await loginRoot(page);
+
+  const resolved = await page.evaluate(async (fixtureOrigin) => {
+    // @ts-ignore Vite serves application modules for the browser integration test.
+    const { resolveMediaInput } = await import('/src/modules/media/mediaApi.ts');
+    const result = await resolveMediaInput(`${fixtureOrigin}/normal.mp4?token=phase3b-e2e-secret`);
+    const candidate = result.descriptor.transportPlan?.candidates?.find((item) => item.mode === 'FULL_PROXY');
+    const accessToken = localStorage.getItem('zviewer-access-token');
+    if (!candidate?.url || !accessToken) throw new Error('missing FULL_PROXY candidate or access token');
+    const playbackUrl = new URL(candidate.url, location.origin);
+    playbackUrl.searchParams.set('token', accessToken);
+    return { mode: candidate.mode, url: playbackUrl.toString() };
+  }, FIXTURE_ORIGIN);
+
+  expect(resolved.mode).toBe('FULL_PROXY');
+  const before = (await (await page.request.get(`${FIXTURE_ORIGIN}/stats`)).json()) as Array<{
+    path: string;
+    method?: string;
+    range?: string;
+  }>;
+  const readRange = async () => page.evaluate(async (url) => {
+    const response = await fetch(url, { headers: { Range: 'bytes=0-63' } });
+    const body = new Uint8Array(await response.arrayBuffer());
+    const digest = await crypto.subtle.digest('SHA-256', body);
+    return {
+      status: response.status,
+      contentRange: response.headers.get('content-range'),
+      length: body.byteLength,
+      digest: Array.from(new Uint8Array(digest)).map((value) => value.toString(16).padStart(2, '0')).join(''),
+    };
+  }, resolved.url);
+
+  const first = await readRange();
+  const second = await readRange();
+  expect(first).toEqual(second);
+  expect(first.status).toBe(206);
+  expect(first.contentRange).toMatch(/^bytes 0-63\/\d+$/);
+  expect(first.length).toBe(64);
+
+  const after = (await (await page.request.get(`${FIXTURE_ORIGIN}/stats`)).json()) as Array<{
+    path: string;
+    method?: string;
+    range?: string;
+  }>;
+  const upstreamReads = after.slice(before.length).filter((entry) =>
+    entry.path === '/normal.mp4' && entry.method === 'GET');
+  expect(upstreamReads.length).toBe(process.env.SLICE_CACHE_ENABLED === 'true' ? 1 : 2);
+});

@@ -43,7 +43,7 @@ function countAndMap(
   state: { count: number },
   kind: HlsResourceKind | DashResourceKind,
   upstreamUrl: string,
-  details: { allowRange?: boolean; template?: boolean; representationIdentity?: string } = {},
+  details: { allowRange?: boolean; template?: boolean; representationIdentity?: string; lifecycle?: import('./model').ManifestResourceLifecycle } = {},
 ): string {
   state.count += 1;
   const limit = options.maxResources ?? DEFAULT_MAX_MANIFEST_RESOURCES;
@@ -60,6 +60,7 @@ function countAndMap(
     recursiveDepth: depth,
     allowRange: details.allowRange ?? (kind !== 'Key' && kind !== 'Timing'),
     representationIdentity: details.representationIdentity,
+    lifecycle: details.lifecycle ?? options.lifecycle,
     template: details.template,
   });
 }
@@ -131,6 +132,14 @@ export function rewriteHlsManifest(
   options: ManifestMapperOptions,
 ): MappedManifest<HlsPlaylistKind> {
   const playlistKind = classifyHlsPlaylist(body);
+  const lifecycle = playlistKind === 'VodMedia'
+    ? 'vod' as const
+    : playlistKind === 'EventMedia'
+      ? 'event' as const
+      : playlistKind === 'LiveMedia'
+        ? 'live' as const
+        : 'unknown' as const;
+  const effectiveOptions = { ...options, lifecycle };
   const state = { count: 0 };
   let nextLineIsManifest = false;
   const lines = body.split(/\r?\n/);
@@ -140,12 +149,12 @@ export function rewriteHlsManifest(
     if (trimmed && !trimmed.startsWith('#')) {
       const target = assertAbsoluteHttpUrl(trimmed, options.sourceUrl);
       const kind: HlsResourceKind = nextLineIsManifest ? 'Manifest' : 'Segment';
-      const mapped = countAndMap(options, state, kind, target, { allowRange: true });
+      const mapped = countAndMap(effectiveOptions, state, kind, target, { allowRange: true });
       output.push(line.slice(0, line.indexOf(trimmed)) + mapped);
       nextLineIsManifest = false;
       continue;
     }
-    output.push(rewriteHlsQuotedUris(line, options.sourceUrl, options, state));
+    output.push(rewriteHlsQuotedUris(line, options.sourceUrl, effectiveOptions, state));
     if (/^#EXT-X-STREAM-INF\s*:/i.test(trimmed)) nextLineIsManifest = true;
   }
   return { body: output.join('\n'), playlistKind, resourceCount: state.count };

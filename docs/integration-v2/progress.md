@@ -4,7 +4,7 @@
 
 This file is the persistent checkpoint for the TongMu V2 integration program. Phase 0 is an audit and design phase only: no product code, dependency, database, configuration, CI, or reference source was changed.
 
-Current state: **Phase 2 and Phase 3A are complete within their approved Media Core scope. Phase 3B and the Phase 6 migration/release gate remain open.**
+Current state: **Phase 2, Phase 3A, and Phase 3B are complete within their approved Media Core scope. The Phase 6 migration/release gate remains open.**
 
 Phase 2 has a working core checkpoint: the versioned client profile, server
 viability filter, client-owned planner path, provider contract/registry, and
@@ -102,7 +102,7 @@ to do that work safely.
 - [x] Phase 0 — define target architecture and executable implementation phases.
 - [x] Phase 1 — security and correctness foundation: secret boundary, credentials, Range, migration foundation, baseline restoration, updater/CI safety stopgap.
 - [x] Phase 2 — Media Core + Provider convergence.
-- [ ] Phase 3 — Manifest / Proxy / Slice Cache.
+- [x] Phase 3 — Manifest / Proxy / Slice Cache.
 - [ ] Phase 4 — Player / Subtitle / Voice.
 - [ ] Phase 5 — `RealtimeSyncCore` / Permissions / Together Listen.
 - [ ] Phase 6 — Historical migrations / Packaging / CI / Observability / release gate.
@@ -292,7 +292,8 @@ is now centralized.
 ## Phase 3A typed manifest checkpoint
 
 Phase 3A is **COMPLETE within the typed-manifest and browser-verification
-boundary**. Slice Cache is intentionally not implemented and remains Phase 3B.
+boundary**. Phase 3B is complete as the optional, bounded single-node cache
+described below.
 
 - `backend/src/services/media/manifest/` now owns the typed HLS/DASH resource
   model, lifecycle classifier, URL/resource/depth bounds, safe XML parsing,
@@ -327,8 +328,46 @@ boundary**. Slice Cache is intentionally not implemented and remains Phase 3B.
 The backend, frontend, targeted browser flows, and full Chromium suite now all
 pass within the Phase 3A boundary. The root fixture diagnostics are expected:
 the E2E route intentionally aborts direct fixture requests with
-`route.abort('blockedbyclient')` to prove the gateway fallback. Phase 3B remains
-deferred.
+`route.abort('blockedbyclient')` to prove the gateway fallback.
+
+Phase 3B now adds an optional single-node memory Slice Cache behind the
+authorized media-handle boundary. It is disabled by default and only admits
+stable VOD binary resources. It uses fixed aligned 2 MiB slices, bounded LRU /
+TTL storage, resource-wide validator identities, per-slice single-flight and
+same-resource uncached fallback on cache failure. Manifests, keys, live/event
+resources, conditional requests, multi-range and transformed responses bypass
+the cache. See `slice-cache.md`.
+
+### Phase 3B validation checkpoint
+
+Phase 3B is **COMPLETE** within the optional single-node slice-cache boundary.
+The focused suite covers cross-slice/open/suffix/full requests,
+single-flight joins and cancellation, validator changes/disappearance,
+conditional and resource-kind bypass, authorization/credential/generation
+partitioning, invalid upstream 206/ignored Range fail-open, and LRU/TTL
+bounds. Chromium additionally verifies the same authorized Range response in
+cache-enabled MISS/HIT mode and cache-disabled Phase 3A mode.
+
+| Check | Command | Result | Evidence / limitation |
+| --- | --- | ---: | --- |
+| Backend lint/typecheck | `npm run lint -w backend` | PASS | TypeScript no-emit check |
+| Focused Phase 3B suite | `npm run build -w backend; node --test test/phase3b-slice-cache.test.js` | PASS | 8/8; Range, validators, single-flight, auth partitions, fail-open, LRU/TTL |
+| Backend regression | `npm test -w backend` | PASS with 1 skip | 98 passing; 1 Windows symlink-escape environment skip |
+| Frontend regression | `npm test -w frontend` | PASS | 9/9 |
+| Frontend production build | `npm run build -w frontend` | PASS | Existing MediaBunny dynamic-import and large-chunk warnings remain |
+| Full Chromium media E2E | `npx playwright test e2e/media-playback.spec.ts --reporter=line --workers=1` | PASS | Existing 18/18 Phase 3A flows pass |
+| Cache-enabled Chromium E2E | `SLICE_CACHE_E2E=true SLICE_CACHE_ENABLED=true npx playwright test e2e/media-playback.spec.ts --grep "Phase 3B cache" --reporter=line --workers=1` | PASS | 1/1; upstream same-resource GET count is reduced from two to one |
+| Cache-disabled Chromium E2E | `SLICE_CACHE_E2E=true SLICE_CACHE_ENABLED=false npx playwright test e2e/media-playback.spec.ts --grep "Phase 3B cache" --reporter=line --workers=1` | PASS | 1/1; same `206` response and two normal upstream GETs |
+| Diff whitespace and reference boundary | `git diff --check`; `git diff --name-only -- references` | PASS | No reference files changed; only existing LF/CRLF normalization warnings |
+
+### Phase 3 final status
+
+**COMPLETE** within the approved Phase 3A/3B boundary: typed manifest
+resources remain authorization-scoped; the cache is optional, bounded and
+disabled by default; Range semantics and representation quality are unchanged;
+validator changes purge resource slices; cache errors fall back to the same
+uncached resource; and the full regression plus cache-enabled/disabled browser
+checks are green.
 
 ### Phase 2 closure audit
 

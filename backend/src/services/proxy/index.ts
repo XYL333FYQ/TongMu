@@ -22,3 +22,17 @@ export {
   StreamMovieError,
   type ResolvedMovieStream,
 } from './stream-movie';
+export {
+  assessSliceCacheEligibility,
+  getGlobalSliceCache,
+  loadSliceCacheConfig,
+  MemorySliceCacheStore,
+  resourceValidator,
+  tryServeSliceCache,
+  type ResourceValidator,
+  type SliceCacheConfig,
+  type SliceCacheLifecycle,
+  type SliceCacheMetadata,
+  type SliceCacheRequestContext,
+  type SliceCacheStats,
+} from './slice-cache';
