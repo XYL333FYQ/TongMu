@@ -15,6 +15,13 @@ import { Session } from "../../entities/Session";
 import { Room } from "../../entities/Room";
 import { SystemSettings } from "../../entities/SystemSettings";
 import type { UserRole } from "../../entities/User";
+import {
+  canPerformRoomAction,
+  roomRoleFromUserRole,
+  type PermissionTargetFacts,
+  type RoomPermissionAction,
+  type RoomRoleFacts,
+} from './permission-core';
 
 /** 权限校验缓存条目 */
 interface PermissionCacheEntry {
@@ -317,8 +324,84 @@ export class RoomPermissionService {
     socket: Socket,
     roomId: string,
   ): Promise<boolean> {
-    if (await this.isRoomHost(socket, roomId)) return true;
-    return this.isRoomModerator(socket, roomId);
+    const decision = await this.canPerform(socket, roomId, 'voice.mute');
+    return decision.allowed;
+  }
+
+  /**
+   * Resolve current room role facts. Socket data identifies the account, while
+   * Session/Room state identifies membership and room ownership.
+   */
+  async getRoleFacts(socket: Socket, roomId: string): Promise<RoomRoleFacts> {
+    const session = await AppDataSource.getRepository(Session).findOneBy({
+      socketId: socket.id,
+      roomId,
+      endedAt: IsNull(),
+    });
+    const role: UserRole = socket.data?.role ?? 'guest';
+    const userId = Number.isInteger(socket.data?.userId) && socket.data.userId > 0
+      ? Number(socket.data.userId)
+      : null;
+    const room = await AppDataSource.getRepository(Room).findOneBy({ roomId, status: 'active' });
+    const isMember = !!session && !!room;
+    const isModerator = isMember && userId !== null && room
+      ? this.parseIdList(room.moderators).includes(userId)
+      : false;
+    const isOwner = isMember && room
+      ? (room.ownerUserId !== null && room.ownerUserId === userId) || session?.role === 'sharer'
+      : false;
+    return {
+      actorRole: roomRoleFromUserRole(role, isOwner, isModerator, isMember),
+      userId,
+      isHost: session?.role === 'sharer',
+      isRoomMember: isMember,
+    };
+  }
+
+  /** One server-side decision point for all room actions. */
+  async canPerform(
+    socket: Socket,
+    roomId: string,
+    action: RoomPermissionAction,
+    target?: PermissionTargetFacts,
+  ): Promise<{ allowed: true; facts: RoomRoleFacts } | { allowed: false; reason: string; facts: RoomRoleFacts }> {
+    const facts = await this.getRoleFacts(socket, roomId);
+    const decision = canPerformRoomAction(facts, action, target);
+    return decision.allowed ? { allowed: true, facts } : { allowed: false, reason: decision.reason, facts };
+  }
+
+  /** Build protected target facts from a socket currently connected to the room. */
+  async getTargetFacts(actor: Socket, roomId: string, target: Socket): Promise<PermissionTargetFacts | null> {
+    const session = await AppDataSource.getRepository(Session).findOneBy({
+      socketId: target.id,
+      roomId,
+      endedAt: IsNull(),
+    });
+    const room = await AppDataSource.getRepository(Room).findOneBy({ roomId, status: 'active' });
+    if (!session || !room) return null;
+    const role: UserRole = target.data?.role ?? 'guest';
+    const userId = Number.isInteger(target.data?.userId) && target.data.userId > 0
+      ? Number(target.data.userId)
+      : null;
+    const isModerator = userId !== null && this.parseIdList(room.moderators).includes(userId);
+    const isOwner = session.role === 'sharer' || (room.ownerUserId !== null && room.ownerUserId === userId);
+    return {
+      role: roomRoleFromUserRole(role, isOwner, isModerator, true),
+      userId,
+      isRoomMember: true,
+      isSelf: actor.id === target.id,
+    };
+  }
+
+  private parseIdList(raw: string | null | undefined): number[] {
+    try {
+      const parsed: unknown = JSON.parse(raw || '[]');
+      return Array.isArray(parsed)
+        ? parsed.filter((id): id is number => Number.isInteger(id) && id > 0)
+        : [];
+    } catch {
+      return [];
+    }
   }
 
   /**
@@ -330,21 +413,30 @@ export class RoomPermissionService {
     targetUserId: number | undefined,
     targetRole?: UserRole,
   ): Promise<string | null> {
-    if (targetRole === "root") return "不能对管理员操作";
-    if (!targetUserId || targetUserId <= 0) return null;
-
     const room = await AppDataSource.getRepository(Room).findOneBy({ roomId });
-    if (room?.ownerUserId === targetUserId) return "不能对房主操作";
-
-    try {
-      const moderators = JSON.parse(room?.moderators || "[]");
-      if (Array.isArray(moderators) && moderators.includes(targetUserId)) {
-        return "不能对房管操作";
-      }
-    } catch {
-      // malformed moderator data fails closed for the target-protection check
-    }
-    return null;
+    const moderators = this.parseIdList(room?.moderators);
+    const targetFacts: PermissionTargetFacts = {
+      role: roomRoleFromUserRole(
+        targetRole ?? 'guest',
+        room?.ownerUserId !== null && room?.ownerUserId === targetUserId,
+        targetUserId !== null && targetUserId !== undefined && moderators.includes(targetUserId),
+        !!room,
+      ),
+      userId: targetUserId ?? null,
+      isRoomMember: !!room,
+      isSelf: false,
+    };
+    const decision = canPerformRoomAction(
+      {
+        actorRole: 'moderator',
+        userId: null,
+        isHost: false,
+        isRoomMember: !!room,
+      },
+      'voice.mute',
+      targetFacts,
+    );
+    return decision.allowed ? null : decision.reason;
   }
 
   /** 读取房间房管 user ID 列表，供 Voice handler 做最小目标保护。 */

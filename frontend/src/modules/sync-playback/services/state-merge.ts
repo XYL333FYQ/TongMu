@@ -32,6 +32,7 @@ export function buildStateFromVideo(
 ): WatchTogetherState {
   const hasLoadedSource = !!video && video.currentSrc !== ''
   return {
+    version: storeState.version,
     sourceUrl: storeState.sourceUrl,
     sourceType: storeState.sourceType,
     audioUrl: storeState.audioUrl,
@@ -57,6 +58,7 @@ export function buildStateFromVideo(
     // 透传缓冲模式标记：房主 forceSync / 响应观众 REQUEST_STATE 时必须保留，
     // 否则观众端收到无 bufferMode 的 state 会回退到 URL 播放，破坏缓冲模式一致性
     bufferMode: storeState.bufferMode,
+    serverTimestamp: storeState.serverTimestamp,
   }
 }
 

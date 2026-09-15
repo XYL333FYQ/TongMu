@@ -112,6 +112,14 @@ export class PlaybackState {
   @Column({ type: 'bigint' })
   lastUpdatedAt!: number;
 
+  /** Monotonic authoritative realtime version. */
+  @Column({ type: 'integer', default: 0 })
+  version!: number;
+
+  /** Media source generation; late events from an older source are rejected. */
+  @Column({ type: 'integer', default: 0 })
+  sourceGeneration!: number;
+
   /**
    * 当前房主 socket ID。
    * - 房主在线时：房主的 socket.id

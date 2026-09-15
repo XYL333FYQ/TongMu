@@ -17,6 +17,8 @@ import { safeAck } from '../socket';
 import { roomPermissionService } from '../room/room-permission.service';
 import { playbackMemoryService } from '../playback-memory';
 import type { HeartbeatPayload } from '../shared/dto';
+import { realtimeSyncCore } from '../realtime-sync-core';
+import { VideoSyncDomain } from './video-sync.domain';
 
 export class HeartbeatHandler implements SocketEventHandler {
   readonly name = 'HeartbeatHandler';
@@ -26,14 +28,21 @@ export class HeartbeatHandler implements SocketEventHandler {
       'host-heartbeat',
       async (payload: HeartbeatPayload, callback?: AckCallback) => {
         try {
-          // 校验是否为指定房间的活跃 sharer
-          if (
-            !(await roomPermissionService.isRoomHost(socket, payload.roomId))
-          ) {
+          if (!VideoSyncDomain.validateHeartbeat(payload) || typeof payload?.roomId !== 'string' || payload.roomId.length === 0 || payload.roomId.length > 128) {
+            return safeAck(callback, { success: false, code: 'INVALID_PAYLOAD', message: '心跳 payload 无效' });
+          }
+          const permission = await roomPermissionService.canPerform(socket, payload.roomId, 'playback.play');
+          if (!permission.allowed) {
             return safeAck(callback, {
-              success: false,
-              message: '无权限发送心跳',
+                success: false,
+              code: 'FORBIDDEN',
+              message: permission.reason,
             });
+          }
+          const current = await playbackMemoryService.getRawPlayback(payload.roomId);
+          realtimeSyncCore.hydrate(payload.roomId, current?.version, current?.sourceGeneration, current?.serverTimestamp ?? current?.updatedAt);
+          if (payload.sourceGeneration !== undefined && payload.sourceGeneration !== (current?.sourceGeneration ?? realtimeSyncCore.current(payload.roomId).sourceGeneration)) {
+            return safeAck(callback, { success: false, code: 'STALE_GENERATION', message: '旧 sourceGeneration 的心跳已丢弃' });
           }
 
           // 心跳落盘（10s 节流，service 内部控制）：房主连续播放期间没有
@@ -50,6 +59,12 @@ export class HeartbeatHandler implements SocketEventHandler {
               console.error('[host-heartbeat] applyHostHeartbeat error:', err);
             });
 
+          const state = await playbackMemoryService.getAdvancedPlayback(payload.roomId);
+          const metadata = state ? {
+            version: state.version,
+            sourceGeneration: state.sourceGeneration,
+            serverTimestamp: state.serverTimestamp ?? state.updatedAt,
+          } : realtimeSyncCore.current(payload.roomId);
           // 转发心跳给房间内其他成员（不含发送者、不含 roomId）
           // 保留旧事件兼容已连接客户端
           socket.to(payload.roomId).emit('host-heartbeat', {
@@ -57,6 +72,7 @@ export class HeartbeatHandler implements SocketEventHandler {
             isPlaying: payload.isPlaying,
             playbackRate: payload.playbackRate,
             suppressed: payload.suppressed,
+            ...metadata,
           });
           // 统一心跳协议（#14）：新增 sync-heartbeat 事件，viewer 端按 source 字段区分
           socket.to(payload.roomId).emit('sync-heartbeat', {
@@ -65,6 +81,7 @@ export class HeartbeatHandler implements SocketEventHandler {
             isPlaying: payload.isPlaying,
             playbackRate: payload.playbackRate,
             suppressed: payload.suppressed,
+            ...metadata,
           });
           safeAck(callback, { success: true });
         } catch (err) {

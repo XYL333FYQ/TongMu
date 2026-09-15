@@ -17,6 +17,7 @@ import { Room } from '../../entities/Room';
 import { roomStateService } from './room-state.service';
 import { playbackMemoryService } from '../playback-memory';
 import { createRoomMediaGrant } from '../../services/media/room-access';
+import { realtimeSyncCore } from '../realtime-sync-core';
 
 /**
  * 房间 Session 服务。
@@ -258,28 +259,45 @@ export class RoomSessionService {
     oldSharerSocketId: string,
     newOwnerUserId: number,
   ): Promise<void> {
-    const sessionRepo = AppDataSource.getRepository(Session);
-    const roomRepo = AppDataSource.getRepository(Room);
+    await realtimeSyncCore.withRoomLock(roomId, async () => {
+      await AppDataSource.transaction(async (manager) => {
+        const room = await manager.findOne(Room, { where: { roomId, status: 'active' } });
+        if (!room) throw new Error('房间不存在或已关闭');
+        const oldHost = await manager.findOne(Session, {
+          where: { roomId, socketId: oldSharerSocketId, role: 'sharer', endedAt: IsNull() },
+        });
+        const target = await manager.findOne(Session, {
+          where: { roomId, socketId: newSharerSocketId, role: 'viewer', endedAt: IsNull() },
+        });
+        if (!oldHost || !target || target.userId !== newOwnerUserId) {
+          throw new Error('房主或目标 session 已失效');
+        }
+        const activeSharers = await manager.count(Session, {
+          where: { roomId, role: 'sharer', endedAt: IsNull() },
+        });
+        if (activeSharers !== 1) throw new Error('房间存在多个房主 session');
 
-    await AppDataSource.transaction(async (manager) => {
-      // 原房主降级为 viewer
-      await manager.update(
-        Session,
-        { socketId: oldSharerSocketId, role: 'sharer' },
-        { role: 'viewer' },
-      );
-      // 新房主升级为 sharer
-      await manager.update(
-        Session,
-        { socketId: newSharerSocketId, role: 'viewer' },
-        { role: 'sharer' },
-      );
-      // 更新房间 owner
-      await manager.update(Room, { roomId }, { ownerUserId: newOwnerUserId });
+        await manager.update(Session, { id: oldHost.id, role: 'sharer' }, { role: 'viewer' });
+        await manager.update(Session, { id: target.id, role: 'viewer' }, { role: 'sharer' });
+        let moderators: number[] = [];
+        try {
+          const parsed: unknown = JSON.parse(room.moderators || '[]');
+          moderators = Array.isArray(parsed)
+            ? parsed.filter((id): id is number => Number.isSafeInteger(id) && id > 0)
+            : [];
+        } catch {
+          moderators = [];
+        }
+        moderators = moderators.filter((id) => id !== newOwnerUserId);
+        await manager.update(Room, { id: room.id }, {
+          ownerUserId: newOwnerUserId,
+          moderators: JSON.stringify(moderators),
+        });
+      });
+      await playbackMemoryService.updateHostSocket(roomId, newSharerSocketId);
+      roomPermissionService.invalidatePermissionCache(oldSharerSocketId, roomId);
+      roomPermissionService.invalidatePermissionCache(newSharerSocketId, roomId);
     });
-    // 失效权限缓存：新旧房主的权限缓存应即时清除
-    roomPermissionService.invalidatePermissionCache(oldSharerSocketId, roomId);
-    roomPermissionService.invalidatePermissionCache(newSharerSocketId, roomId);
   }
 }
 

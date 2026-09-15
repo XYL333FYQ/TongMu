@@ -43,6 +43,10 @@ export interface QualityOptionDto {
  * 任何字段变更只需修改此定义，所有模块自动同步。
  */
 export interface SyncStateDto {
+  /** Server-authoritative ordering metadata. Optional for legacy clients; server always emits it. */
+  version?: number;
+  sourceGeneration?: number;
+  serverTimestamp?: number;
   /** 视频源 URL（B站 DASH 为视频流 m4s 地址） */
   sourceUrl: string;
   /** 源类型 */
@@ -92,6 +96,9 @@ export interface PlaybackStateDto extends SyncStateDto {
   currentMovieId?: number;
   /** 最近一次更新的时间戳 */
   updatedAt: number;
+  /** Server-authoritative version restored across a process restart. */
+  version: number;
+  sourceGeneration: number;
   /** 是否启用缓冲模式（B站 DASH 源：先完整缓存到 IndexedDB 再播放） */
   bufferMode?: boolean;
 }
@@ -112,6 +119,10 @@ export interface SyncStatePayload {
    * 广播（socket 重连窗口），主动请求全量状态自愈，避免 diff 合并基线错位。
    */
   seq?: number;
+  /** Version the client observed before this mutation. */
+  baseVersion?: number;
+  mutationId?: string;
+  clientTimestamp?: number;
 }
 
 /** 控制动作类型 */
@@ -127,6 +138,10 @@ export interface SyncControlPayload {
   roomId: string;
   action: ControlAction;
   value?: number;
+  sourceGeneration?: number;
+  baseVersion?: number;
+  mutationId?: string;
+  clientTimestamp?: number;
 }
 
 /** 心跳 payload */
@@ -138,6 +153,8 @@ export interface HeartbeatPayload {
   playbackRate: number;
   /** suppressed 标记：源切换/恢复进度期间的心跳，仅用于存活检测，不用于状态同步 */
   suppressed?: boolean;
+  sourceGeneration?: number;
+  clientTimestamp?: number;
 }
 
 /** 轨道类型 */
@@ -148,6 +165,10 @@ export interface TrackChangePayload {
   roomId: string;
   type: TrackType;
   value: string | number | null;
+  sourceGeneration?: number;
+  baseVersion?: number;
+  mutationId?: string;
+  clientTimestamp?: number;
 }
 
 /**

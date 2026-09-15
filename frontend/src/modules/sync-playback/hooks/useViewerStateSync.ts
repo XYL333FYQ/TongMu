@@ -11,6 +11,8 @@ import type {
   SyncHeartbeatPayload,
 } from '../types'
 import { SOCKET_EVENT } from '../constants'
+import { shouldApplyAuthoritativeEvent } from '../realtime-version'
+import { shouldApplySnapshot } from '../realtime-version'
 import { safePlay } from '../safePlay'
 import {
   executeSeek,
@@ -108,6 +110,7 @@ export function useViewerStateSync({
   // 最近一次收到的广播序号：检测跳号（seq > lastSeq + 1）即说明错失了中间广播
   // （socket 重连窗口），主动请求全量状态自愈，避免 diff 合并基线错位
   const lastSeqRef = useRef(0)
+  const authorityRef = useRef<{ version?: number; sourceGeneration?: number }>({})
 
   useEffect(() => {
     if (!socket || isHostRef.current) return
@@ -248,6 +251,20 @@ export function useViewerStateSync({
     }
 
     const handleState = (payload: StatePayload) => {
+      if (!payload?.state) return
+      const incomingVersion = payload.version ?? payload.state.version
+      const incomingGeneration = payload.sourceGeneration ?? payload.state.sourceGeneration
+      const currentAuthority = authorityRef.current.version === undefined
+        ? useRoomStore.getState().watchTogether
+        : authorityRef.current
+      if (!shouldApplyAuthoritativeEvent(currentAuthority, {
+        version: incomingVersion,
+        sourceGeneration: incomingGeneration,
+      })) return
+      if (incomingVersion !== undefined && incomingGeneration !== undefined) {
+        authorityRef.current = { version: incomingVersion, sourceGeneration: incomingGeneration }
+      }
+
       // 跳号检测：seq > lastSeq + 1 说明错失了中间广播（socket 重连窗口等），
       // diff 合并基线已错位 → 强制丢弃 diff 用全量 state，并请求全量状态自愈。
       if (typeof payload.seq === 'number' && payload.seq > 0) {
@@ -266,10 +283,16 @@ export function useViewerStateSync({
             payload.diff as Partial<WatchTogetherState>
           )
         : payload.state
+      const authoritativeState: WatchTogetherState = {
+        ...state,
+        ...(incomingVersion !== undefined ? { version: incomingVersion } : {}),
+        ...(incomingGeneration !== undefined ? { sourceGeneration: incomingGeneration } : {}),
+        ...(payload.serverTimestamp !== undefined ? { serverTimestamp: payload.serverTimestamp } : {}),
+      }
 
       // 判断是否为 sourceUrl 变化
-      const isSourceChange = lastAppliedSourceUrlRef.current !== state.sourceUrl
-      setWatchTogether(state)
+      const isSourceChange = lastAppliedSourceUrlRef.current !== authoritativeState.sourceUrl
+      setWatchTogether(authoritativeState)
 
       const processState = async (s: WatchTogetherState) => {
         isApplyingRef.current = true
@@ -302,7 +325,7 @@ export function useViewerStateSync({
       // 串行化 applySourceToVideo：若上一次 apply 还在进行中，
       // 仅缓存最新 state，等上一次完成后处理最新值。
       if (isSourceChange) {
-        pendingStateRef.current = state
+        pendingStateRef.current = authoritativeState
         if (isApplyingRef.current) return
         // 成为 drain 启动者：获取抑制，drain 结束时统一释放
         suppressEventsRef.current = true
@@ -312,12 +335,42 @@ export function useViewerStateSync({
 
       // 非 sourceUrl 变化：直接同步，不需要串行化（各自 acquire/release 配对）
       suppressEventsRef.current = true
-      void processState(state).then(() => {
+      void processState(authoritativeState).then(() => {
         suppressEventsRef.current = false
       })
     }
 
     const handleControl = (payload: ControlPayload) => {
+      if (!payload) return
+      const currentAuthority = authorityRef.current.version === undefined
+        ? useRoomStore.getState().watchTogether
+        : authorityRef.current
+      const incomingVersion = payload.version ?? payload.state?.version
+      const incomingGeneration = payload.sourceGeneration ?? payload.state?.sourceGeneration
+      if (incomingVersion !== undefined || incomingGeneration !== undefined) {
+        if (!shouldApplyAuthoritativeEvent(currentAuthority, {
+          version: incomingVersion,
+          sourceGeneration: incomingGeneration,
+        })) return
+        if (incomingVersion !== undefined && incomingGeneration !== undefined) {
+          authorityRef.current = { version: incomingVersion, sourceGeneration: incomingGeneration }
+        }
+        if (payload.state) {
+          setWatchTogether({
+            ...payload.state,
+            version: incomingVersion,
+            sourceGeneration: incomingGeneration,
+            serverTimestamp: payload.serverTimestamp ?? payload.state.serverTimestamp,
+          })
+        } else {
+          setWatchTogether({
+            ...useRoomStore.getState().watchTogether,
+            ...(incomingVersion !== undefined ? { version: incomingVersion } : {}),
+            ...(incomingGeneration !== undefined ? { sourceGeneration: incomingGeneration } : {}),
+            ...(payload.serverTimestamp !== undefined ? { serverTimestamp: payload.serverTimestamp } : {}),
+          })
+        }
+      }
       const video = videoRef.current
       if (!video) return
 
@@ -429,7 +482,21 @@ export function useViewerHeartbeat({
       isPlaying: boolean
       playbackRate?: number
       suppressed?: boolean
+      version?: number
+      sourceGeneration?: number
+      serverTimestamp?: number
     }) => {
+      const currentState = useRoomStore.getState().watchTogether
+      if (!shouldApplySnapshot(currentState, payload)) return
+      if (payload.version !== undefined && payload.sourceGeneration !== undefined &&
+        (currentState.version !== payload.version || currentState.sourceGeneration !== payload.sourceGeneration)) {
+        useRoomStore.getState().setWatchTogether({
+          ...currentState,
+          version: payload.version,
+          sourceGeneration: payload.sourceGeneration,
+          serverTimestamp: payload.serverTimestamp ?? currentState.serverTimestamp,
+        })
+      }
       const video = videoRef.current
       if (!video) return
       if (suppressEventsRef.current) return
@@ -526,6 +593,9 @@ export function useViewerHeartbeat({
           isPlaying: !!payload.isPlaying,
           playbackRate: payload.playbackRate,
           suppressed: payload.suppressed,
+          version: payload.version,
+          sourceGeneration: payload.sourceGeneration,
+          serverTimestamp: payload.serverTimestamp,
         })
       }
     }

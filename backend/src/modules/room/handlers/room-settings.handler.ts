@@ -13,12 +13,12 @@ import type { Server as SocketIOServer, Socket } from 'socket.io';
 import bcrypt from 'bcryptjs';
 import { AppDataSource } from '../../../data-source';
 import { Room } from '../../../entities/Room';
-import type { UserRole } from '../../../entities/User';
 import {
   type AckCallback,
   type SocketEventHandler,
   safeAck,
 } from '../../socket';
+import { isBoundedIdentifier } from '../../realtime-sync-core';
 import { roomPermissionService } from '../room-permission.service';
 
 /** update-room-name 事件 payload */
@@ -59,22 +59,20 @@ export class RoomSettingsHandler implements SocketEventHandler {
       'update-room-name',
       async (payload: UpdateRoomNamePayload, callback: AckCallback) => {
         try {
-          const userId: number = socket.data.userId;
-          const role: UserRole = socket.data.role;
+          if (!payload || !isBoundedIdentifier(payload.roomId, 128) || typeof payload.name !== 'string' || payload.name.length > 120) {
+            return safeAck(callback, { success: false, code: 'INVALID_PAYLOAD', message: '房间名称 payload 无效' });
+          }
+          const permission = await roomPermissionService.canPerform(socket, payload.roomId, 'room.settings');
+          if (!permission.allowed) {
+            return safeAck(callback, {
+              success: false,
+              message: permission.reason,
+            });
+          }
           const roomRepo = AppDataSource.getRepository(Room);
           const room = await roomRepo.findOneBy({ roomId: payload.roomId });
           if (!room) {
             return safeAck(callback, { success: false, message: '房间不存在' });
-          }
-          // root 总是有权限；admin 仅对自己创建的房间有权限
-          if (
-            role !== 'root' &&
-            !(role === 'admin' && room.ownerUserId === userId)
-          ) {
-            return safeAck(callback, {
-              success: false,
-              message: '无权限：仅 root 或房间创建者可修改房间名称',
-            });
           }
 
           const trimmed = payload.name?.trim();
@@ -104,12 +102,8 @@ export class RoomSettingsHandler implements SocketEventHandler {
       'update-room-mode',
       async (payload: UpdateRoomModePayload, callback: AckCallback) => {
         try {
-          // 通过 sharer session 校验权限（带 socket 重连自愈）
-          const sharer = await roomPermissionService.getOrReactivateSharer(
-            socket,
-            payload.roomId,
-          );
-          if (!sharer || sharer.roomId !== payload.roomId) {
+          const permission = await roomPermissionService.canPerform(socket, payload.roomId, 'room.settings');
+          if (!permission.allowed) {
             return safeAck(callback, {
               success: false,
               message: '无权限切换房间模式',
@@ -143,7 +137,8 @@ export class RoomSettingsHandler implements SocketEventHandler {
       'update-room-settings',
       async (payload: UpdateRoomSettingsPayload, callback: AckCallback) => {
         try {
-          if (!(await roomPermissionService.isRoomHost(socket, payload.roomId))) {
+          const permission = await roomPermissionService.canPerform(socket, payload.roomId, 'room.settings');
+          if (!permission.allowed) {
             return safeAck(callback, {
               success: false,
               message: '无权限：仅房主可修改房间设置',

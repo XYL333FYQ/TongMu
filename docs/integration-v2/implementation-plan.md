@@ -309,11 +309,13 @@ Once descriptors/candidates are stable, client lifecycle behavior can be tested 
 - Over-eager cleanup stopping the current generation.
 - Porting upstream player code over TongMu's stronger transport layer.
 
-## Phase 5 — RealtimeSyncCore, permissions and Together Listen
+## Phase 5A — RealtimeSyncCore, VideoSyncDomain and permissions
 
 **Goal**
 
-Extract shared realtime invariants, upgrade the room permission model, then add Together Listen as a separate domain on that core.
+Extract shared realtime invariants and upgrade the room permission model before
+adding a second synchronized media domain. Phase 5A is complete within the
+single-node video and permission boundary.
 
 **Why now**
 
@@ -328,9 +330,10 @@ Copying the music module first would duplicate old socket assumptions. Identity,
 **Files/modules affected**
 
 - `backend/src/modules/room/*`, `sync-playback/*`, `playback-memory/*`
-- new `RealtimeSyncCore`, `VideoSyncDomain`, `MusicSyncDomain`
-- room/SystemSettings entities plus migrations
-- new music entities/routes/services and `frontend/src/modules/music/*`
+- new `RealtimeSyncCore` and `VideoSyncDomain`
+- room permission core and host-transfer/session integration
+- version-aware video, subtitle, readiness, snapshot, reconnect, and targeted
+  request/response adapters
 
 **Upstream references**
 
@@ -342,23 +345,31 @@ Copying the music module first would duplicate old socket assumptions. Identity,
 
 - Sequence/version ordering, duplicate/stale events, reconnect snapshot, host lease/disconnect, get-state, clock-skew bounds and source-generation ACK.
 - Full role/action matrix including guest, root protection, moderator anti-escalation/count and transfer-host invariants.
-- Queue transactional ordering/upsert/remove/reorder/clear, persistence/restart, play modes and host-offline behavior.
-- Viewer control request/response and switch ACK targeting.
-- NCM QR/login/search/playlist/album/artist/liked/FM/cloud/comments/like/lyrics/stream behavior through private credentials and audio descriptors.
-- Requested vs actual music quality is explicit; no silent quality downgrade.
+- Viewer control request/response and targeted ACK authorization.
+- Video and permission regression coverage for duplicate/stale/reordered events,
+  source generations, reconnect snapshots, clock bounds, role/action matrix,
+  anti-escalation, and host transfer.
 
 **Exit criteria**
 
-- Video and Music share only the tested realtime core.
-- All actions call one permission service.
-- Raw NCM credentials never reach browser DTOs/logs; provider status remains usable.
-- Queue and sync recover after reconnect/restart within documented limits.
+- Video uses the tested realtime core and Music remains a separate Phase 5B
+  domain.
+- Room actions call one permission service, including Voice mute/kick decisions.
+- Old sockets cannot regain authority after reconnect or host transfer.
+- Frontend consumers apply snapshots/events by version and source generation.
 
 **Major risks**
 
-- NCM upstream/API terms and dependency provenance.
-- Music quality fallback violating Original Quality First.
-- Database/state migration and socket compatibility.
+- A future MusicSyncDomain must not read or mutate VideoSyncDomain state.
+- Database/state migration and socket compatibility remain Phase 6 concerns.
+
+## Phase 5B — MusicSyncDomain, Together Listen and NCM
+
+Phase 5B remains planned. It may use `RealtimeSyncCore` for identity, version,
+snapshot, reconnect, permissions, and targeted events, but owns its own queue,
+track, play-mode, and audio state. It includes queue persistence, Together
+Listen UI, NCM provider behavior, and explicit audio quality handling. It does
+not change the Phase 5A video domain contract.
 
 ## Phase 6 — historical migrations, packaging, CI and measured extensions
 

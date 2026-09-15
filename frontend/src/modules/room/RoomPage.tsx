@@ -74,6 +74,9 @@ function RoomPage() {
 
   // 房主刷新/重连恢复时由后端返回的最近一次播放状态
   const [recoveredPlayback, setRecoveredPlayback] = useState<{
+    version?: number
+    sourceGeneration?: number
+    serverTimestamp?: number
     currentTime: number
     isPlaying: boolean
     playbackRate: number
@@ -233,6 +236,9 @@ function RoomPage() {
             requireApproval?: boolean
             mediaGrant?: string
             playback?: {
+              version?: number
+              sourceGeneration?: number
+              serverTimestamp?: number
               currentTime: number
               isPlaying: boolean
               playbackRate: number

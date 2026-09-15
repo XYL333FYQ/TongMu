@@ -48,6 +48,9 @@ interface WatchTogetherPanelProps {
    * 提供时，视频源加载完成后会将 currentTime 设置为此值并强制暂停。
    */
   initialPlayback?: {
+    version?: number
+    sourceGeneration?: number
+    serverTimestamp?: number
     currentTime: number
     isPlaying: boolean
     playbackRate: number

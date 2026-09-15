@@ -16,6 +16,8 @@ import {
 } from '@/modules/subtitles/mkv-embedded'
 import { appendAuthToken } from '@/modules/player/services/url-proxy'
 import { fetchGenerationBoundSubtitleText } from '@/lib/subtitleLifecycle'
+import { useRoomStore } from '@/store/roomStore'
+import { shouldApplyAuthoritativeEvent } from '@/modules/sync-playback/realtime-version'
 
 export interface SubtitleTrack {
   cues: ParsedCue[]
@@ -79,6 +81,7 @@ function embeddedTrackLabel(track: {
 }
 
 export interface SubtitleState {
+  version?: number
   /** Media source generation that owns these tracks. */
   sourceGeneration?: number
   subtitleEnabled: boolean
@@ -100,7 +103,9 @@ export interface SubtitleState {
 }
 
 interface SubtitleBroadcastPayload {
+  version?: number
   sourceGeneration?: number
+  serverTimestamp?: number
   enabled: boolean
   tracks: SubtitleTrack[]
   activeIndex: number
@@ -216,7 +221,8 @@ export function useSubtitles({
     (next: SubtitleState) => {
       if (!socket || !isHost) return
       const payload: SubtitleBroadcastPayload = {
-        sourceGeneration: next.sourceGeneration,
+        version: useRoomStore.getState().watchTogether.version,
+        sourceGeneration: next.sourceGeneration ?? useRoomStore.getState().watchTogether.sourceGeneration,
         enabled: next.subtitleEnabled,
         tracks: next.subtitleTracks,
         activeIndex: next.activeTrackIndex,
@@ -228,7 +234,24 @@ export function useSubtitles({
         shadowBlur: next.subtitleShadowBlur,
         fontFamily: next.subtitleFontFamily,
       }
-      socket.emit('subtitle-update', { roomId, ...payload })
+      socket.emit('subtitle-update', {
+        roomId,
+        ...payload,
+        baseVersion: useRoomStore.getState().watchTogether.version,
+        mutationId: typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        clientTimestamp: Date.now(),
+      }, (response: { success?: boolean; data?: SubtitleBroadcastPayload }) => {
+        if (!response?.success || response.data?.version === undefined || response.data.sourceGeneration === undefined) return
+        const current = useRoomStore.getState().watchTogether
+        useRoomStore.getState().setWatchTogether({
+          ...current,
+          version: response.data.version,
+          sourceGeneration: response.data.sourceGeneration,
+          serverTimestamp: response.data.serverTimestamp,
+        })
+      })
     },
     [socket, roomId, isHost]
   )
@@ -1001,6 +1024,8 @@ export function useSubtitles({
       payload: Partial<SubtitleBroadcastPayload> | undefined
     ) => {
       if (!payload) return
+      const authority = useRoomStore.getState().watchTogether
+      if (!shouldApplyAuthoritativeEvent(authority, payload)) return
       if (
         payload.sourceGeneration !== undefined &&
         sourceGenerationRef.current !== undefined &&
@@ -1018,7 +1043,16 @@ export function useSubtitles({
       // 观众改过本地偏好（开关/轨道/字号/偏移）后，房主广播只更新轨道
       // 数据；偏好字段保持观众本地选择。未改过则全量跟随房主。
       const touched = viewerPrefTouchedRef.current
+      if (payload.version !== undefined && payload.sourceGeneration !== undefined) {
+        useRoomStore.getState().setWatchTogether({
+          ...authority,
+          version: payload.version,
+          sourceGeneration: payload.sourceGeneration,
+          serverTimestamp: payload.serverTimestamp,
+        })
+      }
       setState((prev) => ({
+        version: payload.version ?? prev.version,
         sourceGeneration: payload.sourceGeneration ?? prev.sourceGeneration,
         subtitleEnabled: touched
           ? prev.subtitleEnabled

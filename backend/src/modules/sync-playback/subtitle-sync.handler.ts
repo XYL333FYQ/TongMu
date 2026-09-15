@@ -13,6 +13,8 @@ import type { AckCallback, SocketEventHandler } from '../socket';
 import { safeAck } from '../socket';
 import { roomPermissionService } from '../room/room-permission.service';
 import { roomStateService } from '../room/room-state.service';
+import { playbackMemoryService } from '../playback-memory';
+import { realtimeSyncCore } from '../realtime-sync-core';
 
 export class SubtitleSyncHandler implements SocketEventHandler {
   readonly name = 'SubtitleSyncHandler';
@@ -22,31 +24,51 @@ export class SubtitleSyncHandler implements SocketEventHandler {
       'subtitle-update',
       async (payload: unknown, callback?: AckCallback) => {
         try {
-          const data = payload as { roomId?: string } | undefined;
-          if (!data?.roomId) {
+          const data = payload as { roomId?: unknown; sourceGeneration?: unknown; tracks?: unknown; enabled?: unknown } | undefined;
+          if (typeof data?.roomId !== 'string' || data.roomId.length === 0 || data.roomId.length > 128 ||
+            (data.tracks !== undefined && (!Array.isArray(data.tracks) || data.tracks.length > 64))) {
             return safeAck(callback, {
-              success: false,
-              message: '缺少 roomId',
+                success: false,
+              code: 'INVALID_PAYLOAD',
+              message: '字幕 payload 无效',
             });
           }
 
-          // 仅房主可广播字幕状态
-          if (
-            !(await roomPermissionService.isRoomHost(socket, data.roomId))
-          ) {
+          const permission = await roomPermissionService.canPerform(socket, data.roomId, 'subtitle.change');
+          if (!permission.allowed) {
             return safeAck(callback, {
-              success: false,
-              message: '无权限更新字幕状态',
+                success: false,
+              code: 'FORBIDDEN',
+              message: permission.reason,
             });
           }
+          if (data.sourceGeneration !== undefined && (typeof data.sourceGeneration !== 'number' || !Number.isSafeInteger(data.sourceGeneration) || data.sourceGeneration < 0)) {
+            return safeAck(callback, { success: false, code: 'INVALID_PAYLOAD', message: 'sourceGeneration 无效' });
+          }
+          const current = await playbackMemoryService.getRawPlayback(data.roomId);
+          realtimeSyncCore.hydrate(data.roomId, current?.version, current?.sourceGeneration, current?.serverTimestamp ?? current?.updatedAt);
+          const currentMeta = realtimeSyncCore.current(data.roomId);
+          if (data.sourceGeneration !== undefined && data.sourceGeneration !== currentMeta.sourceGeneration) {
+            return safeAck(callback, { success: false, code: 'STALE_GENERATION', message: '旧 sourceGeneration 的字幕事件已丢弃' });
+          }
+          const payloadObject = (payload && typeof payload === 'object') ? { ...(payload as Record<string, unknown>) } : {};
+          delete payloadObject.roomId;
+          const committed = realtimeSyncCore.commit(data.roomId, {
+            sourceGeneration: typeof data.sourceGeneration === 'number' ? data.sourceGeneration : undefined,
+            baseVersion: typeof payloadObject.baseVersion === 'number' ? payloadObject.baseVersion : undefined,
+            mutationId: typeof payloadObject.mutationId === 'string' ? payloadObject.mutationId : undefined,
+            clientTimestamp: typeof payloadObject.clientTimestamp === 'number' ? payloadObject.clientTimestamp : undefined,
+          });
+          if (!committed.ok) return safeAck(callback, { success: false, code: committed.code, message: committed.message });
+          const event = { ...payloadObject, roomId: data.roomId, version: committed.version, sourceGeneration: committed.sourceGeneration, serverTimestamp: committed.serverTimestamp };
 
           // 缓存最近一次字幕状态：观众中途加入/刷新时补发，
           // 否则观众只能在房主下次变更字幕时才收到（加入前已加载的字幕无法同步）
-          roomStateService.setSubtitle(data.roomId, payload);
+          roomStateService.setSubtitle(data.roomId, event);
 
           // 转发给房间内其他成员（不含发送者，房主本地状态已是最新）
-          socket.to(data.roomId).emit('subtitle-update', payload);
-          safeAck(callback, { success: true });
+          socket.to(data.roomId).emit('subtitle-update', event);
+          safeAck(callback, { success: true, data: event });
         } catch (err) {
           console.error('[subtitle-update] error:', err);
           safeAck(callback, { success: false, message: '字幕状态转发失败' });

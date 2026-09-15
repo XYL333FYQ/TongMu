@@ -3,6 +3,8 @@ import type { MutableRefObject } from 'react'
 import { useSocket } from '@/hooks/useSocket'
 import type { TrackChangePayload, TrackChangeHandler } from '../types'
 import { SOCKET_EVENT } from '../constants'
+import { useRoomStore } from '@/store/roomStore'
+import { shouldApplyAuthoritativeEvent } from '../realtime-version'
 
 export interface UseTrackSyncOptions {
   roomId: string
@@ -63,17 +65,37 @@ export function useTrackSync({
   const subtitleTrackChangeCallbacksRef = useRef<
     Set<TrackChangeHandler<number>>
   >(new Set())
+  const nextMutationId = () => typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`
 
   // 房主：广播弹幕轨道切换
   const broadcastDanmakuTrackChange = useCallback(
     (trackId: string | null) => {
       setDanmakuTrackId(trackId)
       if (!socket || !isHostRef.current) return
+      const authority = useRoomStore.getState().watchTogether
       const payload: TrackChangePayload = {
         type: 'danmaku',
         value: trackId,
       }
-      socket.emit(SOCKET_EVENT.TRACK_CHANGE, { roomId, ...payload })
+      socket.emit(SOCKET_EVENT.TRACK_CHANGE, {
+        roomId,
+        ...payload,
+        baseVersion: authority.version,
+        sourceGeneration: authority.sourceGeneration,
+        mutationId: nextMutationId(),
+        clientTimestamp: Date.now(),
+      }, (response: { success?: boolean; data?: TrackChangePayload }) => {
+        if (!response?.success || !response.data?.version || response.data.sourceGeneration === undefined) return
+        const current = useRoomStore.getState().watchTogether
+        useRoomStore.getState().setWatchTogether({
+          ...current,
+          version: response.data.version,
+          sourceGeneration: response.data.sourceGeneration,
+          serverTimestamp: response.data.serverTimestamp,
+        })
+      })
     },
     [socket, roomId, isHostRef]
   )
@@ -83,11 +105,28 @@ export function useTrackSync({
     (trackIndex: number | null) => {
       setSubtitleTrackIndexState(trackIndex)
       if (!socket || !isHostRef.current) return
+      const authority = useRoomStore.getState().watchTogether
       const payload: TrackChangePayload = {
         type: 'subtitle',
         value: trackIndex,
       }
-      socket.emit(SOCKET_EVENT.TRACK_CHANGE, { roomId, ...payload })
+      socket.emit(SOCKET_EVENT.TRACK_CHANGE, {
+        roomId,
+        ...payload,
+        baseVersion: authority.version,
+        sourceGeneration: authority.sourceGeneration,
+        mutationId: nextMutationId(),
+        clientTimestamp: Date.now(),
+      }, (response: { success?: boolean; data?: TrackChangePayload }) => {
+        if (!response?.success || !response.data?.version || response.data.sourceGeneration === undefined) return
+        const current = useRoomStore.getState().watchTogether
+        useRoomStore.getState().setWatchTogether({
+          ...current,
+          version: response.data.version,
+          sourceGeneration: response.data.sourceGeneration,
+          serverTimestamp: response.data.serverTimestamp,
+        })
+      })
     },
     [socket, roomId, isHostRef]
   )
@@ -123,6 +162,7 @@ export function useTrackSync({
 
     const handleTrackChange = (payload: TrackChangePayload) => {
       if (!payload || typeof payload.type !== 'string') return
+      if (!shouldApplyAuthoritativeEvent(useRoomStore.getState().watchTogether, payload)) return
       if (payload.type === 'danmaku') {
         // 弹幕轨道 ID 为 string；非 string 值统一降级为 null（关闭弹幕）
         const trackId: string | null =

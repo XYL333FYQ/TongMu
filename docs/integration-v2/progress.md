@@ -4,7 +4,7 @@
 
 This file is the persistent checkpoint for the TongMu V2 integration program. Phase 0 is an audit and design phase only: no product code, dependency, database, configuration, CI, or reference source was changed.
 
-Current state: **Phase 2, Phase 3A, Phase 3B, Phase 4A, and Phase 4B Voice are complete within their approved boundaries. Phase 5 and the Phase 6 migration/release gate remain open.**
+Current state: **Phase 2, Phase 3A, Phase 3B, Phase 4A, Phase 4B Voice, and Phase 5A RealtimeSyncCore/Permissions are complete within their approved boundaries. Phase 5B and the Phase 6 migration/release gate remain open.**
 
 Phase 2 has a working core checkpoint: the versioned client profile, server
 viability filter, client-owned planner path, provider contract/registry, and
@@ -79,8 +79,8 @@ to do that work safely.
 1. Phase 3A typed HLS/DASH resource mapping and its Chromium browser exit gate are complete; the fixture's Inspector/client-blocked diagnostics are intentional route aborts used to verify fallback.
 2. Live publishing/ingest lifecycle (RTMP/WHIP/WHEP) remains outside public HLS/HTTP-FLV source convergence and is explicitly deferred.
 3. Phase 3A's typed DASH mapper covers `SegmentBase`, representation indexes, bitstream-switching resources, `Location`, xlink, timing URLs, and bounded recursion in unit/backend tests; nested fixture MPD playback is covered by the completed Chromium suite.
-4. Realtime video and future music synchronization do not yet share a documented `RealtimeSyncCore`; sequence, generation, reconnect, host loss, request/ack, and stale-event rules are duplicated or incomplete.
-5. Voice lifecycle, identity, reconnect replacement, decoder ownership, ghost cleanup, and voice-local moderation are implemented in Phase 4B; full room permission convergence remains Phase 5.
+4. Realtime video and future music synchronization now share the documented Phase 5A `RealtimeSyncCore`; MusicSyncDomain, queue state, and Together Listen remain Phase 5B.
+5. Voice lifecycle, identity, reconnect replacement, decoder ownership, ghost cleanup, and voice-local moderation remain Phase 4B behavior; Phase 5A now supplies the shared permission decision boundary.
 6. Phase 4A player/subtitle lifetime hardening and Phase 4B Voice are complete within their scoped boundaries.
 7. Release artifacts still retain historical ZViewer-era names for compatibility; full TongMu renaming, checksum/signature verification, staged extraction, and rollback remain Phase 6 work.
 8. Third-party provenance is incomplete for fonts, images, icons, wasm/binaries, bundled JavaScript, and media fixtures. Upstream assets must not be copied until license and attribution are recorded.
@@ -105,7 +105,8 @@ to do that work safely.
 - [x] Phase 3 — Manifest / Proxy / Slice Cache.
 - [x] Phase 4A — Player / Subtitle lifecycle.
 - [x] Phase 4B — Voice lifecycle / identity / moderation.
-- [ ] Phase 5 — `RealtimeSyncCore` / Permissions / Together Listen.
+- [x] Phase 5A — `RealtimeSyncCore` / VideoSyncDomain / Room Permissions.
+- [ ] Phase 5B — `MusicSyncDomain` / Together Listen / NCM.
 - [ ] Phase 6 — Historical migrations / Packaging / CI / Observability / release gate.
 
 See `implementation-plan.md` for dependencies, file targets, tests, exit criteria, and risks.
@@ -392,13 +393,36 @@ identity with guest socket identities, same-user replacement is generation-safe,
 audio is bounded to the 48 kHz/960-sample contract, decoder and scheduled-source
 lifetimes are isolated per peer, join/reconnect/leave cleanup is idempotent, and
 the backend enforces ghost cleanup plus host/moderator mute/kick protections.
-Full room permission convergence, host transfer, and RealtimeSyncCore remain
-Phase 5 work.
+Full room permission convergence, host transfer, and RealtimeSyncCore were the
+remaining Phase 5A work and are now closed within the single-node boundary.
 
 Verification on 2026-09-15: Backend 102 PASS / 1 Windows symlink environment
 SKIP; Frontend 18/18 PASS; frontend lint/build and backend lint PASS; the
 fake-media Chromium voice join/reconnect/leave/unmount gate is included in the
 final browser regression below.
+
+### Phase 5A final status
+
+**COMPLETE within the RealtimeSyncCore and Room Permission boundary.** Video
+playback, readiness, subtitle state, reconnect snapshots, targeted control
+requests, and host authority use one versioned, source-generation-bound
+contract. Duplicate, stale, reordered, cross-generation, malformed, and
+out-of-bounds realtime inputs are rejected. Room authorization is centralized
+for playback, movie/subtitle changes, viewer management, host transfer, room
+settings, and Voice mute/kick decisions. Host transfer is room-serialized and
+transactional, with moderator cleanup, cache refresh, rollback, and immediate
+old-host invalidation.
+
+Verification on 2026-09-15: Backend 109 PASS / 1 Windows symlink environment
+SKIP; Frontend 20/20 PASS; backend lint/build PASS; frontend build PASS;
+Chromium 23 PASS / 1 intentional SKIP; Phase 5A realtime browser flow PASS;
+Voice fake-media and Phase 4A browser regressions PASS. Frontend full ESLint
+remains the pre-existing repository baseline failure and was not relaxed or
+auto-fixed. Phase 3 cache checks remain the previously recorded PASS baseline.
+
+The detailed contracts are in `realtime-sync-core.md` and
+`room-permissions.md`. MusicSyncDomain, Together Listen, queue persistence,
+play modes, NCM, and Phase 6 migration/release work remain planned.
 
 ### Phase 2 closure audit
 

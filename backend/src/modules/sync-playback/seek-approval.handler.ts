@@ -1,25 +1,12 @@
-/**
- * 观众申请跳转/暂停/继续播放事件处理器。
- *
- * 处理观众向房主发起的"申请跳转"、"申请暂停"和"申请继续播放"事件，以及房主的回应。
- *
- * 流程：
- * 1. 观众发起 seek-request / pause-request / play-request → 后端转发给房主（附加 viewer 信息）
- * 2. 房主端弹确认框，决定接受/拒绝
- * 3. 房主发 seek-response / pause-response / play-response → 后端转发回申请者
- * 4. 若接受，房主端自行 seek/pause/play 并通过 watch-together-control 广播给所有观众
- *
- * 修复旧架构问题：
- * 1. 旧版 routes/room.ts 直接查 Session 表做权限校验，此版本统一走
- *    roomPermissionService 和 roomSessionService。
- * 2. 旧版 seek-response / pause-response 用 isRoomHost 校验，此版本保持一致
- *    但抽离到 SeekApprovalHandler 统一管理。
- */
+/** Viewer control request/response primitive for the video domain. */
+import { randomUUID } from 'node:crypto';
 import type { Server as SocketIOServer, Socket } from 'socket.io';
 import type { AckCallback, SocketEventHandler } from '../socket';
 import { safeAck } from '../socket';
 import { roomPermissionService } from '../room/room-permission.service';
 import { roomSessionService } from '../room/room-session.service';
+import { emitToAuthorizedMember } from '../realtime-sync-core';
+import { playbackMemoryService } from '../playback-memory';
 import type {
   PauseRequestPayload,
   PauseResponsePayload,
@@ -29,187 +16,162 @@ import type {
   SeekResponsePayload,
 } from '../shared/dto';
 
+const REQUEST_TTL_MS = 30_000;
+type RequestKind = 'seek' | 'pause' | 'play';
+interface PendingRequest {
+  requestId: string;
+  kind: RequestKind;
+  roomId: string;
+  viewerSocketId: string;
+  hostSocketId: string;
+  sourceGeneration?: number;
+  version?: number;
+  expiresAt: number;
+}
+
+const pendingRequests = new Map<string, PendingRequest>();
+
+function cleanupRequests(now = Date.now()): void {
+  for (const [id, request] of pendingRequests) {
+    if (request.expiresAt <= now) pendingRequests.delete(id);
+  }
+}
+
+function validRoomId(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 128;
+}
+
+function validTime(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 7 * 24 * 60 * 60;
+}
+
 export class SeekApprovalHandler implements SocketEventHandler {
   readonly name = 'SeekApprovalHandler';
 
   register(socket: Socket, io: SocketIOServer): void {
-    // --- 观众申请跳转进度 ---
-    // 校验在房间内 + sharer 在线，转发给房主（附加 viewerSocketId + viewerUsername）
-    socket.on(
-      'seek-request',
-      async (payload: SeekRequestPayload, callback?: AckCallback) => {
-        try {
-          // 校验在房间内
-          if (
-            !(await roomPermissionService.isInRoom(socket, payload.roomId))
-          ) {
-            return safeAck(callback, {
-              success: false,
-              message: '不在该房间中',
-            });
-          }
-          // 获取房间活跃 sharer（校验 sharer 在线）
-          const sharer = await roomSessionService.getSharer(payload.roomId);
-          if (!sharer) {
-            return safeAck(callback, { success: false, message: '房主不在线' });
-          }
+    const forward = async (
+      kind: RequestKind,
+      roomId: unknown,
+      time: unknown,
+      event: string,
+      callback?: AckCallback,
+    ): Promise<void> => {
+      cleanupRequests();
+      if (!validRoomId(roomId) || (kind === 'seek' && !validTime(time))) {
+        safeAck(callback, { success: false, code: 'INVALID_PAYLOAD', message: '请求 payload 无效' });
+        return;
+      }
+      if (!(await roomPermissionService.isInRoom(socket, roomId))) {
+        safeAck(callback, { success: false, code: 'FORBIDDEN', message: '不在该房间中' });
+        return;
+      }
+      const host = await roomSessionService.getSharer(roomId);
+      if (!host) {
+        safeAck(callback, { success: false, code: 'HOST_OFFLINE', message: '房主不在线' });
+        return;
+      }
+      const requestId = randomUUID();
+      const rawState = await playbackMemoryService.getRawPlayback(roomId);
+      const request: PendingRequest = {
+        requestId,
+        kind,
+        roomId,
+        viewerSocketId: socket.id,
+        hostSocketId: host.socketId,
+        sourceGeneration: rawState?.sourceGeneration,
+        version: rawState?.version,
+        expiresAt: Date.now() + REQUEST_TTL_MS,
+      };
+      pendingRequests.set(requestId, request);
+      const outgoing = {
+        roomId,
+        requestId,
+        viewerSocketId: socket.id,
+        viewerUsername: typeof socket.data?.username === 'string' ? socket.data.username.slice(0, 128) : '未知用户',
+        time: kind === 'seek' ? time : undefined,
+        sourceGeneration: request.sourceGeneration,
+        version: request.version,
+        expiresAt: request.expiresAt,
+      };
+      const emitted = await emitToAuthorizedMember(
+        io,
+        roomId,
+        host.socketId,
+        event,
+        outgoing,
+        async (target) => target.id === host.socketId && !!(await roomPermissionService.getActiveSharer(target, roomId)),
+      );
+      if (!emitted) pendingRequests.delete(requestId);
+      safeAck(callback, emitted ? { success: true, data: { requestId, expiresAt: request.expiresAt } } : { success: false, message: '房主已离线' });
+    };
 
-          // 向房主转发，附加申请者信息便于房主端弹框显示
-          io.to(sharer.socketId).emit('seek-request', {
-            roomId: payload.roomId,
-            viewerSocketId: socket.id,
-            viewerUsername: socket.data.username,
-            time: payload.time,
-          });
-          safeAck(callback, { success: true });
-        } catch (err) {
-          console.error('[seek-request] error:', err);
-          safeAck(callback, { success: false, message: '申请跳转失败' });
-        }
-      },
-    );
+    const respond = async (
+      kind: RequestKind,
+      payload: { roomId?: unknown; viewerSocketId?: unknown; requestId?: unknown; accept?: unknown; time?: unknown },
+      event: string,
+      callback?: AckCallback,
+    ): Promise<void> => {
+      cleanupRequests();
+      if (!validRoomId(payload?.roomId) || typeof payload?.accept !== 'boolean') {
+        safeAck(callback, { success: false, code: 'INVALID_PAYLOAD', message: '回应 payload 无效' });
+        return;
+      }
+      const permission = await roomPermissionService.canPerform(socket, payload.roomId, 'playback.play');
+      if (!permission.allowed) {
+        safeAck(callback, { success: false, code: 'FORBIDDEN', message: permission.reason });
+        return;
+      }
+      let request: PendingRequest | undefined;
+      if (typeof payload.requestId === 'string') request = pendingRequests.get(payload.requestId);
+      if (!request && typeof payload.viewerSocketId === 'string') {
+        request = Array.from(pendingRequests.values()).reverse().find((item) =>
+          item.kind === kind && item.roomId === payload.roomId && item.viewerSocketId === payload.viewerSocketId,
+        );
+      }
+      if (!request || request.roomId !== payload.roomId || request.kind !== kind || request.hostSocketId !== socket.id || request.expiresAt <= Date.now()) {
+        safeAck(callback, { success: false, code: 'INVALID_REQUEST', message: '请求不存在或已过期' });
+        return;
+      }
+      if (kind === 'seek' && payload.accept && !validTime(payload.time)) {
+        safeAck(callback, { success: false, code: 'INVALID_PAYLOAD', message: 'seek time 无效' });
+        return;
+      }
+      const target = io.sockets.sockets.get(request.viewerSocketId);
+      const emitted = target ? await emitToAuthorizedMember(
+        io,
+        request.roomId,
+        request.viewerSocketId,
+        event,
+        {
+          requestId: request.requestId,
+          accept: payload.accept,
+          time: kind === 'seek' ? payload.time : undefined,
+          sourceGeneration: request.sourceGeneration,
+          version: request.version,
+        },
+        async (candidate) => candidate.id === target.id && !!(await roomPermissionService.isInRoom(candidate, request!.roomId)),
+      ) : false;
+      pendingRequests.delete(request.requestId);
+      safeAck(callback, emitted ? { success: true } : { success: false, code: 'TARGET_OFFLINE', message: '申请者已离开房间' });
+    };
 
-    // --- 房主回应观众的跳转申请 ---
-    // accept=true 时房主端已自行 seek 并广播 state，这里仅把结果转发给申请者
-    socket.on(
-      'seek-response',
-      async (payload: SeekResponsePayload, callback?: AckCallback) => {
-        try {
-          // 仅活跃 sharer 可回应
-          if (
-            !(await roomPermissionService.isRoomHost(socket, payload.roomId))
-          ) {
-            return safeAck(callback, { success: false, message: '无权限' });
-          }
-          // 向指定申请者转发回应（不含 roomId，接收端按自身上下文处理）
-          io.to(payload.viewerSocketId).emit('seek-response', {
-            accept: payload.accept,
-            time: payload.time,
-          });
-          safeAck(callback, { success: true });
-        } catch (err) {
-          console.error('[seek-response] error:', err);
-          safeAck(callback, { success: false, message: '回应失败' });
-        }
-      },
-    );
-
-    // --- 观众申请暂停 ---
-    // 校验在房间内 + sharer 在线，转发给房主（附加 viewerSocketId + viewerUsername）
-    socket.on(
-      'pause-request',
-      async (payload: PauseRequestPayload, callback?: AckCallback) => {
-        try {
-          // 校验在房间内
-          if (
-            !(await roomPermissionService.isInRoom(socket, payload.roomId))
-          ) {
-            return safeAck(callback, {
-              success: false,
-              message: '不在该房间中',
-            });
-          }
-          // 获取房间活跃 sharer（校验 sharer 在线）
-          const sharer = await roomSessionService.getSharer(payload.roomId);
-          if (!sharer) {
-            return safeAck(callback, { success: false, message: '房主不在线' });
-          }
-
-          // 向房主转发，附加申请者信息
-          io.to(sharer.socketId).emit('pause-request', {
-            roomId: payload.roomId,
-            viewerSocketId: socket.id,
-            viewerUsername: socket.data.username,
-          });
-          safeAck(callback, { success: true });
-        } catch (err) {
-          console.error('[pause-request] error:', err);
-          safeAck(callback, { success: false, message: '申请暂停失败' });
-        }
-      },
-    );
-
-    // --- 房主回应观众的暂停申请 ---
-    // accept=true 时房主端已自行 pause 并广播 state，这里仅把结果转发给申请者
-    socket.on(
-      'pause-response',
-      async (payload: PauseResponsePayload, callback?: AckCallback) => {
-        try {
-          // 仅活跃 sharer 可回应
-          if (
-            !(await roomPermissionService.isRoomHost(socket, payload.roomId))
-          ) {
-            return safeAck(callback, { success: false, message: '无权限' });
-          }
-          // 向指定申请者转发回应
-          io.to(payload.viewerSocketId).emit('pause-response', {
-            accept: payload.accept,
-          });
-          safeAck(callback, { success: true });
-        } catch (err) {
-          console.error('[pause-response] error:', err);
-          safeAck(callback, { success: false, message: '回应失败' });
-        }
-      },
-    );
-
-    // --- 观众申请继续播放 ---
-    // 校验在房间内 + sharer 在线，转发给房主（附加 viewerSocketId + viewerUsername）
-    socket.on(
-      'play-request',
-      async (payload: PlayRequestPayload, callback?: AckCallback) => {
-        try {
-          // 校验在房间内
-          if (
-            !(await roomPermissionService.isInRoom(socket, payload.roomId))
-          ) {
-            return safeAck(callback, {
-              success: false,
-              message: '不在该房间中',
-            });
-          }
-          // 获取房间活跃 sharer（校验 sharer 在线）
-          const sharer = await roomSessionService.getSharer(payload.roomId);
-          if (!sharer) {
-            return safeAck(callback, { success: false, message: '房主不在线' });
-          }
-
-          // 向房主转发，附加申请者信息
-          io.to(sharer.socketId).emit('play-request', {
-            roomId: payload.roomId,
-            viewerSocketId: socket.id,
-            viewerUsername: socket.data.username,
-          });
-          safeAck(callback, { success: true });
-        } catch (err) {
-          console.error('[play-request] error:', err);
-          safeAck(callback, { success: false, message: '申请继续播放失败' });
-        }
-      },
-    );
-
-    // --- 房主回应观众的继续播放申请 ---
-    // accept=true 时房主端已自行 play 并广播 state，这里仅把结果转发给申请者
-    socket.on(
-      'play-response',
-      async (payload: PlayResponsePayload, callback?: AckCallback) => {
-        try {
-          // 仅活跃 sharer 可回应
-          if (
-            !(await roomPermissionService.isRoomHost(socket, payload.roomId))
-          ) {
-            return safeAck(callback, { success: false, message: '无权限' });
-          }
-          // 向指定申请者转发回应
-          io.to(payload.viewerSocketId).emit('play-response', {
-            accept: payload.accept,
-          });
-          safeAck(callback, { success: true });
-        } catch (err) {
-          console.error('[play-response] error:', err);
-          safeAck(callback, { success: false, message: '回应失败' });
-        }
-      },
-    );
+    socket.on('seek-request', (payload: SeekRequestPayload, callback?: AckCallback) => {
+      void forward('seek', payload?.roomId, payload?.time, 'seek-request', callback).catch(() => safeAck(callback, { success: false, message: '申请跳转失败' }));
+    });
+    socket.on('seek-response', (payload: SeekResponsePayload, callback?: AckCallback) => {
+      void respond('seek', payload, 'seek-response', callback).catch(() => safeAck(callback, { success: false, message: '回应失败' }));
+    });
+    socket.on('pause-request', (payload: PauseRequestPayload, callback?: AckCallback) => {
+      void forward('pause', payload?.roomId, undefined, 'pause-request', callback).catch(() => safeAck(callback, { success: false, message: '申请暂停失败' }));
+    });
+    socket.on('pause-response', (payload: PauseResponsePayload, callback?: AckCallback) => {
+      void respond('pause', payload, 'pause-response', callback).catch(() => safeAck(callback, { success: false, message: '回应失败' }));
+    });
+    socket.on('play-request', (payload: PlayRequestPayload, callback?: AckCallback) => {
+      void forward('play', payload?.roomId, undefined, 'play-request', callback).catch(() => safeAck(callback, { success: false, message: '申请继续播放失败' }));
+    });
+    socket.on('play-response', (payload: PlayResponsePayload, callback?: AckCallback) => {
+      void respond('play', payload, 'play-response', callback).catch(() => safeAck(callback, { success: false, message: '回应失败' }));
+    });
   }
 }

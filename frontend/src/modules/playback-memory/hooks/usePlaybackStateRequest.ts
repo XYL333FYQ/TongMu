@@ -18,6 +18,7 @@ import { useRoomStore } from '@/store/roomStore'
 import type { WatchTogetherState } from '@/modules/sync-playback/types'
 import { SOCKET_EVENT } from '@/modules/sync-playback/constants'
 import { safePlay } from '@/modules/sync-playback/safePlay'
+import { shouldApplySnapshot } from '@/modules/sync-playback/realtime-version'
 import type { RequestStateAckData } from '../types'
 import {
   fetchBlobsForBufferMode,
@@ -92,6 +93,8 @@ export function usePlaybackStateRequest({
           retryCountRef.current = 10 // 拿到状态后停止重试
 
           const state = response.data.state
+          const currentState = useRoomStore.getState().watchTogether
+          if (!shouldApplySnapshot(currentState, state)) return
           // 重试等待期间可能已通过房主广播（useViewerStateSync）应用过该源，
           // 此时不再重复 attach，避免重复解析 / 覆盖已就绪的播放器
           if (lastAppliedSourceUrlRef.current === state.sourceUrl) {
@@ -208,9 +211,16 @@ export function usePlaybackStateRequest({
       )
     }
 
-    requestState()
+    const handleConnect = () => {
+      requestedRef.current = false
+      retryCountRef.current = 0
+      requestState()
+    }
+    socket.on('connect', handleConnect)
+    if (socket.connected) requestState()
 
     return () => {
+      socket.off('connect', handleConnect)
       if (retryTimerRef.current) {
         clearTimeout(retryTimerRef.current)
         retryTimerRef.current = null

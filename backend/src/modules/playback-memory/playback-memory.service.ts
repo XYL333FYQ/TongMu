@@ -78,13 +78,18 @@ export class PlaybackMemoryService {
     roomId: string,
     state: SyncStateDto,
     hostSocketId: string,
-  ): Promise<void> {
+    metadata: { version?: number; sourceGeneration?: number; serverTimestamp?: number } = {},
+  ): Promise<PlaybackStateDto> {
     const now = Date.now();
     const currentMovieId = await this.getCurrentMovieId(roomId);
+    const previous = this.cache.get(roomId)?.state;
     const playbackState: PlaybackStateDto = {
       ...state,
       currentMovieId,
-      updatedAt: now,
+      updatedAt: metadata.serverTimestamp ?? now,
+      serverTimestamp: metadata.serverTimestamp ?? now,
+      version: metadata.version ?? ((previous?.version ?? 0) + 1),
+      sourceGeneration: metadata.sourceGeneration ?? state.sourceGeneration ?? previous?.sourceGeneration ?? 0,
     };
 
     const cached = this.cache.get(roomId);
@@ -112,6 +117,7 @@ export class PlaybackMemoryService {
 
     // 写穿透到存储适配器（#16）：同步最新播放状态到 Redis 供多实例共享
     this.storageAdapter?.set(roomId, playbackState);
+    return playbackState;
   }
 
   /**
@@ -224,6 +230,7 @@ export class PlaybackMemoryService {
       cached.state.playbackRate = heartbeat.playbackRate;
     }
     cached.state.updatedAt = now;
+    cached.state.serverTimestamp = now;
 
     if (now - cached.lastDbWriteAt > HEARTBEAT_PERSIST_THROTTLE_MS) {
       cached.dirty = true;
@@ -332,6 +339,8 @@ export class PlaybackMemoryService {
         bufferMode: state.bufferMode ?? false,
         currentMovieId: state.currentMovieId ?? null,
         lastUpdatedAt: state.updatedAt,
+        version: state.version ?? 0,
+        sourceGeneration: state.sourceGeneration ?? 0,
         hostSocketId,
       };
 
@@ -486,6 +495,9 @@ export class PlaybackMemoryService {
       bufferMode: entity.bufferMode ?? undefined,
       currentMovieId: entity.currentMovieId ?? undefined,
       updatedAt: entity.lastUpdatedAt,
+      serverTimestamp: entity.lastUpdatedAt,
+      version: entity.version ?? 0,
+      sourceGeneration: entity.sourceGeneration ?? 0,
       hostSocketId: entity.hostSocketId,
     };
   }

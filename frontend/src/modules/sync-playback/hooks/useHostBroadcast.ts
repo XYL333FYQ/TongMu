@@ -47,6 +47,23 @@ export function useHostBroadcast({
   // 中间广播（socket 重连窗口），主动请求全量状态自愈——避免 diff 合并基线
   // 错位导致的字段静默发散。
   const seqRef = useRef(0)
+  const nextMutationId = () => {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
+    return `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  }
+  const applyAckMetadata = (response: {
+    success?: boolean
+    data?: { version?: number; sourceGeneration?: number; serverTimestamp?: number; state?: WatchTogetherState }
+  }) => {
+    if (!response?.success || !response.data) return
+    const current = useRoomStore.getState().watchTogether
+    useRoomStore.getState().setWatchTogether({
+      ...(response.data.state ?? current),
+      version: response.data.version ?? response.data.state?.version ?? current.version,
+      sourceGeneration: response.data.sourceGeneration ?? response.data.state?.sourceGeneration ?? current.sourceGeneration,
+      serverTimestamp: response.data.serverTimestamp ?? response.data.state?.serverTimestamp ?? current.serverTimestamp,
+    })
+  }
 
   const broadcastState = useCallback(
     (state: WatchTogetherState) => {
@@ -72,7 +89,11 @@ export function useHostBroadcast({
         state: stateWithCli,
         diff,
         seq: seqRef.current,
-      })
+        baseVersion: stateWithCli.version,
+        sourceGeneration: stateWithCli.sourceGeneration,
+        mutationId: nextMutationId(),
+        clientTimestamp: Date.now(),
+      }, applyAckMetadata)
     },
     [socket, roomId, isHostRef]
   )
@@ -80,7 +101,16 @@ export function useHostBroadcast({
   const sendControl = useCallback(
     (action: ControlAction, value?: number) => {
       if (!socket || !isHostRef.current) return
-      socket.emit(SOCKET_EVENT.CONTROL, { roomId, action, value })
+      const current = useRoomStore.getState().watchTogether
+      socket.emit(SOCKET_EVENT.CONTROL, {
+        roomId,
+        action,
+        value,
+        baseVersion: current.version,
+        sourceGeneration: current.sourceGeneration,
+        mutationId: nextMutationId(),
+        clientTimestamp: Date.now(),
+      }, applyAckMetadata)
     },
     [socket, roomId, isHostRef]
   )
@@ -102,7 +132,11 @@ export function useHostBroadcast({
       roomId,
       state: newState,
       seq: seqRef.current,
-    })
+      baseVersion: newState.version,
+      sourceGeneration: newState.sourceGeneration,
+      mutationId: nextMutationId(),
+      clientTimestamp: Date.now(),
+    }, applyAckMetadata)
   }, [socket, roomId, isHostRef, videoRef])
 
   return {

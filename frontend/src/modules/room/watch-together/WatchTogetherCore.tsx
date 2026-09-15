@@ -67,6 +67,9 @@ interface WatchTogetherCoreProps {
   isWebFullscreen?: boolean
   onToggleWebFullscreen?: () => void
   initialPlayback?: {
+    version?: number
+    sourceGeneration?: number
+    serverTimestamp?: number
     currentTime: number
     isPlaying: boolean
     playbackRate: number

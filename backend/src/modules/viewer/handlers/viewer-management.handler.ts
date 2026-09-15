@@ -51,6 +51,13 @@ interface TransferHostPayload {
   viewerSocketId: string;
 }
 
+function findSocketByUserId(io: SocketIOServer, roomId: string, userId: number): Socket | null {
+  for (const candidate of io.sockets.sockets.values()) {
+    if (candidate.rooms.has(roomId) && candidate.data?.userId === userId) return candidate;
+  }
+  return null;
+}
+
 /**
  * 观众管理事件处理器。
  */
@@ -69,6 +76,10 @@ export class ViewerManagementHandler implements SocketEventHandler {
           );
           if (!sharer) {
             return safeAck(callback, { success: false, message: '无权限确认' });
+          }
+          const permission = await roomPermissionService.canPerform(socket, sharer.roomId, 'viewer.approve');
+          if (!permission.allowed) {
+            return safeAck(callback, { success: false, message: permission.reason });
           }
 
           const viewerSocket = io.sockets.sockets.get(payload.viewerSocketId);
@@ -166,6 +177,10 @@ export class ViewerManagementHandler implements SocketEventHandler {
           if (!sharer) {
             return safeAck(callback, { success: false, message: '无权限拒绝' });
           }
+          const permission = await roomPermissionService.canPerform(socket, sharer.roomId, 'viewer.reject');
+          if (!permission.allowed) {
+            return safeAck(callback, { success: false, message: permission.reason });
+          }
 
           io.to(payload.viewerSocketId).emit('join-rejected', {
             roomId: sharer.roomId,
@@ -183,10 +198,15 @@ export class ViewerManagementHandler implements SocketEventHandler {
       'kick-viewer',
       async (payload: KickViewerPayload, callback: AckCallback) => {
         try {
-          if (!(await roomPermissionService.isRoomHost(socket, payload.roomId))) {
+          const targetSocket = io.sockets.sockets.get(payload.viewerSocketId);
+          const targetFacts = targetSocket
+            ? await roomPermissionService.getTargetFacts(socket, payload.roomId, targetSocket)
+            : null;
+          const decision = await roomPermissionService.canPerform(socket, payload.roomId, 'viewer.kick', targetFacts ?? undefined);
+          if (!decision.allowed || !targetFacts) {
             return safeAck(callback, {
               success: false,
-              message: '无权限：仅房主可踢人',
+              message: decision.allowed ? '观众已不在房间' : decision.reason,
             });
           }
 
@@ -220,10 +240,15 @@ export class ViewerManagementHandler implements SocketEventHandler {
       'mute-viewer',
       async (payload: MuteViewerPayload, callback: AckCallback) => {
         try {
-          if (!(await roomPermissionService.isRoomHost(socket, payload.roomId))) {
+          const targetSocket = await findSocketByUserId(io, payload.roomId, payload.userId);
+          const targetFacts = targetSocket
+            ? await roomPermissionService.getTargetFacts(socket, payload.roomId, targetSocket)
+            : null;
+          const decision = await roomPermissionService.canPerform(socket, payload.roomId, 'viewer.mute', targetFacts ?? undefined);
+          if (!decision.allowed || !targetFacts) {
             return safeAck(callback, {
               success: false,
-              message: '无权限：仅房主可禁言',
+              message: decision.allowed ? '目标不在房间中' : decision.reason,
             });
           }
 
@@ -252,10 +277,15 @@ export class ViewerManagementHandler implements SocketEventHandler {
       'unmute-viewer',
       async (payload: MuteViewerPayload, callback: AckCallback) => {
         try {
-          if (!(await roomPermissionService.isRoomHost(socket, payload.roomId))) {
+          const targetSocket = await findSocketByUserId(io, payload.roomId, payload.userId);
+          const targetFacts = targetSocket
+            ? await roomPermissionService.getTargetFacts(socket, payload.roomId, targetSocket)
+            : null;
+          const decision = await roomPermissionService.canPerform(socket, payload.roomId, 'viewer.mute', targetFacts ?? undefined);
+          if (!decision.allowed || !targetFacts) {
             return safeAck(callback, {
               success: false,
-              message: '无权限：仅房主可解禁',
+              message: decision.allowed ? '目标不在房间中' : decision.reason,
             });
           }
 
@@ -283,14 +313,18 @@ export class ViewerManagementHandler implements SocketEventHandler {
       'transfer-host',
       async (payload: TransferHostPayload, callback: AckCallback) => {
         try {
-          if (!(await roomPermissionService.isRoomHost(socket, payload.roomId))) {
+          const targetSocket = io.sockets.sockets.get(payload.viewerSocketId);
+          const targetFacts = targetSocket
+            ? await roomPermissionService.getTargetFacts(socket, payload.roomId, targetSocket)
+            : null;
+          const decision = await roomPermissionService.canPerform(socket, payload.roomId, 'host.transfer', targetFacts ?? undefined);
+          if (!decision.allowed || !targetFacts) {
             return safeAck(callback, {
               success: false,
-              message: '无权限：仅房主可转交',
+              message: decision.allowed ? '目标不在房间中' : decision.reason,
             });
           }
 
-          const targetSocket = io.sockets.sockets.get(payload.viewerSocketId);
           if (!targetSocket) {
             return safeAck(callback, {
               success: false,

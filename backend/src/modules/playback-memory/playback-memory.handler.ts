@@ -1,213 +1,274 @@
 /**
- * 播放记忆 Socket 事件处理器。
- *
- * 处理事件：
- * - watch-together-state：房主更新播放状态（写入持久化 + 广播给观众）
- * - watch-together-request-state：观众/房主重连请求当前状态（从持久化读取）
- * - watch-together-control：房主控制指令（立即广播 + 更新持久化状态）
- *
- * 与旧 SyncStateHandler 的区别：
- * - 状态写入 playbackMemoryService 持久化（而非仅内存 roomStateService）
- * - 房主断开期间，服务器定时广播接管，观众端继续播放
- * - 请求状态时返回推算后的实际进度（基于时间差）
+ * Compatibility adapter for legacy watch-together event names.
+ * Authoritative mutations pass through RealtimeSyncCore and VideoSyncDomain.
  */
 import type { Server as SocketIOServer, Socket } from 'socket.io';
 import type { AckCallback, SocketEventHandler } from '../socket';
 import { safeAck } from '../socket';
 import { roomPermissionService } from '../room/room-permission.service';
+import { roomSessionService } from '../room/room-session.service';
+import { roomStateService } from '../room/room-state.service';
 import { playbackMemoryService } from './playback-memory.service';
-import type {
-  SyncStatePayload,
-  SyncControlPayload,
-} from '../shared/dto';
+import { realtimeSyncCore, emitToAuthorizedMember } from '../realtime-sync-core';
+import { VideoSyncDomain } from '../sync-playback/video-sync.domain';
+import type { SyncControlPayload, SyncStatePayload } from '../shared/dto';
+import type { AuthoritativeSnapshot, MutationEnvelope } from '../realtime-sync-core';
+
+interface StateAckData {
+  state: Awaited<ReturnType<typeof playbackMemoryService.getAdvancedPlayback>>;
+  snapshot?: AuthoritativeSnapshot<NonNullable<StateAckData['state']>>;
+  version?: number;
+  sourceGeneration?: number;
+  serverTimestamp?: number;
+}
+
+function validRoomId(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 128;
+}
+
+function mutationEnvelope(payload: Partial<MutationEnvelope>): MutationEnvelope {
+  return {
+    baseVersion: payload.baseVersion,
+    sourceGeneration: payload.sourceGeneration,
+    mutationId: payload.mutationId,
+    clientTimestamp: payload.clientTimestamp,
+  };
+}
 
 export class PlaybackMemoryHandler implements SocketEventHandler {
   readonly name = 'PlaybackMemoryHandler';
 
   register(socket: Socket, io: SocketIOServer): void {
-    // --- 房主更新播放状态 ---
-    // 仅活跃 sharer 可调用，持久化后广播给房间内其他成员
-    socket.on(
-      'watch-together-state',
-      async (payload: SyncStatePayload, callback?: AckCallback) => {
+    const handleState = async (payload: SyncStatePayload, callback?: AckCallback): Promise<void> => {
+      const roomId = payload?.roomId;
+      if (!validRoomId(roomId) || !payload?.state) {
+        safeAck(callback, { success: false, code: 'INVALID_PAYLOAD', message: '播放状态 payload 无效' });
+        return;
+      }
+      await realtimeSyncCore.withRoomLock(roomId, async () => {
         try {
-          // 校验是否为指定房间的活跃 sharer
-          if (
-            !(await roomPermissionService.isRoomHost(socket, payload.roomId))
-          ) {
-            return safeAck(callback, { success: false, message: '无权限同步' });
+          const permission = await roomPermissionService.canPerform(socket, roomId, 'playback.play');
+          if (!permission.allowed) {
+            safeAck(callback, { success: false, code: 'FORBIDDEN', message: permission.reason });
+            return;
           }
-          // 校验房间为 watch-together 模式
-          if (
-            !(await roomPermissionService.isWatchTogetherRoom(payload.roomId))
-          ) {
-            return safeAck(callback, {
-              success: false,
-              message: '当前房间模式不支持同步播放',
-            });
+          if (!(await roomPermissionService.isWatchTogetherRoom(roomId))) {
+            safeAck(callback, { success: false, code: 'ROOM_MODE', message: '当前房间模式不支持同步播放' });
+            return;
           }
-
-          // 持久化到 playbackMemoryService（内存 + DB）
-          await playbackMemoryService.setPlayback(
-            payload.roomId,
-            payload.state,
-            socket.id,
-          );
-
-          // 广播给房间内其他成员（不含 roomId，接收端按 socket 所在房间处理）
-          // seq 为房主侧递增序号，透传给观众用于跳号检测（错失广播时拉全量自愈）
-          socket.to(payload.roomId).emit('watch-together-state', {
-            state: payload.state,
-            diff: payload.diff,
-            seq: payload.seq,
+          const validated = VideoSyncDomain.validateState(payload.state);
+          if (!validated.ok) {
+            safeAck(callback, { success: false, code: 'INVALID_PAYLOAD', message: validated.message });
+            return;
+          }
+          const current = await playbackMemoryService.getRawPlayback(roomId);
+          realtimeSyncCore.hydrate(roomId, current?.version, current?.sourceGeneration, current?.serverTimestamp ?? current?.updatedAt);
+          const envelope = mutationEnvelope({
+            ...payload,
+            baseVersion: payload.baseVersion ?? payload.state.version,
+            sourceGeneration: payload.state.sourceGeneration,
           });
-          safeAck(callback, { success: true });
+          const committed = realtimeSyncCore.commit(roomId, envelope);
+          if (!committed.ok) {
+            safeAck(callback, { success: false, code: committed.code, message: committed.message });
+            return;
+          }
+          const authoritative = await playbackMemoryService.setPlayback(
+            roomId,
+            validated.state,
+            socket.id,
+            {
+              version: committed.version,
+              sourceGeneration: committed.sourceGeneration,
+              serverTimestamp: committed.serverTimestamp,
+            },
+          );
+          roomStateService.setPlayback(roomId, authoritative);
+          socket.to(roomId).emit('watch-together-state', {
+            state: authoritative,
+            seq: authoritative.version,
+            version: authoritative.version,
+            sourceGeneration: authoritative.sourceGeneration,
+            serverTimestamp: authoritative.serverTimestamp,
+          });
+          safeAck(callback, {
+            success: true,
+            data: {
+              state: authoritative,
+              version: authoritative.version,
+              sourceGeneration: authoritative.sourceGeneration,
+              serverTimestamp: authoritative.serverTimestamp,
+            },
+          });
         } catch (err) {
           console.error('[watch-together-state] error:', err);
           safeAck(callback, { success: false, message: '同步失败' });
         }
-      },
-    );
+      });
+    };
 
-    // --- 请求当前播放状态 ---
-    // 观众加入、房主重连、观众刷新时调用
-    // 返回推算后的实际播放状态
-    socket.on(
-      'watch-together-request-state',
-      async (payload: { roomId: string }, callback?: AckCallback) => {
-        try {
-          // 校验在房间内
-          if (
-            !(await roomPermissionService.isInRoom(socket, payload.roomId))
-          ) {
-            return safeAck(callback, {
-              success: false,
-              message: '不在该房间中',
-            });
-          }
+    socket.on('watch-together-state', (payload: SyncStatePayload, callback?: AckCallback) => {
+      void handleState(payload, callback);
+    });
 
-          // 从持久化读取推算后的状态
-          const state = await playbackMemoryService.getAdvancedPlayback(
-            payload.roomId,
-          );
-
-          if (state) {
-            // 直接通过 ack 返回状态（用于房主重连/观众初始加载）
-            safeAck(callback, {
-              success: true,
-              data: { state },
-            });
-          } else {
-            // 房间无播放状态，广播给其他成员让房主主动同步
-            socket.to(payload.roomId).emit('watch-together-request-state');
-            safeAck(callback, { success: true, data: null });
-          }
-        } catch (err) {
-          console.error('[watch-together-request-state] error:', err);
-          safeAck(callback, { success: false, message: '请求失败' });
+    const handleGetState = async (payload: { roomId?: unknown }, callback?: AckCallback): Promise<void> => {
+      const roomId = payload?.roomId;
+      try {
+        if (!validRoomId(roomId) || !(await roomPermissionService.isInRoom(socket, roomId))) {
+          safeAck(callback, { success: false, code: 'FORBIDDEN', message: '不在该房间中' });
+          return;
         }
-      },
-    );
+        const state = await playbackMemoryService.getAdvancedPlayback(roomId);
+        if (!state) {
+          safeAck(callback, { success: true, data: null });
+          return;
+        }
+        realtimeSyncCore.hydrate(roomId, state.version, state.sourceGeneration, state.serverTimestamp ?? state.updatedAt);
+        const session = await roomPermissionService.getActiveSession(socket);
+        const host = await roomSessionService.getSharer(roomId);
+        const snapshot: AuthoritativeSnapshot<typeof state> = {
+          roomId,
+          session: {
+            roomId,
+            sessionId: session ? String(session.id) : `${roomId}:${socket.id}`,
+            socketId: socket.id,
+            userId: Number.isInteger(socket.data?.userId) ? Number(socket.data.userId) : null,
+            role: socket.data?.role ?? 'guest',
+          },
+          version: state.version,
+          sourceGeneration: state.sourceGeneration,
+          serverTimestamp: state.serverTimestamp ?? state.updatedAt,
+          domain: state,
+          host: {
+            socketId: host?.socketId ?? null,
+            userId: host?.userId ?? null,
+            online: !!host && io.sockets.sockets.has(host.socketId),
+          },
+        };
+        const data: StateAckData = {
+          state,
+          snapshot,
+          version: snapshot.version,
+          sourceGeneration: snapshot.sourceGeneration,
+          serverTimestamp: snapshot.serverTimestamp,
+        };
+        safeAck(callback, { success: true, data });
+      } catch (err) {
+        console.error('[watch-together-request-state] error:', err);
+        safeAck(callback, { success: false, message: '请求失败' });
+      }
+    };
 
-    // --- 房主控制指令 ---
-    // 立即广播给观众（亚 500ms 响应），同时更新持久化状态
-    socket.on(
-      'watch-together-control',
-      async (payload: SyncControlPayload, callback?: AckCallback) => {
+    socket.on('watch-together-request-state', handleGetState);
+    socket.on('watch-together-get-state', handleGetState);
+    socket.on('realtime:get-state', handleGetState);
+
+    socket.on('watch-together-control', (payload: SyncControlPayload, callback?: AckCallback) => {
+      void realtimeSyncCore.withRoomLock(payload?.roomId ?? '', async () => {
         try {
-          if (
-            !(await roomPermissionService.isRoomHost(socket, payload.roomId))
-          ) {
-            return safeAck(callback, { success: false, message: '无权限控制' });
+          if (!validRoomId(payload?.roomId) || !payload?.action) {
+            safeAck(callback, { success: false, code: 'INVALID_PAYLOAD', message: '控制 payload 无效' });
+            return;
           }
-          if (
-            !(await roomPermissionService.isWatchTogetherRoom(payload.roomId))
-          ) {
-            return safeAck(callback, {
-              success: false,
-              message: '当前房间模式不支持同步播放',
-            });
+          const actionMap = {
+            play: 'playback.play',
+            pause: 'playback.pause',
+            seek: 'playback.seek',
+            rate: 'playback.rate',
+          } as const;
+          const permission = await roomPermissionService.canPerform(socket, payload.roomId, actionMap[payload.action]);
+          if (!permission.allowed) {
+            safeAck(callback, { success: false, code: 'FORBIDDEN', message: permission.reason });
+            return;
           }
-
-          // 立即广播给观众（低延迟）
+          if (!(await roomPermissionService.isWatchTogetherRoom(payload.roomId))) {
+            safeAck(callback, { success: false, code: 'ROOM_MODE', message: '当前房间模式不支持同步播放' });
+            return;
+          }
+          const raw = await playbackMemoryService.getRawPlayback(payload.roomId);
+          const advanced = await playbackMemoryService.getAdvancedPlayback(payload.roomId);
+          if (!raw || !advanced) {
+            safeAck(callback, { success: false, code: 'NO_STATE', message: '房间暂无播放状态' });
+            return;
+          }
+          realtimeSyncCore.hydrate(payload.roomId, raw.version, raw.sourceGeneration, raw.serverTimestamp ?? raw.updatedAt);
+          if ((payload.sourceGeneration ?? raw.sourceGeneration) !== raw.sourceGeneration) {
+            safeAck(callback, { success: false, code: 'STALE_GENERATION', message: '旧 sourceGeneration 已失效' });
+            return;
+          }
+          const transition = VideoSyncDomain.applyControl(raw, payload.action, payload.value, advanced.currentTime);
+          if (!transition.ok) {
+            safeAck(callback, { success: false, code: 'INVALID_PAYLOAD', message: transition.message });
+            return;
+          }
+          const committed = realtimeSyncCore.commit(payload.roomId, mutationEnvelope(payload));
+          if (!committed.ok) {
+            safeAck(callback, { success: false, code: committed.code, message: committed.message });
+            return;
+          }
+          const authoritative = await playbackMemoryService.setPlayback(
+            payload.roomId,
+            transition.result.state,
+            socket.id,
+            {
+              version: committed.version,
+              sourceGeneration: committed.sourceGeneration,
+              serverTimestamp: committed.serverTimestamp,
+            },
+          );
+          roomStateService.setPlayback(payload.roomId, authoritative);
           socket.to(payload.roomId).emit('watch-together-control', {
             action: payload.action,
-            value: payload.value,
+            value: transition.result.value,
+            version: authoritative.version,
+            sourceGeneration: authoritative.sourceGeneration,
+            serverTimestamp: authoritative.serverTimestamp,
+            state: authoritative,
           });
-
-          // 更新持久化状态（控制指令影响状态）
-          await this.applyControlToPlayback(
-            payload.roomId,
-            payload.action,
-            payload.value,
-            socket.id,
-          );
-
-          safeAck(callback, { success: true });
+          safeAck(callback, {
+            success: true,
+            data: { state: authoritative, version: authoritative.version, sourceGeneration: authoritative.sourceGeneration, serverTimestamp: authoritative.serverTimestamp },
+          });
         } catch (err) {
           console.error('[watch-together-control] error:', err);
           safeAck(callback, { success: false, message: '控制失败' });
         }
-      },
-    );
-  }
+      });
+    });
 
-  /**
-   * 将控制指令应用到持久化播放状态。
-   *
-   * - play/pause：更新 isPlaying
-   * - seek：更新 currentTime
-   * - rate：更新 playbackRate
-   *
-   * 这些更新会重置 lastUpdatedAt，确保下次推算从正确的时间点开始。
-   */
-  private async applyControlToPlayback(
-    roomId: string,
-    action: string,
-    value: number | undefined,
-    hostSocketId: string,
-  ): Promise<void> {
-    const current = await playbackMemoryService.getRawPlayback(roomId);
-    if (!current) return;
-
-    let newState = { ...current };
-
-    switch (action) {
-      case 'play':
-        newState.isPlaying = true;
-        break;
-      case 'pause':
-        newState.isPlaying = false;
-        // 暂停时更新 currentTime 为当前推算值（凝固进度）
-        const advanced = await playbackMemoryService.getAdvancedPlayback(roomId);
-        if (advanced) {
-          newState.currentTime = advanced.currentTime;
+    socket.on('video-ready', async (payload: unknown, callback?: AckCallback) => {
+      try {
+        const value = payload as { roomId?: unknown; sourceGeneration?: unknown; requestId?: unknown };
+        if (!validRoomId(value?.roomId) || !Number.isSafeInteger(value?.sourceGeneration)) {
+          safeAck(callback, { success: false, code: 'INVALID_PAYLOAD', message: 'ready payload 无效' });
+          return;
         }
-        break;
-      case 'seek':
-        if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
-          newState.currentTime = value;
-          // 不改变 isPlaying——seek 后房主仍可播放/暂停，实际状态由下一个心跳同步；
-          // 旧实现强制设为 false 导致观众端在 seek 后暂停、收到心跳后才恢复，造成抖动
+        if (!(await roomPermissionService.isInRoom(socket, value.roomId))) {
+          safeAck(callback, { success: false, code: 'FORBIDDEN', message: '不在该房间中' });
+          return;
         }
-        break;
-      case 'rate':
-        if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
-          // 先推算当前进度，再更新倍速
-          const adv = await playbackMemoryService.getAdvancedPlayback(roomId);
-          if (adv) {
-            newState.currentTime = adv.currentTime;
-          }
-          newState.playbackRate = value;
+        const roomId = value.roomId;
+        const state = await playbackMemoryService.getRawPlayback(value.roomId);
+        realtimeSyncCore.hydrate(value.roomId, state?.version, state?.sourceGeneration);
+        if (!realtimeSyncCore.recordReadiness(value.roomId, socket.id, Number(value.sourceGeneration))) {
+          safeAck(callback, { success: false, code: 'STALE_GENERATION', message: '旧 sourceGeneration 的 ready 已丢弃' });
+          return;
         }
-        break;
-    }
+        const host = await roomSessionService.getSharer(value.roomId);
+        if (host) {
+          await emitToAuthorizedMember(io, value.roomId, host.socketId, 'video-ready', {
+            roomId: value.roomId,
+            from: socket.id,
+            requestId: typeof value.requestId === 'string' ? value.requestId.slice(0, 128) : undefined,
+            sourceGeneration: Number(value.sourceGeneration),
+          }, async (target) => target.id === host.socketId && !!(await roomPermissionService.getActiveSharer(target, roomId)));
+        }
+        safeAck(callback, { success: true });
+      } catch {
+        safeAck(callback, { success: false, message: 'ready 处理失败' });
+      }
+    });
 
-    // 移除 hostSocketId（不在 SyncStateDto 中），单独更新
-    const { hostSocketId: _omit, ...stateOnly } = newState as typeof newState & {
-      hostSocketId?: string | null;
-    };
-    void _omit;
-    await playbackMemoryService.setPlayback(roomId, stateOnly, hostSocketId);
+    socket.on('disconnect', () => realtimeSyncCore.clearSocket(socket.id));
   }
 }

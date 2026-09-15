@@ -5,6 +5,14 @@
  */
 export { RoomStateService, roomStateService, type RoomRuntimeState, HOST_RECONNECT_GRACE_MS } from './room-state.service';
 export { RoomPermissionService, roomPermissionService } from './room-permission.service';
+export {
+  canPerformRoomAction,
+  roomRoleFromUserRole,
+  type RoomPermissionAction,
+  type RoomActorRole,
+  type RoomRoleFacts,
+  type PermissionTargetFacts,
+} from './permission-core';
 export { RoomSessionService, roomSessionService } from './room-session.service';
 export { RoomLifecycleHandler } from './handlers/room-lifecycle.handler';
 export { RoomSettingsHandler } from './handlers/room-settings.handler';

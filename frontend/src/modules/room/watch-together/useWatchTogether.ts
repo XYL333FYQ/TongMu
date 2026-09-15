@@ -73,6 +73,9 @@ interface UseWatchTogetherOptions {
    * 则将 currentTime 设置为 initialPlayback.currentTime 并强制暂停（不自动播放）。
    */
   initialPlayback?: {
+    version?: number
+    sourceGeneration?: number
+    serverTimestamp?: number
     currentTime: number
     isPlaying: boolean
     playbackRate: number
@@ -1172,8 +1175,13 @@ export function useWatchTogether({
       }
 
       // 3. 构建播放状态
+      const sourceGeneration = isRecovery
+        ? (recovery!.sourceGeneration ?? seq)
+        : Math.max(seq, (watchTogether.sourceGeneration ?? 0) + 1)
       const buildNewState = (r: ResolvedMovieSource): WatchTogetherState => ({
-        sourceGeneration: seq,
+        version: isRecovery ? recovery!.version : watchTogether.version,
+        sourceGeneration,
+        serverTimestamp: isRecovery ? recovery!.serverTimestamp : watchTogether.serverTimestamp,
         sourceUrl: r.sourceUrl,
         sourceType,
         audioUrl: r.audioUrl,

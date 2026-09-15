@@ -21,6 +21,7 @@ import { SOCKET_EVENT } from '@/modules/sync-playback/constants'
 import type { SyncHeartbeatPayload } from '@/modules/sync-playback/types'
 import { safePlay } from '@/modules/sync-playback/safePlay'
 import { shouldSeekToHost } from '@/modules/sync-playback/services'
+import { shouldApplySnapshot } from '@/modules/sync-playback/realtime-version'
 import type { ServerHeartbeatPayload } from '../types'
 import {
   isBilibiliUrlExpired,
@@ -81,6 +82,8 @@ export function useServerHeartbeat({
 
       const state = payload.state
       const video = videoRef.current
+      if (!shouldApplySnapshot(watchTogetherRef.current, state)) return
+      watchTogetherRef.current = state
 
       // P3-Opt#15：房主重连过渡——对比差异决定是否平滑同步
       if (reconnectTransitionRef.current) {

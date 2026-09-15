@@ -33,6 +33,16 @@ export class RoomDisconnectHandler implements SocketEventHandler {
         if (!session) return;
 
         if (session.role === 'sharer') {
+          // A transfer may have completed after endSession read the old role.
+          // Re-check the authoritative sharer before clearing host state so a
+          // late old-host disconnect cannot erase the new host authority.
+          const currentSharer = await roomSessionService.getSharer(session.roomId);
+          if (currentSharer && currentSharer.socketId !== socket.id) {
+            io.to(session.roomId).emit('viewer-left', {
+              viewerSocketId: socket.id,
+            });
+            return;
+          }
           // 房主断开：清空 hostSocketId，但保留播放状态
           // 服务器将继续推算播放进度并广播给观众，观众可继续观看
           await playbackMemoryService.updateHostSocket(session.roomId, null);

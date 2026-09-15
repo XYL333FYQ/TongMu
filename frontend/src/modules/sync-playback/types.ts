@@ -32,8 +32,11 @@ export type VideoFormat = MediaFormat
  * store / hooks / components 均从此处导入。
  */
 export interface WatchTogetherState {
+  /** Server-authoritative realtime ordering metadata. */
+  version?: number
   /** Monotonically increasing media source generation owned by the host. */
   sourceGeneration?: number
+  serverTimestamp?: number
   sourceUrl: string
   sourceType: SourceType
   audioUrl?: string
@@ -99,6 +102,10 @@ export type ControlAction = 'play' | 'pause' | 'seek' | 'rate'
 export interface ControlPayload {
   action: ControlAction
   value?: number
+  version?: number
+  sourceGeneration?: number
+  serverTimestamp?: number
+  state?: WatchTogetherState
 }
 
 /** `watch-together-state` 事件 payload */
@@ -108,6 +115,10 @@ export interface StatePayload {
   diff?: Partial<WatchTogetherState>
   /** 房主侧递增序号：观众检测跳号即请求全量状态自愈（避免 diff 基线错位） */
   seq?: number
+  version?: number
+  sourceGeneration?: number
+  serverTimestamp?: number
+  mutationId?: string
 }
 
 /** `host-heartbeat` 事件 payload：房主定时广播的轻量心跳信息 */
@@ -129,6 +140,9 @@ export interface HeartbeatPayload {
    * 观众端误判房主离线，进入自主控制模式。
    */
   suppressed?: boolean
+  version?: number
+  sourceGeneration?: number
+  serverTimestamp?: number
 }
 
 /** 统一心跳协议（#14）：房主在线 / 房主离线共用同一事件 */
@@ -140,6 +154,9 @@ export interface SyncHeartbeatPayload {
   isPlaying?: boolean
   playbackRate?: number
   suppressed?: boolean
+  version?: number
+  sourceGeneration?: number
+  serverTimestamp?: number
   /** 房主离线时由服务器推算的完整状态 */
   state?: WatchTogetherState
 }
@@ -174,6 +191,12 @@ export type TrackType = 'danmaku' | 'subtitle'
 export interface TrackChangePayload {
   type: TrackType
   value: string | number | null
+  version?: number
+  sourceGeneration?: number
+  serverTimestamp?: number
+  baseVersion?: number
+  mutationId?: string
+  clientTimestamp?: number
 }
 
 /**

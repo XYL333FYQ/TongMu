@@ -18,6 +18,8 @@ import type { AckCallback, SocketEventHandler } from '../socket';
 import { safeAck } from '../socket';
 import { roomPermissionService } from '../room/room-permission.service';
 import type { TrackChangePayload } from '../shared/dto';
+import { realtimeSyncCore } from '../realtime-sync-core';
+import { playbackMemoryService } from '../playback-memory';
 
 export class TrackSyncHandler implements SocketEventHandler {
   readonly name = 'TrackSyncHandler';
@@ -27,22 +29,46 @@ export class TrackSyncHandler implements SocketEventHandler {
       'track-change',
       async (payload: TrackChangePayload, callback?: AckCallback) => {
         try {
-          // 校验是否为指定房间的活跃 sharer
-          if (
-            !(await roomPermissionService.isRoomHost(socket, payload.roomId))
-          ) {
+          if (!payload || typeof payload.roomId !== 'string' || payload.roomId.length === 0 ||
+            !['danmaku', 'subtitle'].includes(payload.type) ||
+            (typeof payload.value !== 'string' && typeof payload.value !== 'number' && payload.value !== null) ||
+            (typeof payload.value === 'string' && payload.value.length > 512) ||
+            (typeof payload.value === 'number' && !Number.isSafeInteger(payload.value))) {
+            return safeAck(callback, { success: false, code: 'INVALID_PAYLOAD', message: '轨道 payload 无效' });
+          }
+          const permission = await roomPermissionService.canPerform(socket, payload.roomId, 'subtitle.change');
+          if (!permission.allowed) {
             return safeAck(callback, {
-              success: false,
-              message: '无权限切换轨道',
+                success: false,
+              code: 'FORBIDDEN',
+              message: permission.reason,
             });
           }
+          const current = await playbackMemoryService.getRawPlayback(payload.roomId);
+          realtimeSyncCore.hydrate(payload.roomId, current?.version, current?.sourceGeneration, current?.serverTimestamp ?? current?.updatedAt);
+          if (payload.sourceGeneration !== undefined && payload.sourceGeneration !== realtimeSyncCore.current(payload.roomId).sourceGeneration) {
+            return safeAck(callback, { success: false, code: 'STALE_GENERATION', message: '旧 sourceGeneration 的轨道事件已丢弃' });
+          }
+          const committed = realtimeSyncCore.commit(payload.roomId, {
+            baseVersion: payload.baseVersion,
+            sourceGeneration: payload.sourceGeneration,
+            mutationId: payload.mutationId,
+            clientTimestamp: payload.clientTimestamp,
+          });
+          if (!committed.ok) return safeAck(callback, { success: false, code: committed.code, message: committed.message });
+          const event = {
+            type: payload.type,
+            value: payload.value,
+            version: committed.version,
+            sourceGeneration: committed.sourceGeneration,
+            serverTimestamp: committed.serverTimestamp,
+          };
 
           // 转发给房间内其他成员，观众端 useTrackSync 按 payload.type 分发到对应订阅者
           socket.to(payload.roomId).emit('track-change', {
-            type: payload.type,
-            value: payload.value,
+            ...event,
           });
-          safeAck(callback, { success: true });
+          safeAck(callback, { success: true, data: event });
         } catch (err) {
           console.error('[track-change] error:', err);
           safeAck(callback, { success: false, message: '轨道切换转发失败' });
