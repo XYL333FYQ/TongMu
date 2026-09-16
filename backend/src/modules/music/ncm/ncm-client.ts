@@ -12,6 +12,13 @@ import {
   type NcmQrCreateResult,
   type NcmTrackResolution,
 } from './types';
+import type {
+  NcmCatalogResourceType,
+  NcmCommentRequest,
+  NcmPageRequest,
+  NcmSearchRequest,
+  NcmUpstreamResponse,
+} from './catalog-types';
 
 const MAX_JSON_BYTES = 2 * 1024 * 1024;
 const QR_TTL_MS = 3 * 60 * 1000;
@@ -30,6 +37,27 @@ const ALLOWED_ENDPOINTS = new Set([
   '/login/status',
   '/logout',
   '/song/url/v1',
+  '/search',
+  '/playlist/detail',
+  '/playlist/track/all',
+  '/song/detail',
+  '/album',
+  '/artist/detail',
+  '/artist/top/song',
+  '/artist/songs',
+  '/artist/album',
+  '/user/playlist',
+  '/likelist',
+  '/personal_fm',
+  '/fm_trash',
+  '/user/cloud',
+  '/lyric',
+  '/comment/music',
+  '/comment/hot',
+  '/comment/playlist',
+  '/comment/album',
+  '/comment/like',
+  '/like',
 ]);
 
 interface ServeNcmApiModule {
@@ -43,8 +71,24 @@ interface ServeNcmApiModule {
 interface JsonResponse {
   code?: number;
   message?: string;
+  msg?: string;
   data?: unknown;
+  result?: unknown;
+  [key: string]: unknown;
 }
+
+const NCM_SEARCH_TYPES = {
+  song: '1',
+  album: '10',
+  artist: '100',
+  playlist: '1000',
+} as const;
+
+const NCM_COMMENT_TYPES: Record<NcmCatalogResourceType, string> = {
+  song: '0',
+  playlist: '2',
+  album: '3',
+};
 
 function boundedString(value: unknown, max: number): string | null {
   return typeof value === 'string' && value.length > 0 && value.length <= max
@@ -206,6 +250,7 @@ async function waitForListening(server: http.Server): Promise<void> {
 let internalServer: http.Server | null = null;
 let internalBase = '';
 let internalStart: Promise<string> | null = null;
+let privateRequestSequence = 0;
 
 async function startInternalApi(): Promise<string> {
   if (internalServer) return internalBase;
@@ -296,6 +341,10 @@ async function fetchJson(
   if (credential?.cookieHeader) headers.Cookie = credential.cookieHeader;
   if (credential?.csrfToken) headers['X-CSRF-Token'] = credential.csrfToken;
   if (credential?.csrfToken) url.searchParams.set('csrf_token', credential.csrfToken);
+  // The bundled NCM server caches by URL and intentionally does not include
+  // Cookie in its cache key. Private account requests therefore get a bounded
+  // per-request key so one account cannot receive another account's response.
+  if (credential) url.searchParams.set('_tongmu_cache_bust', `${Date.now()}-${++privateRequestSequence}`);
   const timeoutValue = Number(process.env.NCM_REQUEST_TIMEOUT_MS);
   const timeoutMs = Number.isSafeInteger(timeoutValue) && timeoutValue >= 1000 && timeoutValue <= 60_000
     ? timeoutValue
@@ -312,6 +361,12 @@ async function fetchJson(
       const response = await fetch(url, { method: 'GET', headers, signal: controller.signal });
       if (!response.ok) {
         await response.body?.cancel();
+        if (response.status === 401 || response.status === 403) {
+          throw new NcmProviderError('NCM_CREDENTIAL_INVALID', '网易云登录凭据已失效', response.status);
+        }
+        if (response.status === 429) {
+          throw new NcmProviderError('NCM_RATE_LIMITED', '网易云请求过于频繁，请稍后再试', 429);
+        }
         if (response.status >= 500 && attempt + 1 < NCM_MAX_REQUEST_ATTEMPTS) {
           lastError = new NcmProviderError('NCM_UPSTREAM_ERROR', '网易云接口请求失败');
         } else {
@@ -445,6 +500,196 @@ export class NcmApiClient implements NcmClient {
       expiresAt: url ? expiryFromUrl(url) : null,
       isPreview: hasPreviewWindow(row.freeTrialInfo),
     };
+  }
+
+  private async catalogRequest(
+    path: string,
+    query: Record<string, string | undefined> = {},
+    credential?: NcmCredentialSecrets,
+    signal?: AbortSignal,
+  ): Promise<NcmUpstreamResponse> {
+    const result = await fetchJson(path, query, credential, signal);
+    return result.body;
+  }
+
+  async search(params: NcmSearchRequest, signal?: AbortSignal): Promise<NcmUpstreamResponse> {
+    const type = NCM_SEARCH_TYPES[params.type];
+    if (!type || params.keywords.length === 0 || params.keywords.length > 100 ||
+        !Number.isSafeInteger(params.offset) || params.offset < 0 ||
+        !Number.isSafeInteger(params.limit) || params.limit < 1 || params.limit > 50) {
+      throw new NcmProviderError('MUSIC_INVALID_REQUEST', '网易云搜索参数无效', 400);
+    }
+    return this.catalogRequest('/search', {
+      keywords: params.keywords,
+      type,
+      limit: String(params.limit),
+      offset: String(params.offset),
+    }, undefined, signal);
+  }
+
+  async getPlaylistDetail(playlistId: string, signal?: AbortSignal): Promise<NcmUpstreamResponse> {
+    return this.catalogRequest('/playlist/detail', { id: playlistId, s: '8' }, undefined, signal);
+  }
+
+  async getPlaylistTracks(
+    params: NcmPageRequest & { playlistId: string },
+    signal?: AbortSignal,
+  ): Promise<NcmUpstreamResponse> {
+    if (!Number.isSafeInteger(params.offset) || params.offset < 0 ||
+        !Number.isSafeInteger(params.limit) || params.limit < 1 || params.limit > 50) {
+      throw new NcmProviderError('MUSIC_INVALID_REQUEST', '歌单分页参数无效', 400);
+    }
+    return this.catalogRequest('/playlist/track/all', {
+      id: params.playlistId,
+      limit: String(params.limit),
+      offset: String(params.offset),
+    }, undefined, signal);
+  }
+
+  async getSongDetails(trackIds: string[], signal?: AbortSignal): Promise<NcmUpstreamResponse> {
+    if (trackIds.length === 0 || trackIds.length > 50 ||
+        trackIds.some((id) => !/^[1-9][0-9]{0,19}$/.test(id))) {
+      throw new NcmProviderError('MUSIC_INVALID_REQUEST', '歌曲详情数量或 ID 无效', 400);
+    }
+    return this.catalogRequest('/song/detail', { ids: trackIds.join(',') }, undefined, signal);
+  }
+
+  async getAlbumDetail(albumId: string, signal?: AbortSignal): Promise<NcmUpstreamResponse> {
+    return this.catalogRequest('/album', { id: albumId }, undefined, signal);
+  }
+
+  async getArtistDetail(artistId: string, signal?: AbortSignal): Promise<NcmUpstreamResponse> {
+    return this.catalogRequest('/artist/detail', { id: artistId }, undefined, signal);
+  }
+
+  async getArtistTopSongs(artistId: string, signal?: AbortSignal): Promise<NcmUpstreamResponse> {
+    return this.catalogRequest('/artist/top/song', { id: artistId }, undefined, signal);
+  }
+
+  async getArtistSongs(
+    params: NcmPageRequest & { artistId: string },
+    signal?: AbortSignal,
+  ): Promise<NcmUpstreamResponse> {
+    if (!Number.isSafeInteger(params.offset) || params.offset < 0 ||
+        !Number.isSafeInteger(params.limit) || params.limit < 1 || params.limit > 50) {
+      throw new NcmProviderError('MUSIC_INVALID_REQUEST', '歌手歌曲分页参数无效', 400);
+    }
+    return this.catalogRequest('/artist/songs', {
+      id: params.artistId,
+      limit: String(params.limit),
+      offset: String(params.offset),
+      order: 'hot',
+    }, undefined, signal);
+  }
+
+  async getArtistAlbums(
+    params: NcmPageRequest & { artistId: string },
+    signal?: AbortSignal,
+  ): Promise<NcmUpstreamResponse> {
+    if (!Number.isSafeInteger(params.offset) || params.offset < 0 ||
+        !Number.isSafeInteger(params.limit) || params.limit < 1 || params.limit > 50) {
+      throw new NcmProviderError('MUSIC_INVALID_REQUEST', '歌手专辑分页参数无效', 400);
+    }
+    return this.catalogRequest('/artist/album', {
+      id: params.artistId,
+      limit: String(params.limit),
+      offset: String(params.offset),
+    }, undefined, signal);
+  }
+
+  async getUserPlaylists(
+    params: NcmPageRequest & { accountId: string },
+    credential: NcmCredentialSecrets,
+    signal?: AbortSignal,
+  ): Promise<NcmUpstreamResponse> {
+    return this.catalogRequest('/user/playlist', {
+      uid: params.accountId,
+      limit: String(params.limit),
+      offset: String(params.offset),
+    }, credential, signal);
+  }
+
+  async getLikedSongs(
+    accountId: string,
+    credential: NcmCredentialSecrets,
+    signal?: AbortSignal,
+  ): Promise<NcmUpstreamResponse> {
+    return this.catalogRequest('/likelist', { uid: accountId }, credential, signal);
+  }
+
+  async getPersonalFm(credential: NcmCredentialSecrets, signal?: AbortSignal): Promise<NcmUpstreamResponse> {
+    return this.catalogRequest('/personal_fm', {}, credential, signal);
+  }
+
+  async trashFm(trackId: string, credential: NcmCredentialSecrets, signal?: AbortSignal): Promise<NcmUpstreamResponse> {
+    return this.catalogRequest('/fm_trash', { id: trackId, time: '25' }, credential, signal);
+  }
+
+  async getCloudSongs(
+    params: NcmPageRequest,
+    credential: NcmCredentialSecrets,
+    signal?: AbortSignal,
+  ): Promise<NcmUpstreamResponse> {
+    return this.catalogRequest('/user/cloud', {
+      limit: String(params.limit),
+      offset: String(params.offset),
+    }, credential, signal);
+  }
+
+  async getLyrics(trackId: string, signal?: AbortSignal): Promise<NcmUpstreamResponse> {
+    return this.catalogRequest('/lyric', { id: trackId }, undefined, signal);
+  }
+
+  async getComments(
+    params: NcmCommentRequest,
+    credential?: NcmCredentialSecrets,
+    signal?: AbortSignal,
+  ): Promise<NcmUpstreamResponse> {
+    const query = {
+      id: params.resourceId,
+      limit: String(params.limit),
+      offset: String(params.offset),
+      before: '0',
+    };
+    if (params.mode === 'hot') {
+      return this.catalogRequest('/comment/hot', {
+        ...query,
+        type: NCM_COMMENT_TYPES[params.resourceType],
+      }, credential, signal);
+    }
+    const path = params.resourceType === 'song'
+      ? '/comment/music'
+      : params.resourceType === 'playlist'
+        ? '/comment/playlist'
+        : '/comment/album';
+    return this.catalogRequest(path, query, credential, signal);
+  }
+
+  async likeSong(
+    trackId: string,
+    liked: boolean,
+    credential: NcmCredentialSecrets,
+    signal?: AbortSignal,
+  ): Promise<NcmUpstreamResponse> {
+    return this.catalogRequest('/like', { id: trackId, like: String(liked) }, credential, signal);
+  }
+
+  async likeComment(
+    params: {
+      resourceType: NcmCatalogResourceType;
+      resourceId: string;
+      commentId: string;
+      liked: boolean;
+    },
+    credential: NcmCredentialSecrets,
+    signal?: AbortSignal,
+  ): Promise<NcmUpstreamResponse> {
+    return this.catalogRequest('/comment/like', {
+      id: params.resourceId,
+      cid: params.commentId,
+      t: params.liked ? '1' : '0',
+      type: NCM_COMMENT_TYPES[params.resourceType],
+    }, credential, signal);
   }
 }
 

@@ -1,4 +1,12 @@
 import type { MusicCodec, MusicQuality } from '../music-provider';
+import type {
+  NcmCatalogResourceType,
+  NcmCatalogSearchType,
+  NcmCommentRequest,
+  NcmPageRequest,
+  NcmSearchRequest,
+  NcmUpstreamResponse,
+} from './catalog-types';
 
 export type NcmQrStatus =
   | 'idle'
@@ -22,6 +30,11 @@ export type NcmErrorCode =
   | 'NCM_STREAM_UNAVAILABLE'
   | 'NCM_TRACK_NOT_FOUND'
   | 'NCM_UNSUPPORTED_CODEC'
+  | 'NCM_PRIVATE_ACCOUNT_DATA'
+  | 'NCM_RATE_LIMITED'
+  | 'NCM_PROVIDER_UNAVAILABLE'
+  | 'NCM_RESOURCE_NOT_FOUND'
+  | 'NCM_INVALID_RESPONSE'
   | 'MUSIC_TRACK_NOT_CURRENT'
   | 'MUSIC_CAPABILITY_INVALID'
   | 'MUSIC_ROOM_FORBIDDEN'
@@ -96,6 +109,30 @@ export interface NcmClient {
     credential: NcmCredentialSecrets,
     signal?: AbortSignal,
   ): Promise<NcmTrackResolution>;
+  /** Explicit, bounded catalog modules. There is intentionally no generic call method. */
+  search(params: NcmSearchRequest, signal?: AbortSignal): Promise<NcmUpstreamResponse>;
+  getPlaylistDetail(playlistId: string, signal?: AbortSignal): Promise<NcmUpstreamResponse>;
+  getPlaylistTracks(params: NcmPageRequest & { playlistId: string }, signal?: AbortSignal): Promise<NcmUpstreamResponse>;
+  getSongDetails(trackIds: string[], signal?: AbortSignal): Promise<NcmUpstreamResponse>;
+  getAlbumDetail(albumId: string, signal?: AbortSignal): Promise<NcmUpstreamResponse>;
+  getArtistDetail(artistId: string, signal?: AbortSignal): Promise<NcmUpstreamResponse>;
+  getArtistTopSongs(artistId: string, signal?: AbortSignal): Promise<NcmUpstreamResponse>;
+  getArtistSongs(params: NcmPageRequest & { artistId: string }, signal?: AbortSignal): Promise<NcmUpstreamResponse>;
+  getArtistAlbums(params: NcmPageRequest & { artistId: string }, signal?: AbortSignal): Promise<NcmUpstreamResponse>;
+  getUserPlaylists(params: NcmPageRequest & { accountId: string }, credential: NcmCredentialSecrets, signal?: AbortSignal): Promise<NcmUpstreamResponse>;
+  getLikedSongs(accountId: string, credential: NcmCredentialSecrets, signal?: AbortSignal): Promise<NcmUpstreamResponse>;
+  getPersonalFm(credential: NcmCredentialSecrets, signal?: AbortSignal): Promise<NcmUpstreamResponse>;
+  trashFm(trackId: string, credential: NcmCredentialSecrets, signal?: AbortSignal): Promise<NcmUpstreamResponse>;
+  getCloudSongs(params: NcmPageRequest, credential: NcmCredentialSecrets, signal?: AbortSignal): Promise<NcmUpstreamResponse>;
+  getLyrics(trackId: string, signal?: AbortSignal): Promise<NcmUpstreamResponse>;
+  getComments(params: NcmCommentRequest, credential?: NcmCredentialSecrets, signal?: AbortSignal): Promise<NcmUpstreamResponse>;
+  likeSong(trackId: string, liked: boolean, credential: NcmCredentialSecrets, signal?: AbortSignal): Promise<NcmUpstreamResponse>;
+  likeComment(params: {
+    resourceType: NcmCatalogResourceType;
+    resourceId: string;
+    commentId: string;
+    liked: boolean;
+  }, credential: NcmCredentialSecrets, signal?: AbortSignal): Promise<NcmUpstreamResponse>;
 }
 
 export interface NcmCredentialStatusDto {

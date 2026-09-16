@@ -18,6 +18,8 @@ import { Input } from '@/components/ui/Input'
 import { cn } from '@/lib/utils'
 import { apiGet, apiPost } from '@/lib/api'
 import { formatMusicTime, modeLabel } from './domain'
+import { formatQualityFacts } from './catalog-domain'
+import { NcmCatalogPanel } from './NcmCatalogPanel'
 import { useMusicSync } from './useMusicSync'
 import type { MusicPlayMode } from './types'
 
@@ -241,6 +243,12 @@ export function TogetherListenPanel({
         </div>
       )}
 
+      <NcmCatalogPanel
+        isHost={isHost}
+        loggedIn={Boolean(ncmStatus?.loggedIn)}
+        onAddTrack={sync.addMusic}
+      />
+
       <div className="mt-3 min-w-0 rounded-xl bg-[var(--md-sys-color-surface-container)] p-3">
         <div className="min-w-0">
           <p className="truncate text-sm font-medium text-[var(--md-sys-color-on-surface)]">
@@ -249,6 +257,16 @@ export function TogetherListenPanel({
           <p className="truncate text-xs text-[var(--md-sys-color-on-surface-variant)]">
             {state.currentItem?.artist || '添加本地夹具开始一起听'}
           </p>
+          {sync.qualityFacts &&
+            state.currentSourceRef?.startsWith('music://ncm/') && (
+              <p className="mt-1 break-words text-[10px] text-[var(--md-sys-color-on-surface-variant)]">
+                {formatQualityFacts(
+                  sync.qualityFacts.requestedQuality,
+                  sync.qualityFacts.actualQuality,
+                  sync.qualityFacts.availableQualities
+                )}
+              </p>
+            )}
         </div>
         <input
           aria-label="音乐播放进度"

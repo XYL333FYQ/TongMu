@@ -4,7 +4,7 @@
 
 This file is the persistent checkpoint for the TongMu V2 integration program. Phase 0 is an audit and design phase only: no product code, dependency, database, configuration, CI, or reference source was changed.
 
-Current state: **Phase 2, Phase 3A, Phase 3B, Phase 4A, Phase 4B Voice, Phase 5A RealtimeSyncCore/Permissions, Phase 5B-1 MusicSyncDomain/Together Listen, and Phase 5B-2A NCM provider core are complete within their approved boundaries. The Phase 5B-1 final acceptance gate is closed after the Voice fake-media Chromium regression was diagnosed and minimally fixed; Phase 5B-2B catalog/product work and the Phase 6 migration/release gate remain open.**
+Current state: **Phase 2, Phase 3A, Phase 3B, Phase 4A, Phase 4B Voice, Phase 5A RealtimeSyncCore/Permissions, Phase 5B-1 MusicSyncDomain/Together Listen, and Phase 5B-2A/2B NCM provider/catalog product work are complete within their approved boundaries. The Phase 5B-1 final acceptance gate is closed after the Voice fake-media Chromium regression was diagnosed and minimally fixed; the Phase 6 migration/release gate remains open.**
 
 Phase 2 has a working core checkpoint: the versioned client profile, server
 viability filter, client-owned planner path, provider contract/registry, and
@@ -79,7 +79,7 @@ to do that work safely.
 1. Phase 3A typed HLS/DASH resource mapping and its Chromium browser exit gate are complete; the fixture's Inspector/client-blocked diagnostics are intentional route aborts used to verify fallback.
 2. Live publishing/ingest lifecycle (RTMP/WHIP/WHEP) remains outside public HLS/HTTP-FLV source convergence and is explicitly deferred.
 3. Phase 3A's typed DASH mapper covers `SegmentBase`, representation indexes, bitstream-switching resources, `Location`, xlink, timing URLs, and bounded recursion in unit/backend tests; nested fixture MPD playback is covered by the completed Chromium suite.
-4. Realtime video and music synchronization now share the documented `RealtimeSyncCore` primitives while keeping independent clocks and state. Phase 5B-1 MusicSyncDomain, queue state, and Together Listen are complete; its final acceptance gate is closed. The historical Voice fake-media Chromium blocker and its auth-refresh race fix are recorded in the Phase 5B-1 closure below. Phase 5B-2A now supplies the NCM provider/login/stream boundary; catalog and product UI remain Phase 5B-2B.
+4. Realtime video and music synchronization now share the documented `RealtimeSyncCore` primitives while keeping independent clocks and state. Phase 5B-1 MusicSyncDomain, queue state, and Together Listen are complete; its final acceptance gate is closed. The historical Voice fake-media Chromium blocker and its auth-refresh race fix are recorded in the Phase 5B-1 closure below. Phase 5B-2A supplies the NCM provider/login/stream boundary and Phase 5B-2B supplies the bounded NCM catalog/product surface; Phase 6 remains open.
 5. Voice lifecycle, identity, reconnect replacement, decoder ownership, ghost cleanup, and voice-local moderation remain Phase 4B behavior; Phase 5A now supplies the shared permission decision boundary.
 6. Phase 4A player/subtitle lifetime hardening and Phase 4B Voice are complete within their scoped boundaries.
 7. Release artifacts still retain historical ZViewer-era names for compatibility; full TongMu renaming, checksum/signature verification, staged extraction, and rollback remain Phase 6 work.
@@ -108,7 +108,7 @@ to do that work safely.
 - [x] Phase 5A — `RealtimeSyncCore` / VideoSyncDomain / Room Permissions.
 - [x] Phase 5B-1 — `MusicSyncDomain` / persistent queue / Together Listen (implementation and final regression gate complete within the approved boundary).
 - [x] Phase 5B-2A — NCM provider core / credential boundary / QR login / explicit-quality room playback.
-- [ ] Phase 5B-2B — NCM catalog and remaining product surface.
+- [x] Phase 5B-2B — NCM catalog and remaining product surface within the bounded provider/product contract.
 - [ ] Phase 6 — Historical migrations / Packaging / CI / Observability / release gate.
 
 See `implementation-plan.md` for dependencies, file targets, tests, exit criteria, and risks.
@@ -423,9 +423,9 @@ remains the pre-existing repository baseline failure and was not relaxed or
 auto-fixed. Phase 3 cache checks remain the previously recorded PASS baseline.
 
 The detailed contracts are in `realtime-sync-core.md`, `room-permissions.md`,
-`music-sync-domain.md`, and `together-listen.md`. The Phase 5B-2A NCM contract
-is in `ncm-provider.md`; catalog/product and Phase 6 migration/release work
-remain intentionally open.
+`music-sync-domain.md`, and `together-listen.md`. The Phase 5B-2A/2B NCM
+contracts are in `ncm-provider.md` and `ncm-product-surface.md`; Phase 6
+migration/release work remains intentionally open.
 
 ### Phase 5B-1 final status
 
@@ -533,6 +533,45 @@ contracts, not proof of upstream account availability or API authorization.
 | Diff whitespace | `git diff --check` | PASS | Only Git's existing LF/CRLF normalization warnings were reported |
 | Reference boundary | `git diff --name-only -- references` | PASS | No `references/` files changed |
 | Real NCM account | N/A | NOT RUN | No real NCM account or credential was supplied; local fixture evidence does not claim upstream availability or authorization |
+
+### Phase 5B-2B final status
+
+**COMPLETE within the bounded NCM catalog/product boundary.** The server now
+exposes explicit allowlisted NCM catalog methods and a provider-neutral
+`NcmCatalogService` for bounded search, playlist/album/artist hydration,
+current-user playlists/liked/FM/cloud reads, lyrics, comments, and supported
+song/comment likes. Private routes select the authenticated current user only;
+they do not accept `ownerId`, `userId`, or room grants as account selectors.
+
+The Together Listen card now contains Search, Playlists, Albums, Artists,
+Liked, FM, and Cloud views. Search is debounced and cancellable. Catalog track
+insertion goes through the existing music queue mutation and emits only the
+stable `music://ncm/track/<id>` reference plus bounded metadata. The existing
+authoritative room music clock/player remains the only playback path. Quality
+preference, available/requested/actual facts, unavailable-quality errors, and
+no-silent-fallback behavior remain explicit. Lyrics/comments are text-only;
+lyrics use a music generation/track guard and authoritative music position.
+
+Cloud upload, comment posting, arbitrary user-resource management, real-account
+verification, official NCM authorization, and Phase 6 release/migration work
+remain deferred. Real NCM account/cookie validation was **NOT RUN** because no
+real account or credential was supplied.
+
+### Phase 5B-2B verification
+
+| Check | Command | Result | Evidence / limitation |
+|---|---|---:|---|
+| Backend typecheck | `npm run lint -w backend` | PASS | Explicit NCM catalog client/service/routes compile |
+| Backend tests | `npm test -w backend` | PASS with 1 skip | 129 passing; Windows symlink-escape case remains an environment skip |
+| NCM catalog backend tests | `node --test backend/test/phase5b2b-ncm-catalog.test.js` | PASS | Bounds/malformed response, large playlist bounded hydration/duplicates, album/artist refs, private owner isolation, safe artwork URLs, FM/cloud/mutations, lyrics, comments |
+| Focused frontend ESLint | `npx eslint src/modules/music/NcmCatalogPanel.tsx src/modules/music/catalog-domain.ts src/modules/music/catalog-store.ts src/modules/music/catalog-types.ts src/modules/music/source-resolver.ts src/modules/music/useMusicSync.ts src/modules/music/TogetherListenPanel.tsx --ext ts,tsx --report-unused-disable-directives --max-warnings 0` (from `frontend`) | PASS | Modified music catalog/source/UI paths have no findings; repository-wide baseline remains covered by the earlier `BASELINE BLOCKED` record |
+| Frontend tests | `npm test -w frontend` | PASS | 26/26, including catalog normalization/quality/error-domain cases |
+| Frontend production build | `npm run build -w frontend` | PASS | Existing MediaBunny dynamic-import and large-chunk warnings remain |
+| Phase 5B music/product Chromium | `npx playwright test e2e/phase5b2a-ncm.spec.ts e2e/phase5b-music.spec.ts e2e/phase5b2b-ncm.spec.ts --reporter=line --workers=1` | PASS | 3/3; existing gateway/Together Listen plus QR/login, search, playlist/album/artist details, quality chooser, stable queue add, lyrics/comments, liked/FM/cloud, logout/account switch, and 320px overflow |
+| Full Chromium E2E | `npx playwright test --reporter=line --workers=1` | PASS with 1 skip | 26 passed, 1 intentional Voice environment skip, 0 failed |
+| Diff whitespace | `git diff --check` | PASS | No whitespace errors; Git may report existing LF/CRLF normalization warnings |
+| Reference/dependency boundary | `git diff --name-only -- references`; manifest diff | PASS | `references/` untouched; package manifests/lockfile unchanged |
+| Real NCM account | N/A | NOT RUN | No real NCM account or credential was supplied |
 
 ### Phase 2 closure audit
 

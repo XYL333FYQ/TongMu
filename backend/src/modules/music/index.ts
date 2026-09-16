@@ -20,6 +20,9 @@ export {
 export { NcmCredentialService, ncmCredentialService } from './ncm/ncm-credential.service';
 export { NcmLoginService, ncmLoginService } from './ncm/ncm-login.service';
 export { NcmApiClient, ncmApiClient, stopNcmApiService } from './ncm/ncm-client';
+export { NcmCatalogService, ncmCatalogService, parseNcmLyricText } from './ncm/ncm-catalog.service';
+export { createNcmCatalogRouter } from './ncm/ncm-catalog.routes';
+export * from './ncm/catalog-types';
 export {
   MusicPlaybackService,
   musicPlaybackService,

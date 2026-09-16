@@ -12,6 +12,7 @@ import {
   type MusicPlayMode,
   type MusicQueueItemInput,
 } from './types';
+import { safePublicHttpUrl } from './safe-url';
 
 export type QueueValidationResult = {
   ok: true;
@@ -71,7 +72,7 @@ export function validateMusicQueueItemInput(input: unknown): QueueValidationResu
     if (!artwork) return { ok: false, message: '封面地址超出限制' };
     try {
       const parsed = new URL(artwork);
-      if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || parsed.username || parsed.password || hasSecretLikeText(artwork)) {
+      if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || parsed.username || parsed.password || hasSecretLikeText(artwork) || !safePublicHttpUrl(artwork)) {
         return { ok: false, message: '封面地址不安全' };
       }
       artworkUrl = artwork;

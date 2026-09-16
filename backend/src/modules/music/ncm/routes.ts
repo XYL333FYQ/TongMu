@@ -5,10 +5,13 @@ import { isMusicQuality } from '../music-provider';
 import { musicPlaybackService, type MusicResolveRequest } from './music-playback.service';
 import { ncmCredentialService } from './ncm-credential.service';
 import { ncmLoginService } from './ncm-login.service';
+import { createNcmCatalogRouter } from './ncm-catalog.routes';
+import { ncmCatalogService } from './ncm-catalog.service';
 import { NcmProviderError, type NcmQrSessionDto } from './types';
 import type { NcmLoginService } from './ncm-login.service';
 import type { MusicPlaybackService } from './music-playback.service';
 import type { NcmCredentialService } from './ncm-credential.service';
+import type { NcmCatalogService } from './ncm-catalog.service';
 
 const SESSION_ID_RE = /^[0-9a-f-]{20,64}$/i;
 const ROOM_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
@@ -71,13 +74,17 @@ export interface NcmMusicRouterDependencies {
   credentials?: NcmCredentialService;
   login?: NcmLoginService;
   playback?: MusicPlaybackService;
+  catalog?: NcmCatalogService;
 }
 
 export function createNcmMusicRouter(dependencies: NcmMusicRouterDependencies = {}): Router {
   const credentials = dependencies.credentials || ncmCredentialService;
   const login = dependencies.login || ncmLoginService;
   const playbackService = dependencies.playback || musicPlaybackService;
+  const catalog = dependencies.catalog || ncmCatalogService;
   const router = Router();
+
+  router.use(createNcmCatalogRouter(catalog));
 
   router.get('/ncm/status', authenticateToken, async (req: AuthenticatedRequest, res) => {
     try {

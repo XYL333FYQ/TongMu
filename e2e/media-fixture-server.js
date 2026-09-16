@@ -38,6 +38,50 @@ function createNcmWav() {
 
 const ncmAudio = createNcmWav();
 
+function ncmFixtureTrack(id, name = `NCM Catalog ${id}`) {
+  return {
+    id: String(id),
+    name,
+    ar: [{ id: '77', name: 'NCM Fixture' }],
+    al: { id: '4001', name: 'Fixture Album', picUrl: 'https://music.126.net/fixture-cover.jpg' },
+    dt: 4_000,
+    fee: 0,
+    level: 'exhigh',
+    availableQualities: ['standard', 'higher', 'exhigh'],
+  };
+}
+
+function ncmFixturePlaylist(id = '5001') {
+  return {
+    id,
+    name: 'NCM Fixture Playlist',
+    description: 'A bounded catalog fixture',
+    coverImgUrl: 'https://music.126.net/fixture-playlist.jpg',
+    creator: { userId: '77', nickname: 'NCM Fixture' },
+    trackCount: 3,
+    // Duplicate 7001 deliberately verifies that queue/catalog identity is not
+    // derived from a de-duplicated array.
+    trackIds: [{ id: '7001' }, { id: '7001' }, { id: '7002' }],
+  };
+}
+
+function ncmFixtureComment(id, text) {
+  return {
+    commentId: id,
+    content: text,
+    user: { userId: '77', nickname: 'NCM Commenter', avatarUrl: 'https://music.126.net/fixture-avatar.jpg' },
+    time: Date.now(),
+    likedCount: 2,
+    liked: false,
+  };
+}
+
+function ncmFixtureRequiresLogin(req, res) {
+  if (String(req.headers.cookie || '').includes('MUSIC_U=fixture-secret')) return true;
+  sendJson(res, { code: 301, data: [] });
+  return false;
+}
+
 function isIsoBmff(buffer) {
   return buffer.length >= 8 && buffer.toString('ascii', 4, 8) === 'ftyp';
 }
@@ -258,6 +302,73 @@ function handleNcmRequest(req, res, requestUrl) {
         requestedLevel: level,
       }],
     }), true;
+  }
+  if (endpoint === '/search' && req.method === 'GET') {
+    const type = requestUrl.searchParams.get('type') || '1';
+    if (type === '1') return sendJson(res, { code: 200, result: { songs: [ncmFixtureTrack('7001', 'Catalog Fixture Song'), ncmFixtureTrack('7002')], songCount: 2 } }), true;
+    if (type === '1000') return sendJson(res, { code: 200, result: { playlists: [ncmFixturePlaylist()], playlistCount: 1 } }), true;
+    if (type === '10') return sendJson(res, { code: 200, result: { albums: [{ id: '4001', name: 'Fixture Album', artist: { id: '77', name: 'NCM Fixture' }, picUrl: 'https://music.126.net/fixture-cover.jpg', size: 2 }], albumCount: 1 } }), true;
+    if (type === '100') return sendJson(res, { code: 200, result: { artists: [{ id: '77', name: 'NCM Fixture', picUrl: 'https://music.126.net/fixture-avatar.jpg', albumSize: 1, musicSize: 2 }], artistCount: 1 } }), true;
+    return sendJson(res, { code: 400, result: {} }), true;
+  }
+  if (endpoint === '/playlist/detail' && req.method === 'GET') {
+    return sendJson(res, { code: 200, playlist: ncmFixturePlaylist(requestUrl.searchParams.get('id') || '5001') }), true;
+  }
+  if (endpoint === '/song/detail' && req.method === 'GET') {
+    const ids = (requestUrl.searchParams.get('ids') || '').split(',').filter(Boolean);
+    return sendJson(res, { code: 200, songs: ids.map((id) => ncmFixtureTrack(id)) }), true;
+  }
+  if (endpoint === '/playlist/track/all' && req.method === 'GET') {
+    const offset = Number(requestUrl.searchParams.get('offset') || 0);
+    const limit = Number(requestUrl.searchParams.get('limit') || 20);
+    const ids = ['7001', '7001', '7002'].slice(offset, offset + limit);
+    return sendJson(res, { code: 200, songs: ids.map((id) => ncmFixtureTrack(id)) }), true;
+  }
+  if (endpoint === '/album' && req.method === 'GET') {
+    return sendJson(res, { code: 200, album: { id: '4001', name: 'Fixture Album', artist: { id: '77', name: 'NCM Fixture' }, picUrl: 'https://music.126.net/fixture-cover.jpg', size: 2 }, songs: [ncmFixtureTrack('7001'), ncmFixtureTrack('7002')] }), true;
+  }
+  if (endpoint === '/artist/detail' && req.method === 'GET') {
+    return sendJson(res, { code: 200, data: { artist: { id: '77', name: 'NCM Fixture', picUrl: 'https://music.126.net/fixture-avatar.jpg', albumSize: 1, musicSize: 2 } } }), true;
+  }
+  if (endpoint === '/artist/top/song' && req.method === 'GET') {
+    return sendJson(res, { code: 200, songs: [ncmFixtureTrack('7001'), ncmFixtureTrack('7002')] }), true;
+  }
+  if (endpoint === '/artist/album' && req.method === 'GET') {
+    return sendJson(res, { code: 200, artist: { id: '77', name: 'NCM Fixture' }, hotAlbums: [{ id: '4001', name: 'Fixture Album', artist: { id: '77', name: 'NCM Fixture' }, picUrl: 'https://music.126.net/fixture-cover.jpg', size: 2 }], albumCount: 1 }), true;
+  }
+  if (endpoint === '/user/playlist' && req.method === 'GET') {
+    if (!ncmFixtureRequiresLogin(req, res)) return true;
+    return sendJson(res, { code: 200, playlist: [ncmFixturePlaylist()], playlistCount: 1 }), true;
+  }
+  if (endpoint === '/likelist' && req.method === 'GET') {
+    if (!ncmFixtureRequiresLogin(req, res)) return true;
+    return sendJson(res, { code: 200, ids: ['7001', '7002'], count: 2 }), true;
+  }
+  if (endpoint === '/personal_fm' && req.method === 'GET') {
+    if (!ncmFixtureRequiresLogin(req, res)) return true;
+    return sendJson(res, { code: 200, data: [ncmFixtureTrack('7002', 'Private FM Fixture')] }), true;
+  }
+  if (endpoint === '/fm_trash' && req.method === 'GET') {
+    if (!ncmFixtureRequiresLogin(req, res)) return true;
+    return sendJson(res, { code: 200 }), true;
+  }
+  if (endpoint === '/user/cloud' && req.method === 'GET') {
+    if (!ncmFixtureRequiresLogin(req, res)) return true;
+    return sendJson(res, { code: 200, data: [{ simpleSong: ncmFixtureTrack('7001', 'Cloud Fixture') }], count: 1 }), true;
+  }
+  if (endpoint === '/lyric' && req.method === 'GET') {
+    return sendJson(res, { code: 200, lrc: { lyric: '[00:01.00]原文第一行\n[00:01.00]重复时间戳\n无时间歌词' }, tlyric: { lyric: '[00:01.00]Translated line' }, romalrc: { lyric: '[00:01.00]Romanized line' } }), true;
+  }
+  if (['/comment/music', '/comment/hot', '/comment/playlist', '/comment/album'].includes(endpoint) && req.method === 'GET') {
+    return sendJson(res, { code: 200, comments: [ncmFixtureComment('8001', '<b>text-only fixture</b>'), ncmFixtureComment('8002', 'Second comment')], total: 2 }), true;
+  }
+  if (endpoint === '/like' && req.method === 'GET') {
+    if (!ncmFixtureRequiresLogin(req, res)) return true;
+    return sendJson(res, { code: 200 }), true;
+  }
+  if (endpoint === '/comment/like' && req.method === 'GET') {
+    if (!ncmFixtureRequiresLogin(req, res)) return true;
+    return sendJson(res, { code: 200 }), true;
   }
   if (endpoint.startsWith('/ncm-audio/') && (req.method === 'GET' || req.method === 'HEAD')) {
     return sendBuffer(req, res, ncmAudio, 'audio/wav'), true;

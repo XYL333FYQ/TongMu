@@ -1,12 +1,12 @@
-# Phase 5B-2A NCM provider core
+# Phase 5B-2A / 5B-2B NCM provider and product surface
 
 ## Status and boundary
 
 Phase 5B-2A is complete for the NCM provider, server-private credential
 boundary, QR login/session lifecycle, explicit-quality resolution, and
-room-authorized music playback. It does not implement NCM catalog/search,
-playlists, albums, artists, FM, cloud music, lyrics, comments, likes, or a
-full NCM product browser. Those items remain Phase 5B-2B work.
+room-authorized music playback. Phase 5B-2B now adds the bounded NCM catalog,
+private library/FM/cloud surfaces, lyrics/comments, safe mutations, and the
+Together Listen catalog UI described in `ncm-product-surface.md`.
 
 This module does not claim official NCM API authorization. The upstream API is
 an unofficial technical dependency and must remain subject to deployment
@@ -37,14 +37,26 @@ URLs on `music.126.net` or its subdomains; the local deterministic fixture
 origin is an allowlist exception only in the test environment. NCM routes do
 not accept arbitrary upstream URLs and do not forward arbitrary NCM paths.
 
-`NcmApiClient` is the only NCM HTTP wrapper. Its allowlist is limited to QR
-key/create/check, login status, logout, and the song URL endpoint. It owns
-Cookie/CSRF header injection, the bounded request timeout, caller
-`AbortSignal`, a 2 MiB JSON response bound, JSON validation, user-agent
-policy, redacted errors, and one bounded retry for transient transport/5xx
-failures. `NCM_API_BASE_URL` can point to a separately managed API service. If
-it is not set, the pinned server-only dependency is started on loopback on a
-bounded port range; it is never started as a browser dependency.
+`NcmApiClient` is the only NCM HTTP wrapper. Its allowlist contains the fixed
+QR/login/status/logout/song-resolution modules plus the explicit catalog
+modules for search, playlist/album/artist detail, user playlists, liked songs,
+FM, cloud, lyrics, comments, and the two supported like mutations. There is
+no generic path/body forwarding method. The client owns Cookie/CSRF header
+injection, the bounded request timeout, caller `AbortSignal`, a 2 MiB JSON
+response bound, JSON validation, user-agent policy, redacted errors, one
+bounded retry for transient transport/5xx failures, and a per-request key for
+private calls so the bundled upstream cache cannot cross account boundaries.
+`NCM_API_BASE_URL` can point to a separately managed API service. If it is not
+set, the pinned server-only dependency is started on loopback on a bounded
+port range; it is never started as a browser dependency.
+
+`NcmCatalogService` converts validated upstream shapes into provider-neutral
+DTOs. Search accepts only `song`, `playlist`, `album`, or `artist`; every page
+has a bounded offset/page size. Playlist track IDs are sliced before song
+detail hydration, and duplicate IDs are mapped back in their original order.
+Catalog DTOs retain safe artwork and quality facts only. They never contain a
+raw stream URL, Cookie, CSRF value, Authorization header, signed URL, or an
+arbitrary upstream request field.
 
 ## Credential and QR boundary
 
@@ -64,6 +76,22 @@ public DTOs.
 
 Guests may participate in a room, but the login routes require an
 authenticated user because a guest has no persistent credential owner.
+
+## Catalog and private library boundary
+
+Public search, playlist, album, artist, lyrics, and comment reads can run
+without a NCM credential. Private user playlists, liked songs, personal FM,
+cloud music, FM dislike, song like, and comment like routes require the
+current TongMu authenticated user. They never accept `ownerId`, `userId`, or a
+room grant to select another account. A room's playback capability only
+authorizes playback of the owner's current queue item; it is not a catalog
+credential.
+
+Lyrics are parsed into bounded timestamped or untimed text lines. Duplicate
+timestamps and malformed/untimed lines are preserved as text, and the React
+surface renders them as text nodes. Comments are similarly reduced to safe
+author/time/count/text facts; comment posting and cloud upload remain out of
+scope.
 
 ## Room authorization and playback
 
@@ -133,4 +161,5 @@ prove upstream account availability, API terms, regional behavior, or every
 NCM quality tier.
 
 See `progress.md`, `implementation-plan.md`, and
-`upstream-adoption-matrix.md` for the phase ledger and remaining 5B-2B scope.
+`upstream-adoption-matrix.md` for the phase ledger and the remaining Phase 6
+scope.

@@ -29,6 +29,17 @@ export interface MusicSourceResolution {
   mimeType?: string
   code?: string
   message?: string
+  requestedQuality?: MusicQuality
+  actualQuality?: MusicQuality | null
+  availableQualities?: MusicQuality[]
+  availableMaximum?: MusicQuality | null
+}
+
+export interface MusicQualityFacts {
+  requestedQuality: MusicQuality
+  actualQuality: MusicQuality | null
+  availableQualities: MusicQuality[]
+  availableMaximum: MusicQuality | null
 }
 
 interface NcmResolveResponse {
@@ -36,7 +47,46 @@ interface NcmResolveResponse {
   code?: string
   message?: string
   playbackUrl?: string
-  descriptor?: { mimeType?: string }
+  details?: {
+    requestedQuality?: unknown
+    actualQuality?: unknown
+    availableQualities?: unknown
+    availableMaximum?: unknown
+  }
+  descriptor?: {
+    mimeType?: string
+    requestedQuality?: unknown
+    actualQuality?: unknown
+    availableQualities?: unknown
+    availableMaximum?: unknown
+  }
+}
+
+function qualityFactsFrom(
+  value:
+    NcmResolveResponse['descriptor'] | NcmResolveResponse['details'] | undefined
+): Partial<MusicQualityFacts> {
+  const availableQualities = Array.isArray(value?.availableQualities)
+    ? value.availableQualities.filter(isMusicQuality)
+    : []
+  return {
+    requestedQuality: isMusicQuality(value?.requestedQuality)
+      ? value.requestedQuality
+      : undefined,
+    actualQuality:
+      value?.actualQuality === null
+        ? null
+        : isMusicQuality(value?.actualQuality)
+          ? value.actualQuality
+          : undefined,
+    availableQualities,
+    availableMaximum:
+      value?.availableMaximum === null
+        ? null
+        : isMusicQuality(value?.availableMaximum)
+          ? value.availableMaximum
+          : undefined,
+  }
 }
 
 /** Resolve the existing fixture or the bounded NCM provider path. */
@@ -94,18 +144,22 @@ export async function resolveMusicSourceDetailed(
     })
     const data = result.data
     if (!result.ok || !data?.success || typeof data.playbackUrl !== 'string') {
+      const facts = qualityFactsFrom(data?.details)
       return {
         url: null,
         code: data?.code || 'NCM_UPSTREAM_ERROR',
         message: data?.message || '网易云音乐解析失败',
+        ...facts,
       }
     }
+    const facts = qualityFactsFrom(data.descriptor)
     return {
       url: appendMusicPlaybackGrant(data.playbackUrl, context.roomId),
       mimeType:
         typeof data.descriptor?.mimeType === 'string'
           ? data.descriptor.mimeType
           : undefined,
+      ...facts,
     }
   } catch {
     return {

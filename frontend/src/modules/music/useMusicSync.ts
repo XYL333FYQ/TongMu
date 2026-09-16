@@ -1,11 +1,15 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import { useSocket } from '@/hooks/useSocket'
 import { MusicAudioLifecycle } from './audio-lifecycle'
 import { expectedMusicPosition, shouldCorrectMusicDrift } from './domain'
 import { isMusicSnapshot, shouldApplyMusicEvent } from './realtime-version'
 import { useMusicStore } from './store'
-import { isMusicQuality, resolveMusicSourceDetailed } from './source-resolver'
+import {
+  isMusicQuality,
+  resolveMusicSourceDetailed,
+  type MusicQualityFacts,
+} from './source-resolver'
 import type {
   MusicControlRequestNotice,
   MusicControlResponse,
@@ -55,6 +59,16 @@ export function useMusicSync({
   const resolveEpochRef = useRef(0)
   const snapshotInitializedRef = useRef(false)
   const ackedTrackRef = useRef<string | null>(null)
+  const [qualityFactsState, setQualityFacts] = useState<{
+    sourceRef: string
+    generation: number
+    facts: MusicQualityFacts
+  } | null>(null)
+  const qualityFacts =
+    qualityFactsState?.sourceRef === store.currentSourceRef &&
+    qualityFactsState.generation === store.musicGeneration
+      ? qualityFactsState.facts
+      : null
 
   const setError = useCallback((message: string | null) => {
     useMusicStore.getState().setError(message)
@@ -261,8 +275,24 @@ export function useMusicSync({
       if (cancelled || resolveEpochRef.current !== resolveEpoch) return
       const sourceUrl = resolution.url
       if (!sourceUrl) {
-        setError(resolution.message || '当前音乐来源无法解析')
+        const available = resolution.availableQualities?.length
+          ? `（可用：${resolution.availableQualities.join('、')}）`
+          : ''
+        setError(`${resolution.message || '当前音乐来源无法解析'}${available}`)
         return
+      }
+      if (/^music:\/\/ncm\//.test(sourceRef)) {
+        setQualityFacts({
+          sourceRef,
+          generation,
+          facts: {
+            requestedQuality:
+              resolution.requestedQuality || requestedQuality || 'exhigh',
+            actualQuality: resolution.actualQuality ?? null,
+            availableQualities: resolution.availableQualities || [],
+            availableMaximum: resolution.availableMaximum ?? null,
+          },
+        })
       }
       if (
         /^music:\/\/ncm\//.test(sourceRef) &&
@@ -531,6 +561,18 @@ export function useMusicSync({
     }) => (isHost ? emitHostMutation('music:queue-add', { item }) : false),
     [emitHostMutation, isHost]
   )
+  const addMusic = useCallback(
+    (item: {
+      sourceRef: string
+      title: string
+      artist?: string
+      album?: string
+      artworkUrl?: string | null
+      durationMs?: number
+      metadata?: Record<string, unknown>
+    }) => (isHost ? emitHostMutation('music:queue-add', { item }) : false),
+    [emitHostMutation, isHost]
+  )
   const remove = useCallback(
     (queueItemId: number) =>
       isHost ? emitHostMutation('music:queue-remove', { queueItemId }) : false,
@@ -546,6 +588,7 @@ export function useMusicSync({
 
   return {
     state: store,
+    qualityFacts,
     play,
     seek,
     next,
@@ -553,6 +596,7 @@ export function useMusicSync({
     select,
     setMode,
     addFixture,
+    addMusic,
     remove,
     reorder,
     requestControl,

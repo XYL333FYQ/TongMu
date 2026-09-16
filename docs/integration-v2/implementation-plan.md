@@ -507,13 +507,36 @@ See `ncm-provider.md` for the operational boundary and dependency provenance.
 
 ## Phase 5B-2B — NCM catalog and remaining product surface
 
-**Status: DEFERRED.**
+**Status: COMPLETE within the bounded catalog/product boundary.**
 
-Search, playlists, albums, artists, FM, cloud music, lyrics, comments, likes,
-catalog hydration, richer product browsing, and related UI require a separate
-product/provenance/API-terms review. They must consume the 5B-2A provider
-boundary and must not add raw credentials, arbitrary upstream forwarding, or
-silent quality fallback.
+The phase consumes the 5B-2A provider boundary and adds explicit allowlisted
+NCM client methods, `NcmCatalogService` DTO normalization, bounded search and
+detail hydration, current-user private library/FM/cloud reads and mutations,
+lyrics/comments, and the existing Together Listen catalog UI. It does not add
+raw credentials, arbitrary upstream forwarding, a second player, cloud upload,
+comment posting, or silent quality fallback.
+
+**Implemented files and contracts**
+
+- `backend/src/modules/music/ncm/ncm-catalog.service.ts` and
+  `ncm-catalog.routes.ts`: bounded provider-neutral catalog DTOs, pagination,
+  response validation, owner-only private calls, lyric parsing, comments,
+  stable refs, and typed errors.
+- `backend/src/modules/music/ncm/ncm-client.ts`: fixed catalog allowlist,
+  request limits, AbortSignal propagation, and private upstream-cache
+  partitioning.
+- `frontend/src/modules/music/NcmCatalogPanel.tsx`, catalog store/types/domain,
+  and the existing `useMusicSync`/Together Listen integration: debounce/cancel,
+  detail navigation, queue insertion, explicit quality chooser/facts,
+  lyrics/comments text rendering, logout/account-generation clearing, and
+  narrow-layout controls.
+- `backend/test/phase5b2b-ncm-catalog.test.js`,
+  `frontend/test/ncm-catalog.test.cjs`, and
+  `e2e/phase5b2b-ncm.spec.ts`: focused bounds/security/domain coverage and a
+  deterministic Chromium product flow.
+
+See `ncm-product-surface.md` for the route, privacy, quality, and deferred
+feature contract.
 
 ## Phase 6 — historical migrations, packaging, CI and measured extensions
 

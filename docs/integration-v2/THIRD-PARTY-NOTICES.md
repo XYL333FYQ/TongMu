@@ -36,18 +36,21 @@ SOFTWARE.
 
 ## @neteasecloudmusicapienhanced/api 4.40.1
 
-Phase 5B-2A uses `@neteasecloudmusicapienhanced/api` version `4.40.1` as a
-server-only, lazily started NCM API implementation. TongMu calls it through
-the allowlisted `NcmApiClient`; the package is never imported by the browser
-and its routes are not exposed as an arbitrary forwarding surface.
+Phase 5B-2A and 5B-2B use `@neteasecloudmusicapienhanced/api` version `4.40.1`
+as a server-only, lazily started NCM API implementation. TongMu calls it
+through the explicit allowlisted `NcmApiClient` catalog/provider methods; the
+package is never imported by the browser and its routes are not exposed as an
+arbitrary forwarding surface. The implementation does not copy the reference
+project's NCM pages, assets, or broad forwarding route.
 
 Source and provenance:
 
 - Package: [`@neteasecloudmusicapienhanced/api@4.40.1`](https://www.npmjs.com/package/@neteasecloudmusicapienhanced/api)
 - Repository: [`NeteaseCloudMusicApiEnhanced/api-enhanced`](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced)
 - Package license: MIT
-- Purpose in TongMu: QR/login status/logout and exact NCM song URL resolution
-  behind the server credential and room-capability boundary
+- Purpose in TongMu: QR/login status/logout, exact NCM song URL resolution, and
+  bounded catalog/library/lyrics/comment reads plus supported likes behind the
+  server credential, current-user, and room-capability boundaries
 - Local changes: no package source was copied into TongMu; the dependency is
   pinned in `backend/package.json` and the root lockfile.
 
