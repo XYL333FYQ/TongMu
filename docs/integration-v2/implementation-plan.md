@@ -443,16 +443,77 @@ pass, and the full Chromium suite passes with 24 pass / 1 intentional skip / 0
 failures. The repository-wide frontend ESLint baseline remains separately
 blocked by pre-existing findings and was not weakened.
 
-## Phase 5B-2 — NCM provider and product surface
+## Phase 5B-2A — NCM provider core and room-authorized playback
 
-**Status: DEFERRED / not part of Phase 5B-1.**
+**Status: COMPLETE for the provider/login/stream boundary.**
 
-NCM login, cookie/session handling, search, playlists, albums, artists, FM,
-cloud music, lyrics, comments, likes, upstream music APIs, and provider
-specific quality fallback require a separate security, provenance, API-terms,
-and product review. No NCM code, credentials, dependency, route, API, or UI
-is added by Phase 5B-1. Any future NCM work must keep secrets server-side and
-must not copy ZViewer's silent quality downgrade behavior.
+Phase 5B-2A adds the narrow NCM technical provider boundary without turning
+MusicSyncDomain into an NCM catalog. The implementation is provider-neutral at
+the queue/snapshot layer and uses only bounded stable references such as
+`music://ncm/track/<id>`.
+
+**Implemented files/modules**
+
+- `backend/src/entities/NcmCredential.ts`
+- `backend/src/modules/music/ncm/*`
+- `backend/src/modules/music/music-provider.ts`
+- `backend/src/modules/music/music.routes.ts`
+- `backend/src/services/proxy/http-proxy.ts` auth-failure re-resolution hook
+- `frontend/src/modules/media/roomMediaGrant.ts`
+- `frontend/src/modules/music/{source-resolver,useMusicSync,TogetherListenPanel}.tsx`
+- deterministic NCM fixture support in `e2e/media-fixture-server.js` and
+  `scripts/start-e2e.js`
+
+**Contract decisions**
+
+- NCM credentials are encrypted with the existing SecretVault AES-256-GCM
+  boundary. Only the server-side provider call can decrypt them; status,
+  queue, room snapshot, socket, frontend storage, logs, and public DTOs never
+  contain raw cookies or authorization headers.
+- QR login is user-bound and bounded. Cross-user polling is rejected, a newer
+  login supersedes the previous session, expiry/failed states are explicit,
+  and logout invalidates future QR and playback use.
+- `NcmClient` centralizes the allowlisted upstream calls, Cookie/CSRF injection,
+  timeout, abort, response bound, JSON validation, redaction, retry, and header
+  policy. NCM routes do not forward arbitrary upstream paths.
+- Resolution returns a private source plus a public descriptor. The public
+  descriptor has only safe track/codec/duration/expiry and quality facts; the
+  raw signed URL remains server-private.
+- Credentialed playback uses an opaque room capability and gateway. The
+  capability binds room/member/actor, owner credential version, queue item,
+  source reference, music generation, and requested quality. Every stream
+  re-checks active membership and authoritative current track state.
+- Quality is exact and explicit. The provider returns
+  `requestedQuality`, `actualQuality`, `availableMaximum`, and
+  `availableQualities`; an unavailable request returns a typed error. The
+  legacy `QUALITY_CHAIN` silent lower-quality fallback is rejected, and the
+  browser reports codec incompatibility without lowering quality.
+- The gateway retains shared 200/206/416/HEAD and exact open/suffix Range
+  semantics. An upstream 401/403 gets one same-reference, same-quality
+  re-resolution. No new audio cache is added.
+
+**Required verification and limits**
+
+- Backend tests cover credential ciphertext/redaction, QR ownership, exact
+  quality, codec facts, capability actor/generation binding, owner logout,
+  member leave, track switch, auth re-resolution, and exact Range bytes.
+- Chromium covers QR/login state, the NCM queue reference, opaque playback,
+  descriptor redaction, viewer playback, and a viewer Range request.
+- Real NCM account/cookie validation is explicitly **NOT RUN** without a
+  supplied account. The deterministic fixture does not prove upstream account
+  availability, regional behavior, every quality tier, or API authorization.
+
+See `ncm-provider.md` for the operational boundary and dependency provenance.
+
+## Phase 5B-2B — NCM catalog and remaining product surface
+
+**Status: DEFERRED.**
+
+Search, playlists, albums, artists, FM, cloud music, lyrics, comments, likes,
+catalog hydration, richer product browsing, and related UI require a separate
+product/provenance/API-terms review. They must consume the 5B-2A provider
+boundary and must not add raw credentials, arbitrary upstream forwarding, or
+silent quality fallback.
 
 ## Phase 6 — historical migrations, packaging, CI and measured extensions
 

@@ -101,6 +101,15 @@ export interface ProxyHttpOptions {
   errorMessage: string;
   /** Optional cache context. The caller must have authorized the media handle. */
   sliceCache?: SliceCacheRequestContext;
+  /**
+   * Optional provider-owned re-resolution after an upstream auth/expiry
+   * response. The callback must return the same logical resource and may not
+   * change the requested representation.
+   */
+  onUpstreamAuthFailure?: () => Promise<{
+    url: string;
+    headers?: UpstreamHeaderOptions;
+  } | null>;
 }
 
 /** 需要透传给客户端的上游响应头（白名单） */
@@ -212,7 +221,7 @@ export async function proxyHttpUpstream(
     logTag,
     errorMessage,
   } = opts;
-  const h = opts.headers ?? {};
+  let h = opts.headers ?? {};
 
   // 流量追踪：记录传输字节数与耗时
   const startTime = Date.now();
@@ -248,7 +257,7 @@ export async function proxyHttpUpstream(
       });
       return;
     }
-    const upstreamHeaders = buildUpstreamHeaders(req, h);
+    let upstreamHeaders = buildUpstreamHeaders(req, h);
     const startUpstreamFetch = () =>
       fetchWithProxyPolicy(requestUrl, {
         method: req.method,
@@ -271,7 +280,7 @@ export async function proxyHttpUpstream(
 
     // 转发原始 HTTP 方法：HEAD 请求转发为 HEAD（避免上游下载整个视频体），
     // GET 请求转发为 GET（含 Range 头时上游返回 206 部分内容）。
-    const upstream = await startUpstreamFetch().catch(async (fetchErr: unknown) => {
+    let upstream = await startUpstreamFetch().catch(async (fetchErr: unknown) => {
       const isAbort =
         fetchErr instanceof Error && fetchErr.name === 'AbortError';
       const isTimeoutAbort = isAbort && abortedByTimeout;
@@ -301,6 +310,20 @@ export async function proxyHttpUpstream(
     });
     // 响应头已到达，取消连接阶段超时；body 传输阶段由客户端断连检测兜底
     clearTimeout(timeout);
+
+    // A signed provider URL may expire between resolution and the first byte.
+    // Give the provider one chance to resolve the same stable reference again;
+    // Range validation below still applies to the retried response.
+    if (!upstream.ok && (upstream.status === 401 || upstream.status === 403) && opts.onUpstreamAuthFailure) {
+      await upstream.body?.cancel();
+      const retry = await opts.onUpstreamAuthFailure();
+      if (retry) {
+        requestUrl = retry.url;
+        if (retry.headers) h = retry.headers;
+        upstreamHeaders = buildUpstreamHeaders(req, h);
+        upstream = await startUpstreamFetch();
+      }
+    }
 
     if (cors === 'wildcard') {
       setWildcardCors(res);

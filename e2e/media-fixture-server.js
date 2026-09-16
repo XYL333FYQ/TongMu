@@ -8,6 +8,35 @@ const iv = Buffer.alloc(16);
 const MEDIA_SERVER_TOKEN = 'fixture-api-key';
 const requests = [];
 let assets;
+const ncmQrSessions = new Map();
+
+function createNcmWav() {
+  const sampleRate = 44100;
+  const seconds = 1;
+  const samples = sampleRate * seconds;
+  const dataSize = samples * 2;
+  const body = Buffer.alloc(44 + dataSize);
+  body.write('RIFF', 0);
+  body.writeUInt32LE(36 + dataSize, 4);
+  body.write('WAVE', 8);
+  body.write('fmt ', 12);
+  body.writeUInt32LE(16, 16);
+  body.writeUInt16LE(1, 20);
+  body.writeUInt16LE(1, 22);
+  body.writeUInt32LE(sampleRate, 24);
+  body.writeUInt32LE(sampleRate * 2, 28);
+  body.writeUInt16LE(2, 32);
+  body.writeUInt16LE(16, 34);
+  body.write('data', 36);
+  body.writeUInt32LE(dataSize, 40);
+  for (let index = 0; index < samples; index += 1) {
+    const sample = Math.sin((2 * Math.PI * 330 * index) / sampleRate) * 0.12;
+    body.writeInt16LE(Math.round(sample * 0x7fff), 44 + index * 2);
+  }
+  return body;
+}
+
+const ncmAudio = createNcmWav();
 
 function isIsoBmff(buffer) {
   return buffer.length >= 8 && buffer.toString('ascii', 4, 8) === 'ftyp';
@@ -161,6 +190,81 @@ function sendBuffer(req, res, body, contentType) {
 
 function sendText(req, res, body, contentType) {
   sendBuffer(req, res, Buffer.from(body), contentType);
+}
+
+function sendJson(res, body, headers = {}) {
+  Object.entries(headers).forEach(([name, value]) => res.setHeader(name, value));
+  res.setHeader('Content-Type', 'application/json');
+  res.end(JSON.stringify(body));
+}
+
+function handleNcmRequest(req, res, requestUrl) {
+  if (!requestUrl.pathname.startsWith('/ncm-fixture')) return false;
+  const endpoint = requestUrl.pathname.slice('/ncm-fixture'.length) || '/';
+  if (endpoint === '/login/qr/key' && req.method === 'GET') {
+    const qrKey = `fixture-qr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    ncmQrSessions.set(qrKey, { polls: 0 });
+    return sendJson(res, { code: 200, data: { unikey: qrKey } }), true;
+  }
+  if (endpoint === '/login/qr/create' && req.method === 'GET') {
+    const qrKey = requestUrl.searchParams.get('key') || '';
+    if (!ncmQrSessions.has(qrKey)) return sendJson(res, { code: 800, data: {} }), true;
+    const qrurl = `ncm://fixture/${encodeURIComponent(qrKey)}`;
+    // 1x1 PNG is enough for the UI fixture; the encoded QR URL remains in the
+    // server-only session and is never a credential.
+    const qrimg = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+    return sendJson(res, { code: 200, data: { qrurl, qrimg } }), true;
+  }
+  if (endpoint === '/login/qr/check' && req.method === 'GET') {
+    const qrKey = requestUrl.searchParams.get('key') || '';
+    const session = ncmQrSessions.get(qrKey);
+    if (!session) return sendJson(res, { code: 800, data: {} }), true;
+    session.polls += 1;
+    if (session.polls === 1) return sendJson(res, { code: 801, message: '等待扫码' }), true;
+    return sendJson(res, {
+      code: 803,
+      message: '授权成功',
+      data: { profile: { userId: 'fixture-ncm-user', nickname: 'NCM Fixture' } },
+    }, {
+      'Set-Cookie': ['MUSIC_U=fixture-secret; Path=/', 'NCM_CSRF=fixture-csrf; Path=/'],
+    }), true;
+  }
+  if (endpoint === '/login/status' && req.method === 'GET') {
+    const cookie = String(req.headers.cookie || '');
+    return sendJson(res, cookie.includes('MUSIC_U=fixture-secret')
+      ? { code: 200, data: { profile: { userId: 'fixture-ncm-user', nickname: 'NCM Fixture' } } }
+      : { code: 301, data: {} }), true;
+  }
+  if (endpoint === '/logout' && req.method === 'GET') return sendJson(res, { code: 200 }), true;
+  if (endpoint === '/song/url/v1' && req.method === 'GET') {
+    const cookie = String(req.headers.cookie || '');
+    if (!cookie.includes('MUSIC_U=fixture-secret')) return sendJson(res, { code: 301, data: [] }), true;
+    const id = requestUrl.searchParams.get('id') || '';
+    const level = requestUrl.searchParams.get('level') || 'exhigh';
+    const available = id === '9002' ? ['lossless'] : ['standard', 'higher', 'exhigh'];
+    const actual = id === '9002' ? 'lossless' : 'exhigh';
+    return sendJson(res, {
+      code: 200,
+      data: [{
+        id,
+        name: id === '9002' ? 'Lossless Fixture' : 'Gateway Fixture',
+        artist: 'NCM Fixture',
+        album: 'Phase 5B-2A',
+        dt: 1000,
+        url: id === 'missing' ? null : `http://127.0.0.1:${PORT}/ncm-fixture/ncm-audio/${id}`,
+        level: actual,
+        type: 'wav',
+        availableQualities: available,
+        requestedLevel: level,
+      }],
+    }), true;
+  }
+  if (endpoint.startsWith('/ncm-audio/') && (req.method === 'GET' || req.method === 'HEAD')) {
+    return sendBuffer(req, res, ncmAudio, 'audio/wav'), true;
+  }
+  res.writeHead(404);
+  res.end('ncm fixture route not found');
+  return true;
 }
 
 function mediaServerPlaybackInfo() {
@@ -361,9 +465,10 @@ const server = http.createServer(async (req, res) => {
     } : { configured: false }));
     return;
   }
-  if (!assets) { res.writeHead(503); res.end('fixture not configured'); return; }
   const requestUrl = new URL(req.url, `http://127.0.0.1:${PORT}`);
   const path = requestUrl.pathname;
+  if (handleNcmRequest(req, res, requestUrl)) return;
+  if (!assets) { res.writeHead(503); res.end('fixture not configured'); return; }
   requests.push({
     path,
     method: req.method,

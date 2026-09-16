@@ -4,7 +4,7 @@
 
 This file is the persistent checkpoint for the TongMu V2 integration program. Phase 0 is an audit and design phase only: no product code, dependency, database, configuration, CI, or reference source was changed.
 
-Current state: **Phase 2, Phase 3A, Phase 3B, Phase 4A, Phase 4B Voice, Phase 5A RealtimeSyncCore/Permissions, and Phase 5B-1 MusicSyncDomain/Together Listen are complete within their approved boundaries. The Phase 5B-1 final acceptance gate is closed after the Voice fake-media Chromium regression was diagnosed and minimally fixed; Phase 5B-2 NCM and the Phase 6 migration/release gate remain open.**
+Current state: **Phase 2, Phase 3A, Phase 3B, Phase 4A, Phase 4B Voice, Phase 5A RealtimeSyncCore/Permissions, Phase 5B-1 MusicSyncDomain/Together Listen, and Phase 5B-2A NCM provider core are complete within their approved boundaries. The Phase 5B-1 final acceptance gate is closed after the Voice fake-media Chromium regression was diagnosed and minimally fixed; Phase 5B-2B catalog/product work and the Phase 6 migration/release gate remain open.**
 
 Phase 2 has a working core checkpoint: the versioned client profile, server
 viability filter, client-owned planner path, provider contract/registry, and
@@ -79,7 +79,7 @@ to do that work safely.
 1. Phase 3A typed HLS/DASH resource mapping and its Chromium browser exit gate are complete; the fixture's Inspector/client-blocked diagnostics are intentional route aborts used to verify fallback.
 2. Live publishing/ingest lifecycle (RTMP/WHIP/WHEP) remains outside public HLS/HTTP-FLV source convergence and is explicitly deferred.
 3. Phase 3A's typed DASH mapper covers `SegmentBase`, representation indexes, bitstream-switching resources, `Location`, xlink, timing URLs, and bounded recursion in unit/backend tests; nested fixture MPD playback is covered by the completed Chromium suite.
-4. Realtime video and music synchronization now share the documented `RealtimeSyncCore` primitives while keeping independent clocks and state. Phase 5B-1 MusicSyncDomain, queue state, and Together Listen are complete; its final acceptance gate is closed. The historical Voice fake-media Chromium blocker and its auth-refresh race fix are recorded in the Phase 5B-1 closure below. NCM remains Phase 5B-2.
+4. Realtime video and music synchronization now share the documented `RealtimeSyncCore` primitives while keeping independent clocks and state. Phase 5B-1 MusicSyncDomain, queue state, and Together Listen are complete; its final acceptance gate is closed. The historical Voice fake-media Chromium blocker and its auth-refresh race fix are recorded in the Phase 5B-1 closure below. Phase 5B-2A now supplies the NCM provider/login/stream boundary; catalog and product UI remain Phase 5B-2B.
 5. Voice lifecycle, identity, reconnect replacement, decoder ownership, ghost cleanup, and voice-local moderation remain Phase 4B behavior; Phase 5A now supplies the shared permission decision boundary.
 6. Phase 4A player/subtitle lifetime hardening and Phase 4B Voice are complete within their scoped boundaries.
 7. Release artifacts still retain historical ZViewer-era names for compatibility; full TongMu renaming, checksum/signature verification, staged extraction, and rollback remain Phase 6 work.
@@ -107,7 +107,8 @@ to do that work safely.
 - [x] Phase 4B — Voice lifecycle / identity / moderation.
 - [x] Phase 5A — `RealtimeSyncCore` / VideoSyncDomain / Room Permissions.
 - [x] Phase 5B-1 — `MusicSyncDomain` / persistent queue / Together Listen (implementation and final regression gate complete within the approved boundary).
-- [ ] Phase 5B-2 — NCM provider and product surface.
+- [x] Phase 5B-2A — NCM provider core / credential boundary / QR login / explicit-quality room playback.
+- [ ] Phase 5B-2B — NCM catalog and remaining product surface.
 - [ ] Phase 6 — Historical migrations / Packaging / CI / Observability / release gate.
 
 See `implementation-plan.md` for dependencies, file targets, tests, exit criteria, and risks.
@@ -422,8 +423,9 @@ remains the pre-existing repository baseline failure and was not relaxed or
 auto-fixed. Phase 3 cache checks remain the previously recorded PASS baseline.
 
 The detailed contracts are in `realtime-sync-core.md`, `room-permissions.md`,
-`music-sync-domain.md`, and `together-listen.md`. NCM and Phase 6
-migration/release work remain intentionally open.
+`music-sync-domain.md`, and `together-listen.md`. The Phase 5B-2A NCM contract
+is in `ncm-provider.md`; catalog/product and Phase 6 migration/release work
+remain intentionally open.
 
 ### Phase 5B-1 final status
 
@@ -484,6 +486,53 @@ resources. A build alone is not treated as behavioral proof.
 | Focused Voice regression — run 3/3 | `npx playwright test e2e/voice-lifecycle.spec.ts --reporter=line --workers=1` | PASS | Independent serialized run, 1/1 |
 | Diff whitespace | `git diff --check` | PASS | Only Git's existing LF/CRLF normalization warnings were reported |
 | Reference/dependency boundary | `git diff --name-only -- references`; manifest diff | PASS | No reference files changed; no package or lockfile drift |
+
+### Phase 5B-2A final status
+
+**COMPLETE for the provider/login/stream boundary.** NCM now has a stable
+`music://ncm/track/<id>` reference, a registered credentialed provider, a
+SecretVault AES-256-GCM credential envelope, a user-bound bounded QR session
+state machine, and a server-only `NcmClient` wrapper. Public descriptors carry
+track, codec, duration, expiry, and explicit quality facts only; upstream URLs,
+Cookies, and authorization headers stay in the private provider path.
+
+Room playback is issued as an opaque AES-GCM capability bound to the room,
+member/socket, actor, owner credential version, queue item, source reference,
+and `musicGeneration`. The gateway re-checks active membership and current
+MusicSyncDomain state, re-resolves one expired/unauthorized upstream URL with
+the same requested quality, and reuses the shared exact Range behavior. Owner
+logout, member leave, credential replacement, and track changes revoke future
+access. Logout keeps a credential-free version tombstone so the revocation
+remains effective across process restarts. The browser receives no raw NCM URL
+or Cookie.
+
+Quality is explicit end to end. `requestedQuality`, `actualQuality`,
+`availableMaximum`, and `availableQualities` are returned as facts; an
+unavailable request returns `NCM_QUALITY_UNAVAILABLE`. Silent lower-quality
+fallback is **NO**: the legacy `QUALITY_CHAIN` behavior remains rejected, and
+browser codec incompatibility is reported explicitly.
+
+The implementation deliberately stops before NCM catalog/search and the other
+5B-2B product surfaces. Real NCM account/cookie validation was **NOT RUN**;
+the local fixture is deterministic evidence for the server and Chromium
+contracts, not proof of upstream account availability or API authorization.
+
+### Phase 5B-2A verification
+
+| Check | Command | Result | Evidence / limitation |
+|---|---|---:|---|
+| Backend typecheck | `npm run lint -w backend` | PASS | TypeScript no-emit check passes with the NCM provider, credential, and gateway modules |
+| Backend tests | `npm test -w backend` | PASS with 1 skip | 121 passing; 1 Windows symlink-escape case skipped because this environment does not permit creating a symlink |
+| NCM focused backend tests | `node --test backend/test/phase5b2a-ncm.test.js` | PASS | 4/4, including ciphertext/redaction, QR ownership/replacement race, exact quality/codec, capability/gateway/Range/revocation |
+| Frontend tests | `npm test -w frontend` | PASS | 23/23 |
+| Frontend production build | `npm run build -w frontend` | PASS | Existing MediaBunny dynamic-import and large-chunk warnings remain |
+| Focused NCM frontend ESLint | `npx eslint src/modules/media/roomMediaGrant.ts src/modules/music/source-resolver.ts src/modules/music/useMusicSync.ts src/modules/music/TogetherListenPanel.tsx --ext ts,tsx --report-unused-disable-directives --max-warnings 0` (from `frontend`) | PASS | No findings in the changed NCM/music UI paths |
+| Full frontend ESLint | `npm run lint -w frontend` | BASELINE BLOCKED | Current repository/vendor run reports 6,698 problems, including missing rule definitions in `frontend/vendor/mediabunny`; no lint rule was weakened |
+| NCM + existing music Chromium | `npx playwright test e2e/phase5b2a-ncm.spec.ts e2e/phase5b-music.spec.ts --reporter=line --workers=1` | PASS | 2/2; QR/login, opaque gateway, viewer Range, and existing Together Listen flow |
+| Full Chromium E2E | `npx playwright test --reporter=line --workers=1` | PASS with 1 skip | 25 passed, 1 existing Voice environment skip, 0 failed |
+| Diff whitespace | `git diff --check` | PASS | Only Git's existing LF/CRLF normalization warnings were reported |
+| Reference boundary | `git diff --name-only -- references` | PASS | No `references/` files changed |
+| Real NCM account | N/A | NOT RUN | No real NCM account or credential was supplied; local fixture evidence does not claim upstream availability or authorization |
 
 ### Phase 2 closure audit
 

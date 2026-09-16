@@ -79,7 +79,7 @@ import { CliHandler } from './modules/cli';
 import { nmsService, StreamPushHandler, streamPushRouter } from './modules/stream-push';
 import { SignalingHandler, ViewerEventsHandler } from './modules/webrtc-signaling';
 import { VoiceChatHandler } from './modules/voice-chat';
-import { createMusicFixtureRouter, MusicSyncHandler, musicSyncService } from './modules/music';
+import { createMusicRouter, MusicSyncHandler, musicSyncService, stopNcmApiService } from './modules/music';
 import { ensureUploadsRoot } from './services/server-files/pathResolver';
 import {
   AVATARS_DIR,
@@ -316,10 +316,9 @@ async function bootstrap() {
   app.use('/api/system/update', updaterRoutes);
   app.use('/api/stats', statsRoutes);
   app.use('/api/stream-push', streamPushRouter);
-  // Phase 5B-1 ships only deterministic local audio fixtures. Provider
-  // resolution remains behind the MusicProvider boundary and is not mixed
-  // into the video/media routes.
-  app.use('/api/music', createMusicFixtureRouter());
+  // Together Listen provider routes remain behind the MusicProvider boundary
+  // and are not mixed into the video/media routes.
+  app.use('/api/music', createMusicRouter());
 
   app.get('/health', (_req, res) => {
     res.json({
@@ -571,6 +570,11 @@ async function bootstrap() {
       stopNms();
     } catch (err) {
       console.error('[NMS] graceful shutdown error:', err);
+    }
+    try {
+      stopNcmApiService();
+    } catch (err) {
+      console.error('[NCM] graceful shutdown error:', err);
     }
     process.exit(0);
   };

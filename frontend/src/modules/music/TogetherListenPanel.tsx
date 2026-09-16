@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   ChevronDown,
   ChevronUp,
@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { Input } from '@/components/ui/Input'
 import { cn } from '@/lib/utils'
+import { apiGet, apiPost } from '@/lib/api'
 import { formatMusicTime, modeLabel } from './domain'
 import { useMusicSync } from './useMusicSync'
 import type { MusicPlayMode } from './types'
@@ -23,6 +24,31 @@ import type { MusicPlayMode } from './types'
 interface TogetherListenPanelProps {
   roomId: string
   isHost: boolean
+}
+
+interface NcmStatusResponse {
+  success?: boolean
+  loggedIn?: boolean
+  displayName?: string | null
+  status?: 'none' | 'logged-in' | 'invalid'
+}
+
+interface NcmQrResponse {
+  success?: boolean
+  loggedIn?: boolean
+  displayName?: string | null
+  status?:
+    | 'idle'
+    | 'qr-created'
+    | 'waiting'
+    | 'scanned'
+    | 'authorized'
+    | 'expired'
+    | 'failed'
+    | 'logged-in'
+  sessionId?: string
+  qrImageDataUrl?: string
+  expiresAt?: number
 }
 
 const modeOptions: Array<{ value: MusicPlayMode; label: string }> = [
@@ -36,7 +62,7 @@ function clampProgress(value: number, duration: number): number {
   return Math.min(Math.max(0, value), Math.max(1, duration))
 }
 
-/** Basic fixture-backed Together Listen control card. */
+/** Together Listen controls with the narrow NCM login surface. */
 export function TogetherListenPanel({
   roomId,
   isHost,
@@ -45,9 +71,65 @@ export function TogetherListenPanel({
   const [sourceRef, setSourceRef] = useState('music://fixture/blue-hour')
   const [title, setTitle] = useState('Blue Hour')
   const [artist, setArtist] = useState('本地夹具')
+  const [ncmStatus, setNcmStatus] = useState<NcmStatusResponse | null>(null)
+  const [ncmQr, setNcmQr] = useState<NcmQrResponse | null>(null)
+  const [ncmBusy, setNcmBusy] = useState(false)
   const sync = useMusicSync({ roomId, isHost, audioRef })
   const { state } = sync
   const duration = state.currentItem ? state.currentItem.durationMs / 1000 : 0
+
+  useEffect(() => {
+    let cancelled = false
+    void apiGet<NcmStatusResponse>('/api/music/ncm/status').then((result) => {
+      if (!cancelled && result.ok && result.data) setNcmStatus(result.data)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [roomId])
+
+  useEffect(() => {
+    const sessionId = ncmQr?.sessionId
+    if (!sessionId || ncmQr?.status === 'logged-in') return
+    const poll = async () => {
+      const result = await apiGet<NcmQrResponse>(
+        `/api/music/ncm/login/qr/${encodeURIComponent(sessionId)}`
+      )
+      if (!result.ok || !result.data) return
+      setNcmQr(result.data)
+      if (result.data.status === 'logged-in') {
+        const current = await apiGet<NcmStatusResponse>('/api/music/ncm/status')
+        if (current.ok && current.data) setNcmStatus(current.data)
+      }
+    }
+    const timer = window.setInterval(() => {
+      void poll()
+    }, 1500)
+    return () => window.clearInterval(timer)
+  }, [ncmQr?.sessionId, ncmQr?.status])
+
+  const startNcmLogin = async () => {
+    setNcmBusy(true)
+    try {
+      const result = await apiGet<NcmQrResponse>('/api/music/ncm/login/qr')
+      if (result.ok && result.data) setNcmQr(result.data)
+    } finally {
+      setNcmBusy(false)
+    }
+  }
+
+  const logoutNcm = async () => {
+    setNcmBusy(true)
+    try {
+      const result = await apiPost<NcmStatusResponse>('/api/music/ncm/logout')
+      if (result.ok) {
+        setNcmQr(null)
+        setNcmStatus({ success: true, loggedIn: false, status: 'none' })
+      }
+    } finally {
+      setNcmBusy(false)
+    }
+  }
 
   const handleAdd = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -118,6 +200,46 @@ export function TogetherListenPanel({
               : '未连接'}
         </span>
       </div>
+
+      <div
+        data-testid="ncm-status"
+        className="mt-2 flex min-w-0 items-center justify-between gap-2 rounded-lg bg-[var(--md-sys-color-surface-container-low)] px-2 py-1.5 text-[11px] text-[var(--md-sys-color-on-surface-variant)]"
+      >
+        <span className="truncate">
+          网易云：
+          {ncmStatus?.loggedIn
+            ? `已登录${ncmStatus.displayName ? ` · ${ncmStatus.displayName}` : ''}`
+            : '未登录'}
+        </span>
+        {isHost && (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disableAnimation
+            disabled={ncmBusy}
+            onClick={() =>
+              void (ncmStatus?.loggedIn ? logoutNcm() : startNcmLogin())
+            }
+          >
+            {ncmStatus?.loggedIn ? '退出' : '扫码登录'}
+          </Button>
+        )}
+      </div>
+      {isHost && ncmQr?.qrImageDataUrl && ncmQr.status !== 'logged-in' && (
+        <div className="mt-2 flex items-center gap-2 rounded-lg border border-[var(--md-sys-color-outline-variant)] p-2">
+          <img
+            src={ncmQr.qrImageDataUrl}
+            alt="网易云登录二维码"
+            className="h-20 w-20 rounded bg-white p-1"
+          />
+          <span className="text-[11px] text-[var(--md-sys-color-on-surface-variant)]">
+            {ncmQr.status === 'scanned'
+              ? '已扫码，请确认登录'
+              : '请使用网易云手机客户端扫码'}
+          </span>
+        </div>
+      )}
 
       <div className="mt-3 min-w-0 rounded-xl bg-[var(--md-sys-color-surface-container)] p-3">
         <div className="min-w-0">
@@ -255,7 +377,7 @@ export function TogetherListenPanel({
         <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-0.5">
           {state.queue.length === 0 ? (
             <p className="py-2 text-xs text-[var(--md-sys-color-on-surface-variant)]">
-              队列为空，仅提供本地夹具用于验证同步。
+              队列为空，可添加本地夹具或 NCM stable ref。
             </p>
           ) : (
             state.queue.map((item, index) => (
@@ -323,7 +445,7 @@ export function TogetherListenPanel({
         >
           <div className="min-w-0 space-y-1.5">
             <Input
-              aria-label="本地音乐 sourceRef"
+              aria-label="音乐 sourceRef"
               value={sourceRef}
               onChange={(event) => setSourceRef(event.target.value)}
               size="sm"
@@ -353,7 +475,7 @@ export function TogetherListenPanel({
             disableAnimation
             icon={<Plus className="h-4 w-4" />}
             aria-label="添加歌曲"
-            title="添加本地夹具"
+            title="添加歌曲"
           >
             添加
           </Button>

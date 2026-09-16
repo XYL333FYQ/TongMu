@@ -55,6 +55,14 @@ export interface MusicTrackAckRecord extends MusicTrackAckPayload {
   expiresAt: number;
 }
 
+export interface MusicAuthoritativeTrack {
+  queueItemId: number | null;
+  sourceRef: string | null;
+  musicGeneration: number;
+  version: number;
+  currentItem: MusicQueueItemPayload | null;
+}
+
 export class MusicSyncError extends Error {
   constructor(
     public readonly code: string,
@@ -742,6 +750,24 @@ export class MusicSyncService {
     return this.core.withRoomLock(roomId, async () => {
       const runtime = await this.getRuntime(roomId);
       return this.snapshotFromRuntime(roomId, runtime, actor);
+    });
+  }
+
+  /**
+   * Read only the server-authoritative current track for HTTP capability
+   * checks. Callers cannot select a track by supplying an arbitrary ID.
+   */
+  async getAuthoritativeTrack(roomId: string): Promise<MusicAuthoritativeTrack> {
+    return this.core.withRoomLock(roomId, async () => {
+      const runtime = await this.getRuntime(roomId);
+      const currentItem = runtime.queue.find((item) => item.queueItemId === runtime.currentQueueItemId) ?? null;
+      return {
+        queueItemId: runtime.currentQueueItemId,
+        sourceRef: runtime.state.currentSourceRef,
+        musicGeneration: runtime.state.musicGeneration,
+        version: runtime.state.version,
+        currentItem: currentItem ? { ...currentItem, metadata: { ...currentItem.metadata } } : null,
+      };
     });
   }
 

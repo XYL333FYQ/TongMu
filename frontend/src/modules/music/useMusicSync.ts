@@ -5,7 +5,7 @@ import { MusicAudioLifecycle } from './audio-lifecycle'
 import { expectedMusicPosition, shouldCorrectMusicDrift } from './domain'
 import { isMusicSnapshot, shouldApplyMusicEvent } from './realtime-version'
 import { useMusicStore } from './store'
-import { resolveMusicSource } from './source-resolver'
+import { isMusicQuality, resolveMusicSourceDetailed } from './source-resolver'
 import type {
   MusicControlRequestNotice,
   MusicControlResponse,
@@ -52,6 +52,7 @@ export function useMusicSync({
   const lifecycleRef = useRef<MusicAudioLifecycle | null>(null)
   const attachedSourceRef = useRef<string | null>(null)
   const attachedGenerationRef = useRef<number | null>(null)
+  const resolveEpochRef = useRef(0)
   const snapshotInitializedRef = useRef(false)
   const ackedTrackRef = useRef<string | null>(null)
 
@@ -94,6 +95,7 @@ export function useMusicSync({
     lifecycleRef.current = null
     attachedSourceRef.current = null
     attachedGenerationRef.current = null
+    resolveEpochRef.current += 1
     snapshotInitializedRef.current = false
   }, [roomId])
 
@@ -227,57 +229,87 @@ export function useMusicSync({
     const state = useMusicStore.getState()
     const sourceRef = state.currentSourceRef
     const generation = state.musicGeneration
+    const resolveEpoch = ++resolveEpochRef.current
+    let cancelled = false
     if (!sourceRef) {
       lifecycle.unload()
       attachedSourceRef.current = null
       attachedGenerationRef.current = null
-      return
+      return () => {
+        cancelled = true
+      }
     }
     if (
       attachedSourceRef.current === sourceRef &&
       attachedGenerationRef.current === generation
     )
       return
-    const sourceUrl = resolveMusicSource(sourceRef)
-    if (!sourceUrl) {
-      lifecycle.unload()
-      attachedSourceRef.current = null
-      attachedGenerationRef.current = null
-      setError('当前音乐来源无法在本阶段解析')
-      return
-    }
-    attachedSourceRef.current = sourceRef
-    attachedGenerationRef.current = generation
-    ackedTrackRef.current = null
-    lifecycle.attach(sourceUrl, generation, {
-      onReady: () => {
-        const current = useMusicStore.getState()
-        if (
-          current.musicGeneration !== generation ||
-          current.currentSourceRef !== sourceRef
+    lifecycle.unload()
+    attachedSourceRef.current = null
+    attachedGenerationRef.current = null
+    const requestedQuality = isMusicQuality(
+      state.currentItem?.metadata?.requestedQuality
+    )
+      ? state.currentItem?.metadata?.requestedQuality
+      : undefined
+    void resolveMusicSourceDetailed(sourceRef, {
+      roomId,
+      queueItemId: state.currentQueueItemId || 0,
+      musicGeneration: generation,
+      requestedQuality,
+    }).then((resolution) => {
+      if (cancelled || resolveEpochRef.current !== resolveEpoch) return
+      const sourceUrl = resolution.url
+      if (!sourceUrl) {
+        setError(resolution.message || '当前音乐来源无法解析')
+        return
+      }
+      if (
+        /^music:\/\/ncm\//.test(sourceRef) &&
+        resolution.mimeType &&
+        audio.canPlayType(resolution.mimeType) === ''
+      ) {
+        setError(
+          `浏览器不支持当前音频编码（${resolution.mimeType}），未自动降低音质`
         )
-          return
-        audio.currentTime = Math.max(0, current.positionSec)
-        sendTrackAck(true)
-      },
-      onError: () => setError('音乐加载失败，请检查当前夹具来源'),
-      onEnded: () => {
-        if (!isHost || !socket) return
-        const current = useMusicStore.getState()
-        if (
-          current.musicGeneration !== generation ||
-          current.currentSourceRef !== sourceRef
-        )
-          return
-        socket.emit('music:ended', {
-          roomId,
-          queueItemId: current.currentQueueItemId,
-          musicGeneration: current.musicGeneration,
-          baseVersion: current.version,
-          mutationId: clientId(),
-        })
-      },
+        return
+      }
+      attachedSourceRef.current = sourceRef
+      attachedGenerationRef.current = generation
+      ackedTrackRef.current = null
+      lifecycle.attach(sourceUrl, generation, {
+        onReady: () => {
+          const current = useMusicStore.getState()
+          if (
+            current.musicGeneration !== generation ||
+            current.currentSourceRef !== sourceRef
+          )
+            return
+          audio.currentTime = Math.max(0, current.positionSec)
+          sendTrackAck(true)
+        },
+        onError: () => setError('音乐加载失败，请检查当前 gateway 或音频编码'),
+        onEnded: () => {
+          if (!isHost || !socket) return
+          const current = useMusicStore.getState()
+          if (
+            current.musicGeneration !== generation ||
+            current.currentSourceRef !== sourceRef
+          )
+            return
+          socket.emit('music:ended', {
+            roomId,
+            queueItemId: current.currentQueueItemId,
+            musicGeneration: current.musicGeneration,
+            baseVersion: current.version,
+            mutationId: clientId(),
+          })
+        },
+      })
     })
+    return () => {
+      cancelled = true
+    }
   }, [
     audioRef,
     isHost,

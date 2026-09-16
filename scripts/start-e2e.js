@@ -27,6 +27,7 @@ const child = spawn(process.execPath, [
     DATABASE_URL: path.join(runtimeDir, 'test.sqlite'),
     NODE_ENV: 'test',
     MEDIA_E2E_FIXTURE_ORIGIN: 'http://127.0.0.1:3456',
+    NCM_API_BASE_URL: 'http://127.0.0.1:3456/ncm-fixture',
     MEDIA_HANDLE_SECRET: 'e2e-only-media-handle-secret-32-bytes',
     JWT_ACCESS_EXPIRES_IN: '2s',
     MEDIA_ROOM_GRANT_TTL_MS: '2000',
