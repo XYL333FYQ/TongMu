@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { CONFIG_DIR } from './paths';
 
-const MASTER_KEY_FILE = 'secret-vault.json';
+export const SECRET_VAULT_KEY_FILENAME = 'secret-vault.json';
 const MASTER_KEY_VERSION = 1;
 const ENVELOPE_VERSION = 'v1';
 const MASTER_KEY_BYTES = 32;
@@ -21,6 +21,8 @@ export interface SecretVaultOptions {
   configDir?: string;
   /** Test-only injection; production always loads the persisted key. */
   masterKey?: Buffer;
+  /** Migration/restore verification must never manufacture a replacement key. */
+  createIfMissing?: boolean;
 }
 
 interface MasterKeyFile {
@@ -136,9 +138,12 @@ function writeMasterKeyAtomically(filePath: string, key: Buffer): void {
   }
 }
 
-function loadOrCreateMasterKey(configDir: string): Buffer {
-  const filePath = path.join(configDir, MASTER_KEY_FILE);
+function loadOrCreateMasterKey(configDir: string, createIfMissing: boolean): Buffer {
+  const filePath = path.join(configDir, SECRET_VAULT_KEY_FILENAME);
   if (fs.existsSync(filePath)) return readMasterKey(filePath);
+  if (!createIfMissing) {
+    throw new SecretVaultError('SecretVault master key 文件缺失');
+  }
   writeMasterKeyAtomically(filePath, crypto.randomBytes(MASTER_KEY_BYTES));
   // If another process won a first-install race, read the key that won.
   return readMasterKey(filePath);
@@ -166,10 +171,12 @@ export function isSecretVaultEnvelope(value: unknown): value is string {
 export class SecretVault {
   private readonly configDir: string;
   private readonly injectedMasterKey?: Buffer;
+  private readonly createIfMissing: boolean;
   private cachedMasterKey?: Buffer;
 
   constructor(options: SecretVaultOptions = {}) {
     this.configDir = options.configDir || CONFIG_DIR;
+    this.createIfMissing = options.createIfMissing !== false;
     if (options.masterKey !== undefined) {
       if (options.masterKey.length !== MASTER_KEY_BYTES) {
         throw new SecretVaultError('SecretVault master key 长度无效');
@@ -182,7 +189,7 @@ export class SecretVault {
     if (!this.cachedMasterKey) {
       this.cachedMasterKey = this.injectedMasterKey
         ? Buffer.from(this.injectedMasterKey)
-        : loadOrCreateMasterKey(this.configDir);
+        : loadOrCreateMasterKey(this.configDir, this.createIfMissing);
     }
     return this.cachedMasterKey;
   }
@@ -221,6 +228,10 @@ export class SecretVault {
       throw new SecretVaultError('SecretVault 解密失败');
     }
   }
+}
+
+export function secretVaultKeyPath(configDir = CONFIG_DIR): string {
+  return path.join(configDir, SECRET_VAULT_KEY_FILENAME);
 }
 
 export const secretVault = new SecretVault();

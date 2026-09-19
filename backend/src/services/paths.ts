@@ -118,8 +118,8 @@ export function ensureDataDirs(): void {
  * - uploads/：移动整个目录（含 avatars 子目录与用户上传的视频文件）
  * - media/：跳过（运行时临时切片，无需保留）
  *
- * 迁移失败仅打印警告，不阻断启动——最坏情况下用户数据仍位于旧路径，
- * 后续可手动复制。迁移成功后旧路径文件被移动（非复制），避免重复占用空间。
+ * 本函数保留 warning 返回值；生产 bootstrap 会把数据库文件迁移失败视为
+ * 致命错误并停止启动。上传目录失败仍保留原目录并提示人工处理。
  */
 export function migrateLegacyDataIfNeeded(): {
   migrated: string[];

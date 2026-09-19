@@ -151,7 +151,8 @@ provides the Range and upstream-validation contract that Phase 3B may rely on.
 
 Current checkpoint: **Phase 3A is COMPLETE within the typed-manifest and
 browser-verification boundary. Phase 3B is COMPLETE as an opt-in bounded
-single-node memory cache; the Phase 6 migration/release gate remains open.**
+single-node memory cache; Phase 6A migration safety is complete and Phase 6B
+release work remains open.**
 
 **Goal**
 
@@ -540,6 +541,13 @@ feature contract.
 
 ## Phase 6 — historical migrations, packaging, CI and measured extensions
 
+**Status**
+
+- Phase 6A Historical Database Migration: **COMPLETE (2026-09-19)**.
+- Phase 6 overall: **IN PROGRESS**.
+- Phase 6B packaging, updater integrity, release CI, observability, provenance
+  inventory, and Docker/release smoke: **DEFERRED TO PHASE 6B**.
+
 **Goal**
 
 Complete the migration/release gate left by Phase 1 so V2 is safely
@@ -553,8 +561,9 @@ V2 is not complete if it only works on a clean development database or cannot pr
 **Dependencies**
 
 - Data shapes from Phases 1–5 are settled, and Phase 1's migration harness is available.
-- Representative historical databases and packaging hosts are available.
-- Config backups and restore validation are available before any production schema change.
+- Representative TongMu historical schemas are proven from repository commits;
+  unsupported variants fail closed. Packaging hosts remain a Phase 6B dependency.
+- Config backups and restore validation are implemented before any production schema change.
 
 **Files/modules affected**
 
@@ -571,9 +580,11 @@ V2 is not complete if it only works on a clean development database or cannot pr
 
 **Required tests**
 
-- Empty install and upgrade fixtures from supported historical schemas; backup/failure/retry.
-- Production `synchronize:false` startup with a proven ordered migration chain; no
-  fabricated baseline is accepted for an unrepresented historical schema.
+- COMPLETE in Phase 6A: empty install and upgrade fixtures from supported
+  historical schemas; backup/failure/retry/restore/interruption/lock coverage.
+- COMPLETE in Phase 6A: production `synchronize:false` startup with a proven
+  ordered migration chain; no fabricated baseline is accepted for an
+  unrepresented historical schema.
 - Windows/Linux single-file and Docker smoke tests; asset/wasm/browser inventory.
 - Updater checksum/signature, traversal, interrupted update, rollback and config preservation.
 - CI concurrency, immutable release provenance, and no stale-run latest overwrite.
@@ -581,7 +592,8 @@ V2 is not complete if it only works on a clean development database or cannot pr
 
 **Exit criteria**
 
-- Production starts with `synchronize: false` and a proven migration chain.
+- COMPLETE in Phase 6A: production starts with `synchronize: false` and a proven
+  migration chain, exact baseline adoption, backup/restore, and fail-closed checks.
 - Artifacts use TongMu canonical names with documented compatibility aliases.
 - Release/update artifacts are integrity-checked and reproducible enough to trace.
 - `THIRD-PARTY-NOTICES.md` covers every copied/adapted code and bundled asset.

@@ -8,8 +8,10 @@
     "build": "node scripts/clean-dist.js && tsc",
     "lint": "tsc --noEmit",
     "start": "node dist/index.js",
+    "database:restore": "node dist/cli/database-restore.js",
     "build:exe": "node ../scripts/build-exe.js",
-    "test": "npm run build && node --test test/*.test.js"
+    "test": "npm run build && node --test test/*.test.js && npm run test:migrations",
+    "test:migrations": "node --no-force-async-hooks-checks test/phase6a-database-migrations.suite.js"
   },
   "keywords": [],
   "author": "",

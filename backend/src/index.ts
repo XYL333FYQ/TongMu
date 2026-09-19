@@ -13,7 +13,8 @@ import fs from 'node:fs';
 import bcrypt from 'bcryptjs';
 import { IsNull, LessThan } from 'typeorm';
 import { AppDataSource } from './data-source';
-import { runMigrationFoundation } from './migrations/foundation';
+import { runDatabaseUpgrade } from './migrations/database-upgrade';
+import { acquireDatabaseMigrationLock, DatabaseMigrationLock } from './migrations/database-lock';
 import { Room } from './entities/Room';
 import { Session } from './entities/Session';
 import { User } from './entities/User';
@@ -21,7 +22,7 @@ import { Comment } from './entities/Comment';
 import { SystemSettings } from './entities/SystemSettings';
 import { Movie as MovieEntity } from './entities/Movie';
 import { PlaybackState } from './entities/PlaybackState';
-import { PROJECT_ROOT } from './services/paths';
+import { CONFIG_DIR, DATABASE_PATH, PROJECT_ROOT } from './services/paths';
 import { proxyHttpUpstream } from './services/proxy/http-proxy';
 import authRoutes from './routes/auth';
 import adminRoutes from './routes/admin';
@@ -89,6 +90,19 @@ import {
 // getSystemSettings 抽到独立服务文件，避免子模块从根 index.ts 导入造成循环依赖。
 import { getSystemSettings } from './services/system-settings';
 export { getSystemSettings };
+
+let databaseRuntimeLock: DatabaseMigrationLock | null = null;
+
+function releaseDatabaseRuntimeLock(): void {
+  if (!databaseRuntimeLock) return;
+  const lock = databaseRuntimeLock;
+  databaseRuntimeLock = null;
+  lock.release();
+}
+
+process.on('exit', () => {
+  try { releaseDatabaseRuntimeLock(); } catch { /* stale-lock recovery is fail-closed on next start */ }
+});
 
 export async function deleteRoomAndRelations(
   roomId: string,
@@ -210,20 +224,31 @@ async function seedRootAdmin() {
 }
 
 async function bootstrap() {
-  // 数据目录迁移与初始化：必须在 DataSource.initialize 之前完成，
-  // 否则 SQLite 会在旧路径创建空库，导致迁移逻辑误判。
-  migrateLegacyDataIfNeeded();
+  // The lock stays held for the process lifetime. This prevents a restore or a
+  // second initializer from racing active sql.js auto-save writes.
+  databaseRuntimeLock = acquireDatabaseMigrationLock(CONFIG_DIR);
+
+  // 数据目录迁移与初始化：必须在 DataSource.initialize 之前完成，否则
+  // SQLite 会在旧路径创建空库。数据库路径迁移失败时必须 fail closed。
+  const pathMigration = migrateLegacyDataIfNeeded();
+  const databasePathFailure = pathMigration.warnings.find((warning) => warning.startsWith('数据库迁移失败'));
+  if (databasePathFailure) throw new Error(databasePathFailure);
   ensureDataDirs();
+
+  const databaseFileExisted = fs.existsSync(DATABASE_PATH);
 
   await AppDataSource.initialize();
   console.log('TypeORM Data Source has been initialized.');
-  const migrationResult = await runMigrationFoundation(AppDataSource, {
-    execute: process.env.TYPEORM_MIGRATIONS === 'true',
+  const migrationResult = await runDatabaseUpgrade(AppDataSource, {
+    configDir: CONFIG_DIR,
+    databasePath: DATABASE_PATH,
+    databaseFileExisted,
   });
   console.log(
-    `[migration] ${migrationResult.before.installState} database, ` +
-      `${migrationResult.executed.length} versioned migration(s) applied; ` +
-      `config backup boundary: ${migrationResult.backupExpectation.configDir}`,
+    `[migration] ${migrationResult.sourceSchemaId} -> ${migrationResult.finalFingerprint}; ` +
+      `${migrationResult.executed.length} migration(s) applied; ` +
+      `baseline adopted: ${migrationResult.baselineAdopted}; ` +
+      `backup: ${migrationResult.backupDir || 'not required'}`,
   );
   const staleSessions = await cleanupStaleRoomSessions();
   if (staleSessions > 0) {
@@ -576,6 +601,16 @@ async function bootstrap() {
     } catch (err) {
       console.error('[NCM] graceful shutdown error:', err);
     }
+    try {
+      if (AppDataSource.isInitialized) await AppDataSource.destroy();
+    } catch (err) {
+      console.error('[database] graceful shutdown error:', err);
+    }
+    try {
+      releaseDatabaseRuntimeLock();
+    } catch (err) {
+      console.error('[database] lock release error:', err);
+    }
     process.exit(0);
   };
   process.on('SIGTERM', gracefulShutdown);
@@ -588,6 +623,9 @@ async function bootstrap() {
 }
 
 bootstrap().catch((err) => {
-  console.error('Error during bootstrap:', err);
+  console.error('Error during bootstrap:', err instanceof Error ? err.message : err);
+  try { releaseDatabaseRuntimeLock(); } catch (lockError) {
+    console.error('[database] lock release error:', lockError);
+  }
   process.exit(1);
 });

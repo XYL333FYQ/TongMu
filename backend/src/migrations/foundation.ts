@@ -83,9 +83,9 @@ export async function inspectMigrationState(dataSource: DataSource): Promise<Mig
 }
 
 /**
- * Run the configured TypeORM migrations without inventing a historical
- * baseline. TypeORM's migrations table is the version marker; synchronize
- * remains enabled until Phase 6 has a real historical fixture matrix.
+ * Legacy Phase 1 helper retained for its focused compatibility tests.
+ * Production startup now uses database-upgrade.ts, the Git-backed schema
+ * fingerprints, pre-migration backup, and synchronize:false.
  */
 export async function runMigrationFoundation(
   dataSource: DataSource,

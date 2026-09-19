@@ -4,7 +4,7 @@
 
 This file is the persistent checkpoint for the TongMu V2 integration program. Phase 0 is an audit and design phase only: no product code, dependency, database, configuration, CI, or reference source was changed.
 
-Current state: **Phase 2, Phase 3A, Phase 3B, Phase 4A, Phase 4B Voice, Phase 5A RealtimeSyncCore/Permissions, Phase 5B-1 MusicSyncDomain/Together Listen, and Phase 5B-2A/2B NCM provider/catalog product work are complete within their approved boundaries. The Phase 5B-1 final acceptance gate is closed after the Voice fake-media Chromium regression was diagnosed and minimally fixed; the Phase 6 migration/release gate remains open.**
+Current state: **Phases 0–5 and Phase 6A Historical Database Migration are complete within their approved boundaries. Phase 6 remains IN PROGRESS: Phase 6B packaging, updater integrity, release CI, observability, provenance inventory, and Docker/release smoke are deliberately deferred.**
 
 Phase 2 has a working core checkpoint: the versioned client profile, server
 viability filter, client-owned planner path, provider contract/registry, and
@@ -16,12 +16,13 @@ facts, and provider session cleanup. Phase 2C-2 now converges AniSubs, Kazumi,
 configured anime sources, public HLS/HTTP-FLV live inputs, and Bilibili DASH
 exact codec/profile filtering through the same Media Core entrypoint. Provider-
 specific catalog/browse routes remain compatibility surfaces; Phase 3 manifest
-typing and Phase 6 release/migration work remain open.
+typing is complete. Database migration safety is closed by Phase 6A; Phase 6B
+release/packaging work remains open.
 
 Phase 1 restored the declared dependency baseline, closed the scoped credential and
 token-revocation P0/P1 defects, introduced the shared ByteRange core, and added a
 tested migration foundation. It did not perform provider/profile convergence or
-the historical-database work reserved for Phase 6.
+the historical-database work that was subsequently completed in Phase 6A.
 
 ## Baseline
 
@@ -67,22 +68,20 @@ Severity here describes what must be addressed before treating TongMu V2 as a sa
 ### Phase 1-scoped P0 status
 
 The Phase 1-scoped credential exposure, reversible credential storage, and Range
-correctness blockers are closed. The remaining database item is a deliberate
-release gate rather than an untested quick change: startup still retains
-`synchronize: true` until Phase 6 has representative historical fixtures and can
-prove a safe `synchronize: false` rollout. Phase 1 now has the migration harness,
-fresh/existing detection, retry behavior, and documented backup expectation needed
-to do that work safely.
+correctness blockers are closed. Phase 6A also closes the historical database
+gate: Git-evidenced fixtures, exact schema fingerprints, pre-mutation backup,
+validated restore, failure/retry/interruption coverage, and production
+`synchronize:false` are now enforced. Unknown or corrupt schemas fail closed.
 
 ### P1 — high-priority integration and reliability gaps
 
 1. Phase 3A typed HLS/DASH resource mapping and its Chromium browser exit gate are complete; the fixture's Inspector/client-blocked diagnostics are intentional route aborts used to verify fallback.
 2. Live publishing/ingest lifecycle (RTMP/WHIP/WHEP) remains outside public HLS/HTTP-FLV source convergence and is explicitly deferred.
 3. Phase 3A's typed DASH mapper covers `SegmentBase`, representation indexes, bitstream-switching resources, `Location`, xlink, timing URLs, and bounded recursion in unit/backend tests; nested fixture MPD playback is covered by the completed Chromium suite.
-4. Realtime video and music synchronization now share the documented `RealtimeSyncCore` primitives while keeping independent clocks and state. Phase 5B-1 MusicSyncDomain, queue state, and Together Listen are complete; its final acceptance gate is closed. The historical Voice fake-media Chromium blocker and its auth-refresh race fix are recorded in the Phase 5B-1 closure below. Phase 5B-2A supplies the NCM provider/login/stream boundary and Phase 5B-2B supplies the bounded NCM catalog/product surface; Phase 6 remains open.
+4. Realtime video and music synchronization now share the documented `RealtimeSyncCore` primitives while keeping independent clocks and state. Phase 5B-1 MusicSyncDomain, queue state, and Together Listen are complete; its final acceptance gate is closed. The historical Voice fake-media Chromium blocker and its auth-refresh race fix are recorded in the Phase 5B-1 closure below. Phase 5B-2A supplies the NCM provider/login/stream boundary and Phase 5B-2B supplies the bounded NCM catalog/product surface; only Phase 6B release work remains open.
 5. Voice lifecycle, identity, reconnect replacement, decoder ownership, ghost cleanup, and voice-local moderation remain Phase 4B behavior; Phase 5A now supplies the shared permission decision boundary.
 6. Phase 4A player/subtitle lifetime hardening and Phase 4B Voice are complete within their scoped boundaries.
-7. Release artifacts still retain historical ZViewer-era names for compatibility; full TongMu renaming, checksum/signature verification, staged extraction, and rollback remain Phase 6 work.
+7. Release artifacts still retain historical ZViewer-era names for compatibility; full TongMu renaming, checksum/signature verification, staged extraction, and updater rollback remain Phase 6B work.
 8. Third-party provenance is incomplete for fonts, images, icons, wasm/binaries, bundled JavaScript, and media fixtures. Upstream assets must not be copied until license and attribution are recorded.
 9. Docker and ffmpeg are unavailable on this host, so browser-enabled container and transcoding-specific validation remain environment-dependent.
 
@@ -109,7 +108,8 @@ to do that work safely.
 - [x] Phase 5B-1 — `MusicSyncDomain` / persistent queue / Together Listen (implementation and final regression gate complete within the approved boundary).
 - [x] Phase 5B-2A — NCM provider core / credential boundary / QR login / explicit-quality room playback.
 - [x] Phase 5B-2B — NCM catalog and remaining product surface within the bounded provider/product contract.
-- [ ] Phase 6 — Historical migrations / Packaging / CI / Observability / release gate.
+- [x] Phase 6A — Historical database migrations / backup / restore / `synchronize:false` / upgrade safety gate.
+- [ ] Phase 6B — Packaging / updater integrity / release CI / Observability / provenance / Docker and release smoke.
 
 See `implementation-plan.md` for dependencies, file targets, tests, exit criteria, and risks.
 
@@ -587,19 +587,37 @@ real account or credential was supplied.
   publishing, or Phase 6 migration/release work. They are not hidden as Phase
   2 provider gaps.
 
-## Migration foundation boundary
+## Phase 6A historical database migration closure
 
-- `backend/src/migrations/foundation.ts` inventories tables, distinguishes fresh
-  and existing databases, runs TypeORM migrations only when explicitly enabled,
-  and propagates failures so a retry cannot be mistaken for success.
-- `backend/src/data-source.ts` keeps `synchronize: true` for compatibility during
-  this foundation phase; `backend/src/index.ts` does not silently run migrations.
-- The existing schema was not rewritten into a fabricated baseline migration.
-  Phase 6 must add representative historical fixtures, backup/restore drills,
-  interrupted-run tests, and the production switch to `synchronize: false`.
-- `/app/config` remains the persistence boundary. Operators must back up that
-  boundary before migration or key-management changes; automatic backup/rollback
-  is a Phase 6 release-hardening requirement.
+- `backend/src/migrations/database-upgrade.ts` inventories and fingerprints the
+  complete SQLite schema, recognizes only seven TongMu Git-evidenced snapshots,
+  safely adopts an exact current-V2 synchronize-created schema, and rejects every
+  unknown/corrupt shape without writing it.
+- The committed migration chain creates fresh databases and upgrades supported
+  historical databases. It preserves IDs, ownership, room/session/media/provider
+  state, queue order, settings, and credentials. Legacy Bilibili Base64 and
+  UserMount plaintext credentials are validated and converted to SecretVault
+  envelopes transactionally; historical plaintext NCM data is not fabricated.
+- Existing databases receive a verified `/app/config/backups/` backup before the
+  first mutation. Manifest hashes couple the database to required config/key
+  files; restore validates and stages all files before replacement and rolls back
+  a failed replacement.
+- Startup holds a PID/host/nonce lock for the process lifetime, performs integrity
+  and FK checks, backup, migration, and schema verification before constructing
+  HTTP/Socket.IO. Failure exits non-zero. Production now uses
+  `synchronize:false`.
+- `npm run test:migrations -w backend` passes 29/29 checks covering fresh/empty,
+  all supported historical snapshots, current baseline adoption, three repeated
+  startups, wrong/missing key, unknown/corrupt database, failed backup/migration,
+  interruption/retry, concurrent/stale lock, Unicode/space paths, entity drift,
+  and the full backup → migrate → mutate → restore → migrate workflow.
+- Full closure regression on 2026-09-19: Backend 129 PASS / 1 Windows symlink
+  environment SKIP plus migration 29 PASS; Frontend 26/26; Backend lint/build and
+  Frontend build PASS; Chromium 26 PASS / 1 existing Voice environment SKIP /
+  0 FAIL. Real NCM account and Docker migration smoke were NOT RUN.
+
+See `database-migrations.md` and `../upgrade-v2.md` for the schema evidence,
+operator procedure, backup/restore contract, and recovery instructions.
 
 ## Known environment limitations
 
