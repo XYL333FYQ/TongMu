@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "resolver": "Playwright Chromium",
+  "bundledBrowser": false,
+  "requiredConfiguration": "PLAYWRIGHT_EXECUTABLE_PATH",
+  "notes": "Single-file archives bundle the resolver code, not a browser binary. Set PLAYWRIGHT_EXECUTABLE_PATH to a compatible installed Chromium or Chrome executable. The recommended Docker image includes Chromium."
+}

@@ -39,6 +39,13 @@ import embyRoutes from './routes/emby';
 import jellyfinRoutes from './routes/jellyfin';
 import subtitlesRoutes from './routes/subtitles';
 import updaterRoutes from './routes/updater';
+import {
+  applyPendingUpdateFromCli,
+  currentBuildIdentity,
+  finalizePendingUpdateFromCli,
+  recoverUpdateState,
+  rollbackPendingUpdateFromCli,
+} from './services/updater';
 import statsRoutes from './routes/stats';
 import clientLogsRoutes from './routes/client-logs';
 import cliRoutes from './routes/cli';
@@ -346,8 +353,12 @@ async function bootstrap() {
   app.use('/api/music', createMusicRouter());
 
   app.get('/health', (_req, res) => {
+    const build = currentBuildIdentity();
     res.json({
       status: 'ok',
+      version: build.version,
+      commitSha: build.commitSha,
+      buildId: `${build.version}+${build.commitSha.slice(0, 12)}`,
       timestamp: new Date().toISOString(),
       startedAt: PROCESS_STARTED_AT,
       restartCount: RESTART_COUNT,
@@ -622,10 +633,52 @@ async function bootstrap() {
   });
 }
 
-bootstrap().catch((err) => {
-  console.error('Error during bootstrap:', err instanceof Error ? err.message : err);
-  try { releaseDatabaseRuntimeLock(); } catch (lockError) {
-    console.error('[database] lock release error:', lockError);
+function runUpdaterCliMode(): boolean {
+  const command = process.argv[2];
+  if (!command?.startsWith('--') || !command.includes('pending-update')) return false;
+  try {
+    let result: unknown;
+    if (command === '--apply-pending-update') result = applyPendingUpdateFromCli();
+    else if (command === '--rollback-pending-update') result = rollbackPendingUpdateFromCli(process.argv[3] || 'health check failed');
+    else if (command === '--finalize-pending-update') result = finalizePendingUpdateFromCli(process.argv[3] || '', process.argv[4] || '');
+    else if (command === '--recover-pending-update') result = recoverUpdateState();
+    else throw new Error('unknown updater helper command');
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+    process.exitCode = 0;
+  } catch (error) {
+    process.stderr.write(`[updater-helper] ${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
   }
-  process.exit(1);
-});
+  return true;
+}
+
+async function runBrowserRuntimeSmoke(): Promise<void> {
+  const playwright = require('playwright') as typeof import('playwright');
+  const executablePath = process.env.PLAYWRIGHT_EXECUTABLE_PATH;
+  if (!executablePath) throw new Error('PLAYWRIGHT_EXECUTABLE_PATH is required for single-file browser smoke');
+  const browser = await playwright.chromium.launch({ headless: true, executablePath });
+  try {
+    const page = await browser.newPage();
+    await page.goto('data:text/html,<title>TongMu browser runtime smoke</title>');
+    const title = await page.title();
+    if (title !== 'TongMu browser runtime smoke') throw new Error('browser runtime smoke returned the wrong page');
+    process.stdout.write(`${JSON.stringify({ ok: true, browser: 'chromium', ...currentBuildIdentity() })}\n`);
+  } finally {
+    await browser.close();
+  }
+}
+
+if (!runUpdaterCliMode() && process.argv[2] === '--browser-runtime-smoke') {
+  runBrowserRuntimeSmoke().catch((error) => {
+    process.stderr.write(`[browser-runtime-smoke] ${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+  });
+} else if (!process.argv[2]?.includes('pending-update')) {
+  bootstrap().catch((err) => {
+    console.error('Error during bootstrap:', err instanceof Error ? err.message : err);
+    try { releaseDatabaseRuntimeLock(); } catch (lockError) {
+      console.error('[database] lock release error:', lockError);
+    }
+    process.exit(1);
+  });
+}

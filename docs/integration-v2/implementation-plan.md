@@ -544,9 +544,11 @@ feature contract.
 **Status**
 
 - Phase 6A Historical Database Migration: **COMPLETE (2026-09-19)**.
+- Phase 6B-1 Packaging + Secure Updater + Immutable Release CI + Artifact
+  Provenance: **COMPLETE (2026-09-19)**.
 - Phase 6 overall: **IN PROGRESS**.
-- Phase 6B packaging, updater integrity, release CI, observability, provenance
-  inventory, and Docker/release smoke: **DEFERRED TO PHASE 6B**.
+- Phase 6B-2 observability, full provenance inventory, Docker runtime/migration
+  smoke, and Linux executable runtime smoke: **DEFERRED TO PHASE 6B-2**.
 
 **Goal**
 
@@ -585,18 +587,30 @@ V2 is not complete if it only works on a clean development database or cannot pr
 - COMPLETE in Phase 6A: production `synchronize:false` startup with a proven
   ordered migration chain; no fabricated baseline is accepted for an
   unrepresented historical schema.
-- Windows/Linux single-file and Docker smoke tests; asset/wasm/browser inventory.
-- Updater checksum/signature, traversal, interrupted update, rollback and config preservation.
-- CI concurrency, immutable release provenance, and no stale-run latest overwrite.
+- COMPLETE in Phase 6B-1: Windows real single-file archive, Unicode/space-path
+  start/health/stop, browser-runtime launch, config persistence, and exact build
+  identity smoke. Linux packaging was exercised structurally, but Linux
+  executable runtime and Docker smoke were not available on this host.
+- COMPLETE in Phase 6B-1: updater signature/SHA-256/size, traversal and link
+  rejection, corrupted archive, interrupted download/extract/apply, lock
+  exclusion, rollback, health finalization, and config preservation.
+- COMPLETE in Phase 6B-1: immutable release naming/provenance, exact tag/SHA and
+  clean-checkout gates, per-ref concurrency, no mutable latest overwrite, and no
+  automatic GitHub Release publication.
 - Redacted structured logs, request/source correlation, bounded-label metrics and response-byte accounting.
 
 **Exit criteria**
 
 - COMPLETE in Phase 6A: production starts with `synchronize: false` and a proven
   migration chain, exact baseline adoption, backup/restore, and fail-closed checks.
-- Artifacts use TongMu canonical names with documented compatibility aliases.
-- Release/update artifacts are integrity-checked and reproducible enough to trace.
-- `THIRD-PARTY-NOTICES.md` covers every copied/adapted code and bundled asset.
+- COMPLETE in Phase 6B-1: artifacts use TongMu canonical names with documented,
+  byte-identical historical aliases.
+- COMPLETE in Phase 6B-1: release/update artifacts are signed, integrity-checked,
+  commit-traceable, and packaged deterministically where the archive format
+  permits; no unsupported bit-reproducibility claim is made.
+- COMPLETE for the Phase 6B-1 delta: `THIRD-PARTY-NOTICES.md` records the added
+  dependency/patch provenance. Full repository-wide asset provenance remains
+  Phase 6B-2.
 - Live/P2P decisions are updated from DEFER only with an approved user need and client-source audit.
 
 **Major risks**

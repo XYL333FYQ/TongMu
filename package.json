@@ -18,12 +18,13 @@
     "build:exe": "node scripts/build-exe.js",
     "build:backend-exe": "node scripts/build-exe.js",
     "build:all": "node build-all.js",
+    "release:package": "node scripts/release/package-release.js",
     "postinstall": "patch-package"
   },
   "pkg": {
     "assets": [
       "node_modules/sql.js/dist/sql-wasm.wasm",
-      "backend/.env"
+      "node_modules/playwright-core/browsers.json"
     ]
   },
   "devDependencies": {

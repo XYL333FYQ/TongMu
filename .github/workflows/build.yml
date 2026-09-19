@@ -1,154 +1,134 @@
-# TongMu 单文件版自动构建（Windows + Linux）
-# 触发方式：
-#   1. push tag (v*) → 构建并发布到 GitHub Releases (正式版)
-#   2. 手动触发（workflow_dispatch）→ 仅构建 + 上传 artifact
-
-name: Build TongMu Single-File (Windows + Linux)
+name: Build immutable TongMu release artifacts
 
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
 
+# Same-ref retries serialize/cancel, while main and different tags never share
+# a group and therefore cannot cancel or overwrite one another.
 concurrency:
-  group: tongmu-release-${{ github.workflow }}-${{ github.ref }}
+  group: tongmu-release-${{ github.ref }}
   cancel-in-progress: true
 
-jobs:
-  build:
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            flag: --linux
-            artifact-name: zviewer-linux-x64
-            dist-dir: linux
-            ext: .tar.gz
-          - os: windows-latest
-            flag: --win
-            artifact-name: zviewer-windows-x64
-            dist-dir: win
-            ext: .zip
-    runs-on: ${{ matrix.os }}
+permissions:
+  contents: read
 
+jobs:
+  validate:
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout immutable source
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - name: Setup Node.js 22
+      - name: Setup pinned Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
-          cache: 'npm'
+          node-version: '24.18.0'
+          cache: npm
 
-      - name: Inject version
-        # 根据触发方式注入版本号：
-        # - tag 推送 (v*)：用 tag 名作为版本号（如 1.0.0）
-        # - main 分支手动构建：用 0.0.0-dev.<sha前7位> 作为版本号
-        # - 手动触发：用 0.0.0-manual 作为版本号
+      - name: Setup pinned npm
+        run: npm install --global npm@11.16.0
+
+      - name: Validate tag against the single version source
+        if: startsWith(github.ref, 'refs/tags/')
         shell: bash
         run: |
-          if [ "${GITHUB_REF#refs/tags/}" != "${GITHUB_REF}" ]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
-          elif [ "${GITHUB_REF}" = "refs/heads/main" ]; then
-            VERSION="0.0.0-dev.${GITHUB_SHA:0:7}"
-          else
-            VERSION="0.0.0-manual"
-          fi
-          echo "Injecting version: $VERSION"
-          node -e "const fs=require('fs');const p=require('./package.json');p.version='$VERSION';fs.writeFileSync('./package.json',JSON.stringify(p,null,2)+'\n')"
-          # 同步更新 backend/package.json
-          node -e "const fs=require('fs');const p=require('./backend/package.json');p.version='$VERSION';fs.writeFileSync('./backend/package.json',JSON.stringify(p,null,2)+'\n')"
+          VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION=${GITHUB_REF#refs/tags/v}
+          test "$VERSION" = "$TAG_VERSION" || {
+            echo "tag $TAG_VERSION does not match package.json $VERSION" >&2
+            exit 1
+          }
 
-      - name: Install dependencies
+      - name: Install exactly from lockfile
         run: npm ci
 
-      - name: Build & package single-file
-        # build-all.js --win/--linux 会依次执行：
-        #   1. tsc 编译后端 → 2. vite 构建前端 → 3. pkg 打包 3 个 exe
-        #   4. 复制启动脚本 → 5. 产物输出到 dist/win/ 或 dist/linux/
-        run: node build-all.js ${{ matrix.flag }}
+      - name: Reject lockfile drift
+        run: git diff --exit-code -- package-lock.json
 
-      - name: Package artifacts (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        run: tar czf ${{ matrix.artifact-name }}.tar.gz -C dist/${{ matrix.dist-dir }} .
+      - name: Backend typecheck and focused release tests
+        run: |
+          npm run lint -w backend
+          npm run build -w backend
+          node --test backend/test/phase6b1-release-updater.test.js
 
-      - name: Package artifacts (Windows)
-        if: matrix.os == 'windows-latest'
-        run: Compress-Archive -Path dist/${{ matrix.dist-dir }}/* -DestinationPath ${{ matrix.artifact-name }}.zip
+      - name: Frontend unit tests and production build
+        run: |
+          npm test -w frontend
+          npm run build -w frontend
 
-      # 上传历史兼容 artifact；Docker 镜像构建在单独的手动 workflow 中执行。
-      - name: Upload artifact
-        uses: actions/upload-artifact@v6
-        with:
-          name: ${{ matrix.artifact-name }}
-          path: ${{ matrix.artifact-name }}${{ matrix.ext }}
-          retention-days: 30
-
-  # tag 推送：创建正式版 Release
-  release:
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
+  package:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            build_flag: --win
+            platform: windows
+            arch: x64
+            dist_dir: win
+          - os: ubuntu-latest
+            build_flag: --linux
+            platform: linux
+            arch: x64
+            dist_dir: linux
+    runs-on: ${{ matrix.os }}
     steps:
-      - name: Checkout
+      - name: Checkout immutable source
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - name: Generate release body with commit summary
-        # 收集自上一个 tag 以来的全部提交摘要，写入 release body。
-        # 配合 generate_release_notes: true，GitHub 还会追加「New Contributors」
-        # 与「Full Changelog」对比链接等结构化信息。
+      - name: Setup pinned Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.18.0'
+          cache: npm
+
+      - name: Setup pinned npm
+        run: npm install --global npm@11.16.0
+
+      - name: Install exactly from lockfile
+        run: npm ci
+
+      - name: Build platform program directory
+        run: node build-all.js ${{ matrix.build_flag }}
+
+      - name: Create and verify signed immutable artifact in staging
+        id: package_meta
         shell: bash
-        run: |
-          CURRENT_TAG=${GITHUB_REF#refs/tags/}
-          # 按创建时间倒序列出所有 tag，跳过当前 tag，取第一个即为上一个 tag
-          PREV_TAG=$(git for-each-ref --sort=-creatordate --format='%(refname:short)' refs/tags | grep -v "^${CURRENT_TAG}$" | head -1)
-          if [ -n "$PREV_TAG" ]; then
-            LOG=$(git log --pretty=format:"- %s" "${PREV_TAG}..${CURRENT_TAG}" | head -100)
-          else
-            # 没有上一个 tag（首次发布），列出当前 tag 指向提交的全部历史
-            LOG=$(git log --pretty=format:"- %s" "${CURRENT_TAG}" | head -100)
-          fi
-          VERSION="${GITHUB_REF#refs/tags/v}"
-          {
-            echo "## 更新内容"
-            echo ""
-            if [ -n "$LOG" ]; then
-              echo "${LOG}"
-            else
-              echo "- 无提交记录"
-            fi
-            echo ""
-            echo "---"
-            echo ""
-            echo "## 下载说明"
-            echo ""
-            echo "- **Windows**: 下载 \`zviewer-windows-x64.zip\`，解压后运行 \`start.bat\`"
-            echo "- **Linux**: 下载 \`zviewer-linux-x64.tar.gz\`，解压后运行 \`./start.sh\`"
-            echo "- **Docker**: 使用仓库根目录的 BrowserResolver Compose 配置自行构建"
-          } > release_body.md
-          echo "=== Generated release body ==="
-          cat release_body.md
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v7
-        with:
-          pattern: 'zviewer-*'
-          merge-multiple: true
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
-        with:
-          body_path: release_body.md
-          files: |
-            zviewer-linux-x64.tar.gz
-            zviewer-windows-x64.zip
-          generate_release_notes: true
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TONGMU_RELEASE_SIGNING_KEY_ID: ${{ secrets.TONGMU_RELEASE_SIGNING_KEY_ID }}
+          TONGMU_RELEASE_SIGNING_PRIVATE_KEY: ${{ secrets.TONGMU_RELEASE_SIGNING_PRIVATE_KEY }}
+        run: |
+          test -n "$TONGMU_RELEASE_SIGNING_KEY_ID" || { echo "signing key id secret is missing" >&2; exit 1; }
+          test -n "$TONGMU_RELEASE_SIGNING_PRIVATE_KEY" || { echo "signing private key secret is missing" >&2; exit 1; }
+          TAG_ARG=""
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then TAG_ARG="--tag ${GITHUB_REF#refs/tags/}"; fi
+          node scripts/release/package-release.js \
+            --platform ${{ matrix.platform }} \
+            --arch ${{ matrix.arch }} \
+            --input-dir dist/${{ matrix.dist_dir }} \
+            --output-dir release-output \
+            --release-mode \
+            $TAG_ARG > "$RUNNER_TEMP/release-meta.json"
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "sha_short=${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"
+          node scripts/release/verify-release-output.js release-output
+
+      - name: Upload immutable release candidate
+        uses: actions/upload-artifact@v6
+        with:
+          name: TongMu-${{ steps.package_meta.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}-${{ steps.package_meta.outputs.sha_short }}
+          path: release-output/*
+          if-no-files-found: error
+          retention-days: 30
+
+# This workflow intentionally does not create or mutate a GitHub Release.
+# A separately authorized publish action may attach these already-verified files;
+# the updater consumes signed GitHub Release assets, never transient Actions artifacts.

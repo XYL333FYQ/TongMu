@@ -14,6 +14,10 @@ CERT_BIN="$ROOT_DIR/zviewer-cert"
 LOG_DIR="$ROOT_DIR/log"
 PIDS_FILE="$ROOT_DIR/.prod.pids.json"
 ENV_FILE="$ROOT_DIR/.env"
+CONFIG_DIR="${CONFIG_DIR:-$ROOT_DIR/config}"
+UPDATE_STATE_DIR="$CONFIG_DIR/update-state"
+UPDATE_MARKER_FILE="$UPDATE_STATE_DIR/transaction.json"
+UPDATE_HELPER_BIN="$UPDATE_STATE_DIR/tongmu-update-helper"
 
 DEFAULT_PORT=3333
 DEFAULT_RTMP_PORT=3334
@@ -101,6 +105,64 @@ has_exe() {
     return 1
   fi
   return 0
+}
+
+update_marker_stage() {
+  [ -f "$UPDATE_MARKER_FILE" ] || return 1
+  sed -n 's/.*"stage"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$UPDATE_MARKER_FILE" | head -n 1
+}
+
+update_marker_value() { # $1=version|commitSha; last value is the nested "to" identity
+  [ -f "$UPDATE_MARKER_FILE" ] || return 1
+  sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$UPDATE_MARKER_FILE" | tail -n 1
+}
+
+run_update_helper() {
+  mkdir -p "$UPDATE_STATE_DIR"
+  cp -f "$BACKEND_BIN" "$UPDATE_HELPER_BIN" || return 1
+  chmod 700 "$UPDATE_HELPER_BIN" || return 1
+  PROJECT_ROOT="$ROOT_DIR" CONFIG_DIR="$CONFIG_DIR" "$UPDATE_HELPER_BIN" "$@"
+  helper_status=$?
+  rm -f "$UPDATE_HELPER_BIN"
+  return "$helper_status"
+}
+
+apply_pending_program_swap() {
+  stage=$(update_marker_stage 2>/dev/null || true)
+  [ "$stage" = "ready-to-apply" ] || [ "$stage" = "applying" ] || return 0
+  echo "  检测到已验证更新，正在安全切换..."
+  if ! run_update_helper --apply-pending-update; then
+    echo "  [错误] 程序切换失败；旧程序已保留或已回滚。" >&2
+    return 1
+  fi
+}
+
+confirm_update_health() { # $1=backend pid
+  stage=$(update_marker_stage 2>/dev/null || true)
+  [ "$stage" = "swapped" ] || return 0
+  expected_version=$(update_marker_value version)
+  expected_sha=$(update_marker_value commitSha)
+  scheme=http
+  [ "$HTTPS_MODE" -eq 1 ] && scheme=https
+  health=$(curl -fsSk --max-time 15 "$scheme://localhost:$BACKEND_PORT/health" 2>/dev/null || true)
+  actual_version=$(printf '%s' "$health" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
+  actual_sha=$(printf '%s' "$health" | sed -n 's/.*"commitSha":"\([^"]*\)".*/\1/p')
+  if [ -z "$health" ] || [ "$actual_version" != "$expected_version" ] || [ "$actual_sha" != "$expected_sha" ]; then
+    echo "  [错误] 新版本健康检查失败，正在恢复旧程序。" >&2
+    kill "$1" 2>/dev/null || true
+    sleep 1
+    if run_update_helper --rollback-pending-update "health check failed"; then
+      echo "  旧程序已恢复。若数据库已迁移，还需按 Phase 6A 备份执行数据库恢复。" >&2
+    else
+      echo "  [严重] 自动程序回滚失败；请检查 config/update-state/transaction.json。" >&2
+    fi
+    return 1
+  fi
+  if ! run_update_helper --finalize-pending-update "$actual_version" "$actual_sha"; then
+    echo "  [错误] 健康更新无法完成事务收尾。" >&2
+    return 1
+  fi
+  echo "  更新健康检查通过: $actual_version + $(printf '%s' "$actual_sha" | cut -c1-12)"
 }
 
 # ==================== 证书 ====================
@@ -194,6 +256,7 @@ do_start() {
   echo "========================================"
 
   if ! has_exe "$BACKEND_BIN" "后端程序 zviewer-backend"; then return 1; fi
+  if ! apply_pending_program_swap; then return 1; fi
 
   if port_in_use "$BACKEND_PORT"; then
     echo "  [错误] 端口 $BACKEND_PORT 已被占用"
@@ -242,6 +305,8 @@ do_start() {
     kill "$local_backend_pid" 2>/dev/null || true
     return 1
   fi
+
+  if ! confirm_update_health "$local_backend_pid"; then return 1; fi
 
   write_pids "$local_backend_pid"
   echo "  后端 PID: $local_backend_pid"

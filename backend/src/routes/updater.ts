@@ -3,30 +3,80 @@ import type { Response } from 'express';
 import {
   authenticateToken,
   AuthenticatedRequest,
+  requireRoot,
 } from '../middleware/auth';
 import {
   getUpdateInfo,
   applyUpdate,
   applyUpdateFromFile,
+  pendingUpdateState,
   UpdateNotConfiguredError,
   type UpdateStageEvent,
 } from '../services/updater';
 
 const router = Router();
 
-function rootOnly(
+const UPDATE_SECRET_PATTERNS = [
+  /\bgh[pousr]_[A-Za-z0-9_]{8,}\b/i,
+  /-----BEGIN (?:ENCRYPTED )?PRIVATE KEY-----/i,
+  /\b(?:authorization|cookie|provider[_ -]?credential|signing[_ -]?private[_ -]?key)\b\s*[:=]/i,
+];
+
+export function safeUpdateErrorMessage(error: unknown, fallback: string): string {
+  const raw = error instanceof Error ? error.message : String(error || '');
+  if (!raw || UPDATE_SECRET_PATTERNS.some((pattern) => pattern.test(raw))) return fallback;
+  const withoutUrlQueries = raw.replace(/https?:\/\/[^\s]+/gi, (candidate) => {
+    try {
+      const url = new URL(candidate);
+      return `${url.origin}${url.pathname}`;
+    } catch { return '[invalid URL]'; }
+  });
+  return withoutUrlQueries.slice(0, 512);
+}
+
+function reportUpdateError(scope: string, error: unknown, fallback: string): string {
+  const message = safeUpdateErrorMessage(error, fallback);
+  console.error(`[updater:${scope}] ${message}`);
+  return message;
+}
+
+export function requireUpdateMutationOrigin(
   req: AuthenticatedRequest,
   res: import('express').Response,
   next: import('express').NextFunction,
 ) {
-  if (req.user?.role !== 'root') {
-    res.status(403).json({ success: false, message: '无权限：仅 root 可操作' });
+  // Bearer-authenticated automation is not vulnerable to ambient-cookie CSRF.
+  // Cookie-authenticated browser mutations must prove exact same origin.
+  if (/^Bearer\s+\S+$/i.test(req.get('authorization') || '')) {
+    next();
     return;
   }
-  next();
+  const origin = req.get('origin');
+  const forwardedProto = (req.get('x-forwarded-proto') || '').split(',')[0].trim();
+  const protocol = forwardedProto || req.protocol;
+  const forwardedHost = (req.get('x-forwarded-host') || '').split(',')[0].trim();
+  const host = forwardedHost || req.get('host');
+  if (!origin || !host) {
+    res.status(403).json({ success: false, message: '更新请求缺少同源证明' });
+    return;
+  }
+  try {
+    if (new URL(origin).origin !== new URL(`${protocol}://${host}`).origin) {
+      res.status(403).json({ success: false, message: '拒绝跨源更新请求' });
+      return;
+    }
+    next();
+  } catch {
+    res.status(403).json({ success: false, message: '更新请求来源无效' });
+  }
 }
 
-router.use(authenticateToken, rootOnly);
+router.use(authenticateToken, requireRoot);
+
+/** 查看当前更新事务；不包含 token、签名私钥或配置内容。 */
+router.get('/state', (_req, res) => {
+  res.json({ success: true, transaction: pendingUpdateState() });
+});
 
 /**
  * 向 SSE 客户端推送一个事件。
@@ -55,10 +105,10 @@ router.get(
       const info = await getUpdateInfo(includePrerelease);
       res.json({ success: true, info });
     } catch (err) {
-      console.error('update check error:', err);
+      const message = reportUpdateError('check', err, '检查更新失败');
       res.status(err instanceof UpdateNotConfiguredError ? 503 : 500).json({
         success: false,
-        message: err instanceof Error ? err.message : '检查更新失败',
+        message,
       });
     }
   },
@@ -75,6 +125,7 @@ router.get(
  */
 router.post(
   '/apply-stream',
+  requireUpdateMutationOrigin,
   async (
     req: AuthenticatedRequest,
     res: Response,
@@ -89,10 +140,9 @@ router.post(
       const includePrerelease = req.query.includePrerelease === 'true';
       await applyUpdate(includePrerelease, (event) => sendSSE(res, event));
     } catch (err) {
-      console.error('update apply-stream error:', err);
       sendSSE(res, {
         stage: 'error',
-        message: err instanceof Error ? err.message : '应用更新失败',
+        message: reportUpdateError('apply-stream', err, '应用更新失败'),
       });
     } finally {
       res.end();
@@ -103,6 +153,7 @@ router.post(
 /** 从 GitHub Releases 下载并应用更新（无进度，兼容旧接口） */
 router.post(
   '/apply',
+  requireUpdateMutationOrigin,
   async (
     req: AuthenticatedRequest,
     res: import('express').Response,
@@ -112,10 +163,10 @@ router.post(
       const result = await applyUpdate(includePrerelease);
       res.json(result);
     } catch (err) {
-      console.error('update apply error:', err);
+      const message = reportUpdateError('apply', err, '应用更新失败');
       res.status(err instanceof UpdateNotConfiguredError ? 503 : 500).json({
         success: false,
-        message: err instanceof Error ? err.message : '应用更新失败',
+        message,
       });
     }
   },
@@ -131,6 +182,7 @@ router.post(
  */
 router.post(
   '/upload-stream',
+  requireUpdateMutationOrigin,
   // 使用 express.raw 接收二进制文件数据，支持 zip 和 gzip 格式
   // 限制 500MB 以容纳大型构建产物
   raw({
@@ -174,10 +226,9 @@ router.post(
         sendSSE(res, event),
       );
     } catch (err) {
-      console.error('update upload-stream error:', err);
       sendSSE(res, {
         stage: 'error',
-        message: err instanceof Error ? err.message : '上传更新失败',
+        message: reportUpdateError('upload-stream', err, '上传更新失败'),
       });
     } finally {
       res.end();
@@ -194,6 +245,7 @@ router.post(
  */
 router.post(
   '/upload',
+  requireUpdateMutationOrigin,
   // 使用 express.raw 接收二进制文件数据，支持 zip 和 gzip 格式
   // 限制 500MB 以容纳大型构建产物
   raw({
@@ -231,10 +283,9 @@ router.post(
       const result = await applyUpdateFromFile(req.body, filename);
       res.json(result);
     } catch (err) {
-      console.error('update upload error:', err);
       res.status(500).json({
         success: false,
-        message: err instanceof Error ? err.message : '上传更新失败',
+        message: reportUpdateError('upload', err, '上传更新失败'),
       });
     }
   },

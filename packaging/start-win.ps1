@@ -31,6 +31,10 @@ $certExe = Join-Path $rootDir "zviewer-cert.exe"
 $logDir = Join-Path $rootDir "log"
 $pidsFile = Join-Path $rootDir ".prod.pids.json"
 $envFile = Join-Path $rootDir ".env"
+$configDir = if ($env:CONFIG_DIR) { $env:CONFIG_DIR } else { Join-Path $rootDir "config" }
+$updateStateDir = Join-Path $configDir "update-state"
+$updateMarkerFile = Join-Path $updateStateDir "transaction.json"
+$updateHelperExe = Join-Path $updateStateDir "tongmu-update-helper.exe"
 
 # ==================== 工具函数 ====================
 
@@ -66,6 +70,81 @@ function Stop-ProcessByPort($localPort) {
     $conn = Get-NetTCPConnection -LocalPort $localPort -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($conn -and $conn.OwningProcess) {
         Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Read-UpdateMarker {
+    if (-not (Test-Path $updateMarkerFile)) { return $null }
+    try { return Get-Content $updateMarkerFile -Raw | ConvertFrom-Json } catch { throw "更新事务标记损坏: $updateMarkerFile" }
+}
+
+function Invoke-UpdaterHelper([string[]]$Arguments) {
+    New-Item -ItemType Directory -Path $updateStateDir -Force | Out-Null
+    Copy-Item -LiteralPath $backendExe -Destination $updateHelperExe -Force
+    $savedProjectRoot = $env:PROJECT_ROOT
+    $savedConfigDir = $env:CONFIG_DIR
+    try {
+        $env:PROJECT_ROOT = $rootDir
+        $env:CONFIG_DIR = $configDir
+        # Do not let the helper's JSON stdout become part of this function's
+        # return value. Windows PowerShell also turns redirected native stderr
+        # into ErrorRecord objects, so temporarily keep those records non-
+        # terminating and trust the native process exit code.
+        $savedErrorActionPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            $helperOutput = & $updateHelperExe @Arguments 2>&1
+            $exitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $savedErrorActionPreference
+        }
+        if ($helperOutput) { $helperOutput | ForEach-Object { Write-Host $_ } }
+        return $exitCode
+    } finally {
+        $env:PROJECT_ROOT = $savedProjectRoot
+        $env:CONFIG_DIR = $savedConfigDir
+        Remove-Item -LiteralPath $updateHelperExe -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Invoke-PendingProgramSwap {
+    $marker = Read-UpdateMarker
+    if (-not $marker -or @('ready-to-apply', 'applying') -notcontains $marker.stage) { return $true }
+    Write-Host "  检测到已验证的更新 $($marker.to.version)，正在安全切换..."
+    $code = Invoke-UpdaterHelper -Arguments @('--apply-pending-update')
+    if ($code -ne 0) {
+        Write-Host "  [错误] 程序切换失败；旧程序已保留或已回滚。" -ForegroundColor Red
+        return $false
+    }
+    return $true
+}
+
+function Confirm-UpdateHealth([int]$BackendPid) {
+    $marker = Read-UpdateMarker
+    if (-not $marker -or $marker.stage -ne 'swapped') { return $true }
+    $scheme = if ($Https) { 'https' } else { 'http' }
+    try {
+        $raw = & curl.exe -fsSk --max-time 15 "$scheme`://localhost:$Port/health" 2>$null
+        if ($LASTEXITCODE -ne 0) { throw "health endpoint unavailable" }
+        $health = $raw | ConvertFrom-Json
+        if ($health.status -ne 'ok' -or $health.version -ne $marker.to.version -or $health.commitSha -ne $marker.to.commitSha) {
+            throw "health identity mismatch"
+        }
+        $code = Invoke-UpdaterHelper -Arguments @('--finalize-pending-update', [string]$health.version, [string]$health.commitSha)
+        if ($code -ne 0) { throw "failed to finalize healthy update" }
+        Write-Host "  更新健康检查通过: $($health.version) + $($health.commitSha.Substring(0, 12))" -ForegroundColor Green
+        return $true
+    } catch {
+        Write-Host "  [错误] 新版本健康检查失败，正在恢复旧程序：$($_.Exception.Message)" -ForegroundColor Red
+        Stop-Process -Id $BackendPid -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Milliseconds 500
+        $rollbackCode = Invoke-UpdaterHelper -Arguments @('--rollback-pending-update', 'health check failed')
+        if ($rollbackCode -ne 0) {
+            Write-Host "  [严重] 自动程序回滚失败；请查看 config/update-state/transaction.json。" -ForegroundColor Red
+        } else {
+            Write-Host "  旧程序已恢复。若新版本已迁移数据库，还需按 Phase 6A 备份执行数据库恢复。" -ForegroundColor Yellow
+        }
+        return $false
     }
 }
 
@@ -217,6 +296,7 @@ function Invoke-Start([switch]$BackendOnly) {
     Write-Host "========================================"
 
     if (-not (Test-Exe $backendExe "后端程序 zviewer-backend.exe")) { return 1 }
+    if (-not (Invoke-PendingProgramSwap)) { return 1 }
 
     if (Test-PortInUse $Port) {
         Write-Host "  [错误] 端口 $Port 已被占用" -ForegroundColor Red
@@ -269,6 +349,8 @@ function Invoke-Start([switch]$BackendOnly) {
         Stop-Process -Id $backend.Id -Force -ErrorAction SilentlyContinue
         exit 1
     }
+
+    if (-not (Confirm-UpdateHealth -BackendPid $backend.Id)) { return 1 }
 
     Write-PidsFile -backendPid $backend.Id
     Write-Host "  后端 PID: $($backend.Id)"

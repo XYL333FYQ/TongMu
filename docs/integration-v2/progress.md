@@ -4,7 +4,7 @@
 
 This file is the persistent checkpoint for the TongMu V2 integration program. Phase 0 is an audit and design phase only: no product code, dependency, database, configuration, CI, or reference source was changed.
 
-Current state: **Phases 0–5 and Phase 6A Historical Database Migration are complete within their approved boundaries. Phase 6 remains IN PROGRESS: Phase 6B packaging, updater integrity, release CI, observability, provenance inventory, and Docker/release smoke are deliberately deferred.**
+Current state: **Phases 0–5, Phase 6A Historical Database Migration, and Phase 6B-1 Packaging + Secure Updater + Immutable Release CI + Artifact Provenance are complete within their approved boundaries. Phase 6 remains IN PROGRESS: Phase 6B-2 observability, full asset provenance inventory, and Docker/Linux runtime smoke are deliberately deferred.**
 
 Phase 2 has a working core checkpoint: the versioned client profile, server
 viability filter, client-owned planner path, provider contract/registry, and
@@ -16,8 +16,9 @@ facts, and provider session cleanup. Phase 2C-2 now converges AniSubs, Kazumi,
 configured anime sources, public HLS/HTTP-FLV live inputs, and Bilibili DASH
 exact codec/profile filtering through the same Media Core entrypoint. Provider-
 specific catalog/browse routes remain compatibility surfaces; Phase 3 manifest
-typing is complete. Database migration safety is closed by Phase 6A; Phase 6B
-release/packaging work remains open.
+typing is complete. Database migration safety is closed by Phase 6A; the
+bounded release/packaging gate is closed by Phase 6B-1, while Phase 6B-2 stays
+open.
 
 Phase 1 restored the declared dependency baseline, closed the scoped credential and
 token-revocation P0/P1 defects, introduced the shared ByteRange core, and added a
@@ -78,10 +79,10 @@ validated restore, failure/retry/interruption coverage, and production
 1. Phase 3A typed HLS/DASH resource mapping and its Chromium browser exit gate are complete; the fixture's Inspector/client-blocked diagnostics are intentional route aborts used to verify fallback.
 2. Live publishing/ingest lifecycle (RTMP/WHIP/WHEP) remains outside public HLS/HTTP-FLV source convergence and is explicitly deferred.
 3. Phase 3A's typed DASH mapper covers `SegmentBase`, representation indexes, bitstream-switching resources, `Location`, xlink, timing URLs, and bounded recursion in unit/backend tests; nested fixture MPD playback is covered by the completed Chromium suite.
-4. Realtime video and music synchronization now share the documented `RealtimeSyncCore` primitives while keeping independent clocks and state. Phase 5B-1 MusicSyncDomain, queue state, and Together Listen are complete; its final acceptance gate is closed. The historical Voice fake-media Chromium blocker and its auth-refresh race fix are recorded in the Phase 5B-1 closure below. Phase 5B-2A supplies the NCM provider/login/stream boundary and Phase 5B-2B supplies the bounded NCM catalog/product surface; only Phase 6B release work remains open.
+4. Realtime video and music synchronization now share the documented `RealtimeSyncCore` primitives while keeping independent clocks and state. Phase 5B-1 MusicSyncDomain, queue state, and Together Listen are complete; its final acceptance gate is closed. The historical Voice fake-media Chromium blocker and its auth-refresh race fix are recorded in the Phase 5B-1 closure below. Phase 5B-2A supplies the NCM provider/login/stream boundary and Phase 5B-2B supplies the bounded NCM catalog/product surface; only Phase 6B-2 work remains open.
 5. Voice lifecycle, identity, reconnect replacement, decoder ownership, ghost cleanup, and voice-local moderation remain Phase 4B behavior; Phase 5A now supplies the shared permission decision boundary.
 6. Phase 4A player/subtitle lifetime hardening and Phase 4B Voice are complete within their scoped boundaries.
-7. Release artifacts still retain historical ZViewer-era names for compatibility; full TongMu renaming, checksum/signature verification, staged extraction, and updater rollback remain Phase 6B work.
+7. Phase 6B-1 now gives releases canonical TongMu names while producing byte-identical historical aliases, and enforces signed manifests, SHA-256/size checks, safe staged extraction, transactional swap, health confirmation, and rollback. Formal production-key signing and GitHub-hosted release execution remain operational gates, not implementation claims.
 8. Third-party provenance is incomplete for fonts, images, icons, wasm/binaries, bundled JavaScript, and media fixtures. Upstream assets must not be copied until license and attribution are recorded.
 9. Docker and ffmpeg are unavailable on this host, so browser-enabled container and transcoding-specific validation remain environment-dependent.
 
@@ -109,7 +110,8 @@ validated restore, failure/retry/interruption coverage, and production
 - [x] Phase 5B-2A — NCM provider core / credential boundary / QR login / explicit-quality room playback.
 - [x] Phase 5B-2B — NCM catalog and remaining product surface within the bounded provider/product contract.
 - [x] Phase 6A — Historical database migrations / backup / restore / `synchronize:false` / upgrade safety gate.
-- [ ] Phase 6B — Packaging / updater integrity / release CI / Observability / provenance / Docker and release smoke.
+- [x] Phase 6B-1 — Packaging / secure updater / immutable release CI / artifact provenance.
+- [ ] Phase 6B-2 — Observability / full provenance inventory / Docker and Linux runtime smoke.
 
 See `implementation-plan.md` for dependencies, file targets, tests, exit criteria, and risks.
 
@@ -619,10 +621,60 @@ real account or credential was supplied.
 See `database-migrations.md` and `../upgrade-v2.md` for the schema evidence,
 operator procedure, backup/restore contract, and recovery instructions.
 
+## Phase 6B-1 packaging, secure updater, release CI, and provenance closure
+
+- Canonical archives are named
+  `TongMu-<version>-<platform>-<arch>-<commit12>.<ext>`. The historical
+  `zviewer-windows-x64.zip` and `zviewer-linux-x64.tar.gz` names are emitted
+  only as byte-identical compatibility aliases; the updater never falls back
+  to the historical ZViewer repository.
+- Each platform artifact has canonical JSON manifest bytes and a detached
+  Ed25519 signature. The updater fails closed for missing, unknown, revoked,
+  malformed, or invalid signatures, exact-size/SHA mismatch, downgrade, or a
+  same-version/different-commit replacement. Key status supports active,
+  retired verification-only, and revoked keys.
+- Every metadata/artifact request is HTTPS, host allowlisted, DNS checked and
+  pinned to the validated address, bounded, timed out, and revalidated after
+  redirects. Local HTTP exists only behind explicit test/development fixture
+  switches.
+- ZIP/TAR inspection rejects traversal, absolute/UNC/drive/ADS names,
+  Windows-reserved or ambiguous paths, links/special files, duplicates and
+  case collisions, forbidden runtime-data paths, excessive count, and
+  excessive size before extraction.
+- Program updates use their own persistent lock and transaction marker under
+  `config/update-state`, coordinate with database migration/restore, stage
+  outside the running program, preserve `config/`, apply idempotently through
+  the launch helper, require exact health version/SHA, and retain the previous
+  program until confirmation or rollback.
+- The tag/manual release workflow uses `npm ci`, checks tag/version/commit and
+  clean checkout invariants, signs per-platform manifests without printing the
+  key, verifies the exact artifact set/inventory, and uploads immutable
+  version/platform/architecture/commit-scoped CI artifacts. It does not create
+  a GitHub Release or publish a mutable `latest` artifact.
+- Windows real-package smoke passed from a Unicode/space path: signed-manifest
+  verification, safe extraction, packaged Chromium launch through the declared
+  external browser path, stale-old-file removal, transactional apply,
+  start/health/finalize/stop, exact build identity, helper cleanup, independent
+  real-package rollback, and config persistence all passed. The signing key was
+  generated only for this local smoke and is not a production release key.
+- Closure regression on 2026-09-19: updater/release focused tests 16/16;
+  Backend Node tests 145 PASS / 1 Windows symlink environment SKIP plus 29/29
+  migration tests; Frontend 26/26; Backend lint/build and Frontend build PASS;
+  Chromium 26 PASS / 1 existing Voice environment SKIP / 0 FAIL.
+- Linux executable runtime, Docker runtime/migration smoke, formal production
+  signing, GitHub Actions execution, and GitHub Release publication were NOT
+  RUN. Structured observability and a full repository-wide asset/license
+  inventory are Phase 6B-2 and were not silently included here.
+
+See `release-artifacts.md`, `updater-security.md`, and `../updating.md` for the
+artifact contract, trust model, operator procedure, and recovery behavior.
+
 ## Known environment limitations
 
 - The declared Node dependency tree is restored from the lockfile.
 - Docker CLI and ffmpeg are absent.
+- Windows single-file release smoke passed; Linux executable runtime and Docker
+  runtime smoke were not available on this Windows host.
 - The repository's local Node Playwright runner is installed and was used; no global Python Playwright runner was used.
 - No local `synctv-app` source is available, so WebRTC peer, Service Worker range routing, IndexedDB piece caching, cancellation, and browser fallback behavior cannot be audited from implementation.
 - Extracted ZViewer and SyncTV folders lack Git metadata; exact local reference commit identity is unresolved.
@@ -643,7 +695,9 @@ operator procedure, backup/restore contract, and recovery instructions.
 2. Which legacy providers are actively used in production and therefore determine the provider-convergence migration order?
 3. What compatibility window is required for old public routes and DTOs while providers move to the new Media Core?
 4. Which license applies to the absent `synctv-app` snapshot, and can its client-side P2P implementation be reviewed and adapted later?
-5. Which historical updater repository/artifact names must remain accepted during product-name normalization? Phase 1 keeps old artifact aliases but rejects the ZViewer repository as an update source.
+5. Historical archive aliases remain byte-identical release outputs for
+   download compatibility; the historical ZViewer repository and unsigned
+   historical updater inputs remain rejected as update sources.
 6. Are user-blocking/privacy and playback-history features product requirements for V2 or post-V2 candidates?
 
 ## Documentation produced and updated
@@ -657,6 +711,9 @@ operator procedure, backup/restore contract, and recovery instructions.
 - `manifest-resource-model.md`
 - `progress.md`
 - `player-lifecycle.md`
+- `release-artifacts.md`
+- `updater-security.md`
+- `../updating.md`
 
 Phase 1 updated `progress.md`, `upstream-adoption-matrix.md`, and
 `implementation-plan.md` with the implementation status and phase boundary.

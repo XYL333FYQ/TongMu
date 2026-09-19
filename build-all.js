@@ -318,6 +318,11 @@ function packageBackend(targetPlatforms, frontendDist) {
       const outputName = `zviewer-backend${target.includes('win') ? '.exe' : ''}`;
       const outputPath = path.join(outputFolder, outputName);
 
+      // Build into a fresh program directory. A stale .env/config/database from
+      // an earlier local build must never leak into a release package.
+      if (fs.existsSync(outputFolder)) {
+        fs.rmSync(outputFolder, { recursive: true, force: true });
+      }
       fs.mkdirSync(outputFolder, { recursive: true });
 
       log(`打包后端 → ${target} (${platform.label})...`);
@@ -343,27 +348,6 @@ function packageBackend(targetPlatforms, frontendDist) {
       if (!fs.existsSync(outputPath)) {
         warn(`后端打包失败：未生成 ${outputPath}`);
         continue;
-      }
-
-      // 复制后端 .env；保留 PORT 等端口配置，
-      // 由启动脚本（start.sh / start-win.ps1）读取并按需覆盖 exe 的环境变量。
-      // CI 环境中 backend/.env 被 .gitignore 排除，回退到 .env.example。
-      const envDest = path.join(outputFolder, '.env');
-      if (!fs.existsSync(envDest)) {
-        const envCandidates = [
-          path.join(BACKEND, '.env'),
-          path.join(BACKEND, '.env.example'),
-        ];
-        const envSrc = envCandidates.find((p) => fs.existsSync(p));
-        if (envSrc) {
-          const envContent = fs.readFileSync(envSrc, 'utf8');
-          fs.writeFileSync(envDest, envContent, 'utf8');
-          log(`已复制 .env 配置（来源: ${path.basename(envSrc)}）`);
-        } else {
-          // 兜底：创建空文件，避免后续 Docker COPY 失败
-          fs.writeFileSync(envDest, '', 'utf8');
-          log('已创建空 .env（未找到 .env / .env.example）');
-        }
       }
 
       // 复制前端静态文件到产物目录（统一端口：后端 exe 托管 frontend/dist）
@@ -488,6 +472,23 @@ function copyPackageJson(targetPlatforms) {
     } catch (e) {
       warn(`failed to copy package.json to ${folder}: ${e.message}`);
     }
+  }
+}
+
+function copyReleaseNotices(targetPlatforms) {
+  const source = path.join(ROOT, 'THIRD-PARTY-NOTICES.md');
+  if (!fs.existsSync(source)) throw new Error(`release notice is missing: ${source}`);
+  for (const folder of [...new Set(targetPlatforms.map((item) => item.folder))]) {
+    fs.copyFileSync(source, path.join(DIST_EXE, folder, 'THIRD-PARTY-NOTICES.md'));
+    success(`THIRD-PARTY-NOTICES.md: ${folder}/THIRD-PARTY-NOTICES.md`);
+  }
+}
+
+function copyBrowserRuntimeMetadata(targetPlatforms) {
+  const source = path.join(PACKAGING_DIR, 'browser-runtime.json');
+  for (const folder of [...new Set(targetPlatforms.map((item) => item.folder))]) {
+    fs.copyFileSync(source, path.join(DIST_EXE, folder, 'browser-runtime.json'));
+    success(`browser-runtime.json: ${folder}/browser-runtime.json`);
   }
 }
 
@@ -625,6 +626,10 @@ async function main() {
 
   // 复制 package.json 到产物目录（供更新功能读取版本号）
   copyPackageJson(targetPlatforms);
+
+  // Runtime attribution is part of every release; user configuration is not.
+  copyReleaseNotices(targetPlatforms);
+  copyBrowserRuntimeMetadata(targetPlatforms);
 
   if (allResults.length > 0) {
     printSummary(allResults);

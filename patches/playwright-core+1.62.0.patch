@@ -1,0 +1,21 @@
+diff --git a/node_modules/playwright-core/lib/coreBundle.js b/node_modules/playwright-core/lib/coreBundle.js
+index 9749434..c50a218 100644
+--- a/node_modules/playwright-core/lib/coreBundle.js
++++ b/node_modules/playwright-core/lib/coreBundle.js
+@@ -60903,7 +60903,15 @@ var init_page2 = __esm({
+   "packages/playwright-core/src/client/page.ts"() {
+     "use strict";
+     import_fs47 = __toESM(require("fs"));
+-    inspector = __toESM(require("inspector"));
++    try {
++      inspector = __toESM(require("inspector"));
++    } catch {
++      // @yao-pkg/pkg runtime is intentionally compiled without the Node
++      // inspector. Playwright only needs inspector.url() here to detect an
++      // attached JS debugger, so a no-debugger fallback preserves browser
++      // automation in packaged TongMu builds.
++      inspector = { url: () => void 0 };
++    }
+     import_path42 = __toESM(require("path"));
+     init_abortSignal();
+     init_assert();

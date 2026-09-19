@@ -86,6 +86,13 @@ docker compose logs --tail=100 -f
 
 当前根 Compose 使用源码构建，因此标准更新流程是拉取代码后重新执行 `docker compose up -d --build`。本仓库没有在 CI 中默认发布 Docker image。
 
+单文件版使用签名 release manifest、SHA-256、受控 Ed25519 公钥集和暂存切换；
+旧 `zviewer-*` 压缩包名只是 canonical TongMu artifact 的字节相同兼容副本。
+配置、数据库、上传和密钥不会进入程序包。完整操作与失败恢复见
+[`docs/updating.md`](docs/updating.md)，格式与信任边界见
+[`release-artifacts.md`](docs/integration-v2/release-artifacts.md) 和
+[`updater-security.md`](docs/integration-v2/updater-security.md)。
+
 ## 本地开发
 
 项目使用 npm workspaces；从 TongMu 根目录执行：
@@ -145,10 +152,10 @@ TongMu/
 
 当前发布树中的归属说明见 [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md)。
 
-`zviewer-*` 文件名、localStorage key、旧环境变量、Updater 进程名以及历史 Docker volume 等兼容 identifier 暂不整体改名；它们不是当前用户可见品牌，改动可能破坏旧数据或升级流程。
+`zviewer-*` 可执行文件名、localStorage key、旧环境变量、Updater 进程名以及历史 Docker volume 等兼容 identifier 暂不整体改名；release 压缩包已经以 `TongMu-<version>-<platform>-<arch>-<sha12>` 为 canonical 名称，同时生成字节相同的旧压缩包 alias。
 
 ## GitHub Actions
 
 - `ci.yml`：在 push/PR 上执行后端 lint/test、前端 test/build、关键 E2E 和 Compose 配置检查，不依赖 Docker Hub secret。
-- `build.yml`：按现有单文件流程构建 Windows/Linux artifact，并在 tag 或 main 时生成 Release；历史 `zviewer-*` artifact 文件名为兼容性保留项。
+- `build.yml`：仅 tag / `workflow_dispatch` 构建并签名 Windows/Linux immutable release candidate；校验 tag/version/SHA、lockfile、manifest 和包内清单，上传名含 version/platform/arch/SHA。它不自动创建 GitHub Release，也没有 `contents: write`。
 - `docker.yml`：仅 `workflow_dispatch` 手动构建 BrowserResolver 镜像，不登录 Docker Hub，也不自动 push。

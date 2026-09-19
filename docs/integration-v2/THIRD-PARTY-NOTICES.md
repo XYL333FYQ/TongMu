@@ -1,5 +1,14 @@
 # Third-party notices
 
+## Playwright Core
+
+- Package: `playwright-core@1.62.0`
+- License: Apache-2.0
+- Purpose: optional BrowserResolver browser automation and release smoke.
+- Local adaptation: `patches/playwright-core+1.62.0.patch` makes the optional
+  Node debugger probe tolerate the inspector-free `@yao-pkg/pkg` runtime. It
+  does not change navigation, proxy, credential or SSRF policy.
+
 ## SyncTV
 
 TongMu 的部分 provider、媒体代理和清单处理设计，以及若干适配器的实现，参考或改写了 SyncTV 对应模块。SyncTV 的完整源码只保存在本机只读目录 `references/synctv/`，不会进入 TongMu 的 GitHub 仓库；以下通知保留给可能来自或改写自 SyncTV 的部分。
