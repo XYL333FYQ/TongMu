@@ -11,6 +11,7 @@ import {
   fetchWithProxyPolicyDetailed,
   type ProxyTargetPolicy,
 } from './safe-fetch';
+import { metrics } from '../../observability';
 
 /**
  * Optional, single-process byte-slice cache for already-authorized media
@@ -234,7 +235,10 @@ export class MemorySliceCacheStore {
     this.stats = { hits: 0, misses: 0, bypasses: 0, evictions: 0, singleFlightJoins: 0, bytesServed: 0 };
   }
 
-  recordBypass(): void { this.stats.bypasses += 1; }
+  recordBypass(): void {
+    this.stats.bypasses += 1;
+    metrics.increment('slice_cache_total', { outcome: 'bypass' });
+  }
 
   recordBytesServed(bytes: number): void {
     if (Number.isSafeInteger(bytes) && bytes > 0) this.stats.bytesServed += bytes;
@@ -282,17 +286,20 @@ export class MemorySliceCacheStore {
     const entry = this.slices.get(key);
     if (!entry) {
       this.stats.misses += 1;
+      metrics.increment('slice_cache_total', { outcome: 'miss' });
       return undefined;
     }
     if (isExpired(entry)) {
       this.removeSlice(key, true);
       this.stats.misses += 1;
+      metrics.increment('slice_cache_total', { outcome: 'miss' });
       return undefined;
     }
     entry.lastAccessed = Date.now();
     this.slices.delete(key);
     this.slices.set(key, entry);
     this.stats.hits += 1;
+    metrics.increment('slice_cache_total', { outcome: 'hit' });
     return Buffer.from(entry.data);
   }
 
@@ -939,6 +946,7 @@ export async function tryServeSliceCache(
     res.end();
     return true;
   } catch (error) {
+    metrics.increment('slice_cache_total', { outcome: 'error' });
     if (responseStarted || res.headersSent) {
       console.warn(`[${options.logTag}] slice cache response stopped: ${error instanceof Error ? error.message : String(error)}`);
       if (!res.writableEnded) res.destroy();

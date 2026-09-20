@@ -476,11 +476,20 @@ function copyPackageJson(targetPlatforms) {
 }
 
 function copyReleaseNotices(targetPlatforms) {
-  const source = path.join(ROOT, 'THIRD-PARTY-NOTICES.md');
+  const source = path.join(ROOT, 'docs', 'integration-v2', 'THIRD-PARTY-NOTICES.md');
   if (!fs.existsSync(source)) throw new Error(`release notice is missing: ${source}`);
   for (const folder of [...new Set(targetPlatforms.map((item) => item.folder))]) {
     fs.copyFileSync(source, path.join(DIST_EXE, folder, 'THIRD-PARTY-NOTICES.md'));
     success(`THIRD-PARTY-NOTICES.md: ${folder}/THIRD-PARTY-NOTICES.md`);
+  }
+}
+
+function copyProvenanceInventory(targetPlatforms) {
+  const source = path.join(ROOT, 'docs', 'integration-v2', 'provenance-inventory.md');
+  if (!fs.existsSync(source)) throw new Error(`provenance inventory is missing: ${source}`);
+  for (const folder of [...new Set(targetPlatforms.map((item) => item.folder))]) {
+    fs.copyFileSync(source, path.join(DIST_EXE, folder, 'PROVENANCE-INVENTORY.md'));
+    success(`PROVENANCE-INVENTORY.md: ${folder}/PROVENANCE-INVENTORY.md`);
   }
 }
 
@@ -629,6 +638,7 @@ async function main() {
 
   // Runtime attribution is part of every release; user configuration is not.
   copyReleaseNotices(targetPlatforms);
+  copyProvenanceInventory(targetPlatforms);
   copyBrowserRuntimeMetadata(targetPlatforms);
 
   if (allResults.length > 0) {

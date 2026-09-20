@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import yauzl, { Entry } from 'yauzl';
 import * as tar from 'tar';
 import { UpdateIntegrityError } from './release-format';
@@ -19,6 +20,8 @@ const ALLOWED_TOP_LEVEL = new Set([
   'zviewer-backend',
   'zviewer-cert',
   'THIRD-PARTY-NOTICES.md',
+  'PROVENANCE-INVENTORY.md',
+  'artifact-inventory.json',
   'LICENSE',
 ]);
 const FORBIDDEN_SEGMENTS = new Set([
@@ -181,10 +184,54 @@ function assertNoLinks(root: string): void {
   }
 }
 
+function verifyArtifactInventory(root: string): void {
+  const inventoryPath = path.join(root, 'artifact-inventory.json');
+  let parsed: unknown;
+  try { parsed = JSON.parse(fs.readFileSync(inventoryPath, 'utf8')); }
+  catch { throw new UpdateIntegrityError('artifact inventory is not valid JSON'); }
+  const value = parsed as { schemaVersion?: unknown; algorithm?: unknown; files?: unknown };
+  if (value.schemaVersion !== 1 || value.algorithm !== 'SHA-256' || !Array.isArray(value.files)) {
+    throw new UpdateIntegrityError('artifact inventory format is invalid');
+  }
+  const expected = new Set<string>();
+  for (const item of value.files) {
+    const record = item as { path?: unknown; size?: unknown; sha256?: unknown };
+    if (typeof record.path !== 'string' || record.path === 'artifact-inventory.json') {
+      throw new UpdateIntegrityError('artifact inventory path is invalid');
+    }
+    const normalized = validateArchivePath(record.path, false);
+    if (normalized !== record.path || expected.has(normalized)) throw new UpdateIntegrityError('artifact inventory contains a duplicate path');
+    if (!Number.isSafeInteger(record.size) || (record.size as number) < 0 || typeof record.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(record.sha256)) {
+      throw new UpdateIntegrityError(`artifact inventory metadata is invalid: ${normalized}`);
+    }
+    const absolute = path.join(root, ...normalized.split('/'));
+    if (!fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) throw new UpdateIntegrityError(`artifact inventory file is missing: ${normalized}`);
+    if (fs.statSync(absolute).size !== record.size) throw new UpdateIntegrityError(`artifact inventory size mismatch: ${normalized}`);
+    const digest = crypto.createHash('sha256').update(fs.readFileSync(absolute)).digest('hex');
+    if (digest !== record.sha256) throw new UpdateIntegrityError(`artifact inventory SHA-256 mismatch: ${normalized}`);
+    expected.add(normalized);
+  }
+  const actual = new Set<string>();
+  const walk = (directory: string) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) walk(absolute);
+      else if (entry.isFile()) {
+        const relative = path.relative(root, absolute).replace(/\\/g, '/');
+        if (relative !== 'artifact-inventory.json') actual.add(relative);
+      }
+    }
+  };
+  walk(root);
+  if (actual.size !== expected.size || [...actual].some((item) => !expected.has(item))) {
+    throw new UpdateIntegrityError('artifact inventory does not cover the complete package');
+  }
+}
+
 export function verifyExtractedPackage(destination: string, platform: 'windows' | 'linux'): void {
   const required = platform === 'windows'
-    ? ['package.json', 'build-info.json', 'browser-runtime.json', 'frontend/dist/index.html', 'frontend/dist/voice-processor.js', 'frontend/dist/icons.svg', 'zviewer-backend.exe', 'start.bat', 'start.ps1']
-    : ['package.json', 'build-info.json', 'browser-runtime.json', 'frontend/dist/index.html', 'frontend/dist/voice-processor.js', 'frontend/dist/icons.svg', 'zviewer-backend', 'start.sh'];
+    ? ['package.json', 'build-info.json', 'browser-runtime.json', 'frontend/dist/index.html', 'frontend/dist/voice-processor.js', 'frontend/dist/icons.svg', 'zviewer-backend.exe', 'start.bat', 'start.ps1', 'THIRD-PARTY-NOTICES.md', 'PROVENANCE-INVENTORY.md', 'artifact-inventory.json']
+    : ['package.json', 'build-info.json', 'browser-runtime.json', 'frontend/dist/index.html', 'frontend/dist/voice-processor.js', 'frontend/dist/icons.svg', 'zviewer-backend', 'start.sh', 'THIRD-PARTY-NOTICES.md', 'PROVENANCE-INVENTORY.md', 'artifact-inventory.json'];
   for (const relative of required) {
     const absolute = path.join(destination, ...relative.split('/'));
     if (!fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) {
@@ -196,6 +243,7 @@ export function verifyExtractedPackage(destination: string, platform: 'windows' 
     throw new UpdateIntegrityError('release package is missing required WASM or Worker runtime assets');
   }
   assertNoLinks(destination);
+  verifyArtifactInventory(destination);
 }
 
 export async function inspectAndExtractArchive(

@@ -21,7 +21,8 @@ import {
   ProxyTargetError,
   type ProxyTargetPolicy,
 } from './safe-fetch';
-import { redactMediaError, redactMediaUrl } from '../media/redact';
+import { redactMediaError } from '../media/redact';
+import { logger } from '../../observability';
 import {
   parseByteRangeHeader,
   parseContentRangeHeader,
@@ -32,14 +33,6 @@ import {
   tryServeSliceCache,
   type SliceCacheRequestContext,
 } from './slice-cache';
-
-/** 将字节数格式化为人类可读单位 */
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes}B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)}MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)}GB`;
-}
 
 /** 上游请求默认 UA（桌面 Chrome），防盗链场景使用 */
 export const DEFAULT_PROXY_UA =
@@ -224,7 +217,8 @@ export async function proxyHttpUpstream(
   let h = opts.headers ?? {};
 
   // 流量追踪：记录传输字节数与耗时
-  const startTime = Date.now();
+  const startTime = process.hrtime.bigint();
+  const durationMs = () => Number(process.hrtime.bigint() - startTime) / 1_000_000;
   let bytesSent = 0;
   const rangeHeader = rangeHeaderValue(req);
   const parsedRange = parseByteRangeHeader(rangeHeader);
@@ -295,9 +289,10 @@ export async function proxyHttpUpstream(
       requestUrl = requestUrl.replace(/^https:\/\//i, 'http://');
       const reason =
         fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
-      console.warn(
-        `[${logTag}] https 上游失败（${redactMediaError(reason)}），降级 http 重试: ${redactMediaUrl(requestUrl)}`,
-      );
+      logger.warn('media-proxy', 'https_to_http_retry', {
+        proxyKind: logTag,
+        error: redactMediaError(reason),
+      });
       // 重建超时与中断控制器：旧 controller 已 abort，旧计时器已触发
       clearTimeout(timeout);
       controller = new AbortController();
@@ -330,9 +325,10 @@ export async function proxyHttpUpstream(
     }
 
     if (!upstream.ok) {
-      console.log(
-        `[${logTag}] proxy ${upstream.status} ${formatBytes(bytesSent)} ${Date.now() - startTime}ms range=${rangeHeader || '-'} ${redactMediaUrl(requestUrl)}`,
-      );
+      logger.info('media-proxy', 'upstream_rejected', {
+        proxyKind: logTag, status: upstream.status, responseBytes: bytesSent,
+        durationMs: durationMs(), rangeRequested: Boolean(rangeHeader),
+      });
       res.status(upstream.status);
       // 透传语义头：如 416 的 Content-Range: bytes */size（RFC 9110 要求），
       // 让客户端能感知分片边界；若一个头都不透传，Range 语义完全丢失。
@@ -440,9 +436,10 @@ export async function proxyHttpUpstream(
       // HEAD 请求：上游 body 为 null，status 已由上游设置（200/206），
       // 仅返回头信息，不传输 body。
       // 非 HEAD 的无 body 响应（如 204）：保持上游状态码。
-      console.log(
-        `[${logTag}] proxy ${res.statusCode} ${formatBytes(0)} ${Date.now() - startTime}ms range=${rangeHeader || '-'} ${redactMediaUrl(requestUrl)}`,
-      );
+      logger.info('media-proxy', 'head_completed', {
+        proxyKind: logTag, status: res.statusCode, responseBytes: 0,
+        durationMs: durationMs(), rangeRequested: Boolean(rangeHeader),
+      });
       res.end();
       return;
     }
@@ -465,10 +462,10 @@ export async function proxyHttpUpstream(
       },
     });
     stream.on('error', (err) => {
-      console.error(`[${logTag}] proxy upstream stream error: ${redactMediaError(err)}`);
-      console.log(
-        `[${logTag}] proxy ERROR ${formatBytes(bytesSent)} ${Date.now() - startTime}ms range=${rangeHeader || '-'} ${redactMediaUrl(requestUrl)}`,
-      );
+      logger.error('media-proxy', 'upstream_stream_failed', {
+        proxyKind: logTag, error: err, responseBytes: bytesSent,
+        durationMs: durationMs(), rangeRequested: Boolean(rangeHeader),
+      });
       if (!res.headersSent) {
         res.status(502).json({ success: false, message: errorMessage });
       } else {
@@ -476,14 +473,15 @@ export async function proxyHttpUpstream(
       }
     });
     byteCounter.on('error', (err) => {
-      console.error(`[${logTag}] proxy range validation error: ${redactMediaError(err)}`);
+      logger.error('media-proxy', 'range_validation_failed', { proxyKind: logTag, error: err });
       if (!res.writableEnded) res.destroy();
     });
     // 响应结束时输出流量日志
     res.on('finish', () => {
-      console.log(
-        `[${logTag}] proxy ${res.statusCode} ${formatBytes(bytesSent)} ${Date.now() - startTime}ms range=${rangeHeader || '-'} ${redactMediaUrl(requestUrl)}`,
-      );
+      logger.info('media-proxy', 'stream_completed', {
+        proxyKind: logTag, status: res.statusCode, responseBytes: bytesSent,
+        durationMs: durationMs(), rangeRequested: Boolean(rangeHeader),
+      });
     });
     stream.pipe(byteCounter).pipe(res);
   } catch (err) {
@@ -499,9 +497,10 @@ export async function proxyHttpUpstream(
     if (isAbort && res.writableEnded) return; // 客户端主动断连，无需响应
     if (isAbort) {
       // 超时触发的中断
-      console.warn(
-        `[${logTag}] proxy TIMEOUT ${formatBytes(bytesSent)} ${Date.now() - startTime}ms range=${rangeHeader || '-'} ${redactMediaUrl(requestUrl)}`,
-      );
+      logger.warn('media-proxy', 'timeout', {
+        proxyKind: logTag, responseBytes: bytesSent,
+        durationMs: durationMs(), rangeRequested: Boolean(rangeHeader),
+      });
       if (!res.headersSent) {
         res.status(504).json({ success: false, message: '上游请求超时' });
       } else {
@@ -509,10 +508,10 @@ export async function proxyHttpUpstream(
       }
       return;
     }
-    console.error(`[${logTag}] proxy error: ${redactMediaError(err)}`);
-    console.log(
-      `[${logTag}] proxy ERR ${formatBytes(bytesSent)} ${Date.now() - startTime}ms range=${rangeHeader || '-'} ${redactMediaUrl(requestUrl)}`,
-    );
+    logger.error('media-proxy', 'request_failed', {
+      proxyKind: logTag, error: err, responseBytes: bytesSent,
+      durationMs: durationMs(), rangeRequested: Boolean(rangeHeader),
+    });
     if (!res.headersSent) {
       res.status(502).json({ success: false, message: errorMessage });
     } else {

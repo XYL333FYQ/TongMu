@@ -71,6 +71,8 @@ function writeProgramPackage(directory, suffix) {
   fs.writeFileSync(path.join(directory, 'package.json'), `{"value":"${suffix}"}\n`);
   fs.writeFileSync(path.join(directory, 'build-info.json'), '{}\n');
   fs.writeFileSync(path.join(directory, 'browser-runtime.json'), '{}\n');
+  fs.writeFileSync(path.join(directory, 'THIRD-PARTY-NOTICES.md'), 'notices\n');
+  fs.writeFileSync(path.join(directory, 'PROVENANCE-INVENTORY.md'), 'provenance\n');
   fs.writeFileSync(path.join(directory, 'frontend', 'dist', 'index.html'), suffix);
   fs.writeFileSync(path.join(directory, 'frontend', 'dist', 'voice-processor.js'), suffix);
   fs.writeFileSync(path.join(directory, 'frontend', 'dist', 'icons.svg'), suffix);
@@ -78,6 +80,20 @@ function writeProgramPackage(directory, suffix) {
   fs.writeFileSync(path.join(directory, 'frontend', 'dist', 'assets', 'runtime-worker.js'), suffix);
   fs.writeFileSync(path.join(directory, 'zviewer-backend'), suffix);
   fs.writeFileSync(path.join(directory, 'start.sh'), suffix);
+  const files = [];
+  const walk = (current) => {
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const absolute = path.join(current, entry.name);
+      if (entry.isDirectory()) walk(absolute);
+      else files.push({
+        path: path.relative(directory, absolute).replace(/\\/g, '/'),
+        size: fs.statSync(absolute).size,
+        sha256: crypto.createHash('sha256').update(fs.readFileSync(absolute)).digest('hex'),
+      });
+    }
+  };
+  walk(directory);
+  fs.writeFileSync(path.join(directory, 'artifact-inventory.json'), `${JSON.stringify({ schemaVersion: 1, algorithm: 'SHA-256', files })}\n`);
 }
 
 test('canonical manifest serialization and canonical/legacy artifact identity are stable', () => {
@@ -157,6 +173,14 @@ test('archive inspection extracts a valid package and removes a corrupted extrac
     await tar.c({ gzip: true, file: output, cwd: source }, fs.readdirSync(source).sort());
     await archive.inspectAndExtractArchive(output, extracted, 'linux');
     assert.equal(fs.readFileSync(path.join(extracted, 'frontend', 'dist', 'index.html'), 'utf8'), 'new');
+    assert.equal(fs.existsSync(path.join(extracted, 'PROVENANCE-INVENTORY.md')), true);
+    assert.equal(fs.existsSync(path.join(extracted, 'THIRD-PARTY-NOTICES.md')), true);
+    const inventory = JSON.parse(fs.readFileSync(path.join(extracted, 'artifact-inventory.json'), 'utf8'));
+    assert.equal(inventory.files.some((item) => item.path === 'PROVENANCE-INVENTORY.md'), true);
+    const unlisted = path.join(root, 'unlisted.tar.gz');
+    fs.writeFileSync(path.join(source, 'LICENSE'), 'added after inventory');
+    await tar.c({ gzip: true, file: unlisted, cwd: source }, fs.readdirSync(source).sort());
+    await assert.rejects(() => archive.inspectAndExtractArchive(unlisted, path.join(root, 'unlisted-out'), 'linux'), /inventory/);
     const corrupt = path.join(root, 'corrupt.tar.gz');
     fs.writeFileSync(corrupt, 'not an archive');
     await assert.rejects(() => archive.inspectAndExtractArchive(corrupt, path.join(root, 'corrupt-out'), 'linux'));
@@ -328,7 +352,6 @@ test('release packager produces signed canonical bytes and a byte-identical lega
     const output = path.join(root, 'output');
     writeProgramPackage(input, 'release');
     fs.writeFileSync(path.join(input, 'zviewer-cert'), 'cert');
-    fs.writeFileSync(path.join(input, 'THIRD-PARTY-NOTICES.md'), 'notices');
     const pair = keyPair();
     const environment = {
       ...process.env,
@@ -345,6 +368,8 @@ test('release packager produces signed canonical bytes and a byte-identical lega
     assert.equal(release.sha256File(path.join(output, metadata.canonicalName)), release.sha256File(path.join(output, metadata.legacyName)));
     const manifestBytes = fs.readFileSync(path.join(output, metadata.manifest));
     const parsed = release.parseReleaseManifest(manifestBytes);
+    assert.equal(parsed.inventory.filename, 'artifact-inventory.json');
+    assert.match(parsed.inventory.sha256, /^[0-9a-f]{64}$/);
     const signature = release.parseReleaseSignature(fs.readFileSync(path.join(output, metadata.signature)));
     release.verifyReleaseSignature(manifestBytes, parsed, signature, [{ keyId: signature.keyId, algorithm: 'Ed25519', publicKey: pair.publicKey, status: 'active' }]);
     const extracted = path.join(root, 'verified');

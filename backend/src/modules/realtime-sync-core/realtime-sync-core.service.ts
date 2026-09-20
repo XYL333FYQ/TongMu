@@ -6,6 +6,16 @@ import type {
   RealtimeDomain,
   RealtimeVersion,
 } from './types';
+import { metrics } from '../../observability';
+
+type RejectionCode = 'DUPLICATE' | 'STALE_VERSION' | 'STALE_GENERATION' | 'INVALID_TIMESTAMP';
+
+function rejected(code: RejectionCode, message: string): { ok: false; code: RejectionCode; message: string } {
+  metrics.increment('realtime_rejected_total', {
+    reason: code === 'INVALID_TIMESTAMP' || code === 'DUPLICATE' ? 'invalid' : 'stale',
+  });
+  return { ok: false, code, message };
+}
 import {
   MAX_CLIENT_CLOCK_SKEW_MS,
   MAX_MUTATION_ID_LENGTH,
@@ -87,26 +97,26 @@ export class RealtimeSyncCore {
   guardMutation(roomId: string, envelope: MutationEnvelope, now = Date.now()): MutationGuardResult {
     const clock = this.getRoom(roomId);
     if (!validateClientTimestamp(envelope.clientTimestamp, now)) {
-      return { ok: false, code: 'INVALID_TIMESTAMP', message: '客户端时间戳超出允许范围' };
+      return rejected('INVALID_TIMESTAMP', '客户端时间戳超出允许范围');
     }
     if (envelope.mutationId !== undefined &&
       (typeof envelope.mutationId !== 'string' || envelope.mutationId.length === 0 || envelope.mutationId.length > MAX_MUTATION_ID_LENGTH)) {
-      return { ok: false, code: 'DUPLICATE', message: 'mutationId 无效' };
+      return rejected('DUPLICATE', 'mutationId 无效');
     }
     if (envelope.mutationId && clock.seenMutations.has(envelope.mutationId)) {
-      return { ok: false, code: 'DUPLICATE', message: '重复 mutation 已忽略' };
+      return rejected('DUPLICATE', '重复 mutation 已忽略');
     }
 
     const incomingGeneration = envelope.sourceGeneration ?? clock.generation;
     if (!isValidVersion(incomingGeneration)) {
-      return { ok: false, code: 'STALE_GENERATION', message: 'sourceGeneration 无效' };
+      return rejected('STALE_GENERATION', 'sourceGeneration 无效');
     }
     if (incomingGeneration < clock.generation) {
-      return { ok: false, code: 'STALE_GENERATION', message: '旧 sourceGeneration 已失效' };
+      return rejected('STALE_GENERATION', '旧 sourceGeneration 已失效');
     }
     if (envelope.baseVersion !== undefined &&
       (!isValidVersion(envelope.baseVersion) || envelope.baseVersion !== clock.version)) {
-      return { ok: false, code: 'STALE_VERSION', message: '基于旧 version 的 mutation 已失效' };
+      return rejected('STALE_VERSION', '基于旧 version 的 mutation 已失效');
     }
     return { ok: true, version: clock.version + 1, sourceGeneration: incomingGeneration, serverTimestamp: now };
   }
@@ -169,26 +179,26 @@ export class RealtimeSyncCore {
   ): DomainMutationGuardResult {
     const clock = domain === 'music' ? this.getMusicRoom(roomId) : this.getRoom(roomId);
     if (!validateClientTimestamp(envelope.clientTimestamp, now)) {
-      return { ok: false, code: 'INVALID_TIMESTAMP', message: '客户端时间戳超出允许范围' };
+      return rejected('INVALID_TIMESTAMP', '客户端时间戳超出允许范围');
     }
     if (envelope.mutationId !== undefined &&
       (typeof envelope.mutationId !== 'string' || envelope.mutationId.length === 0 || envelope.mutationId.length > MAX_MUTATION_ID_LENGTH)) {
-      return { ok: false, code: 'DUPLICATE', message: 'mutationId 无效' };
+      return rejected('DUPLICATE', 'mutationId 无效');
     }
     if (envelope.mutationId && clock.seenMutations.has(envelope.mutationId)) {
-      return { ok: false, code: 'DUPLICATE', message: '重复 mutation 已忽略' };
+      return rejected('DUPLICATE', '重复 mutation 已忽略');
     }
 
     const incomingGeneration = envelope.generation ?? clock.generation;
     if (!isValidVersion(incomingGeneration)) {
-      return { ok: false, code: 'STALE_GENERATION', message: 'generation 无效' };
+      return rejected('STALE_GENERATION', 'generation 无效');
     }
     if (incomingGeneration < clock.generation) {
-      return { ok: false, code: 'STALE_GENERATION', message: '旧 generation 已失效' };
+      return rejected('STALE_GENERATION', '旧 generation 已失效');
     }
     if (envelope.baseVersion !== undefined &&
       (!isValidVersion(envelope.baseVersion) || envelope.baseVersion !== clock.version)) {
-      return { ok: false, code: 'STALE_VERSION', message: '基于旧 version 的 mutation 已失效' };
+      return rejected('STALE_VERSION', '基于旧 version 的 mutation 已失效');
     }
     return { ok: true, version: clock.version + 1, generation: incomingGeneration, serverTimestamp: now };
   }

@@ -52,6 +52,9 @@ async function main() {
   const destination = path.join(extraction, 'package');
   try {
     await inspectAndExtractArchive(canonical, destination, manifest.platform);
+    if (!manifest.inventory) fail('signed manifest is missing the artifact inventory digest');
+    const inventory = path.join(destination, manifest.inventory.filename);
+    if (releaseFormat.sha256File(inventory) !== manifest.inventory.sha256) fail('artifact inventory SHA-256 mismatch');
   } finally {
     fs.rmSync(extraction, { recursive: true, force: true });
   }

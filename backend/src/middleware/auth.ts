@@ -6,6 +6,7 @@ import jwt from 'jsonwebtoken';
 
 import type { UserRole } from '../entities/User';
 import { CONFIG_DIR } from '../services/paths';
+import { logger } from '../observability';
 
 export interface JwtPayload {
   userId: number;
@@ -78,15 +79,13 @@ function loadOrCreateSecret(
     }
     obj[fileKey] = generated;
     fs.writeFileSync(JWT_SECRETS_FILE, JSON.stringify(obj, null, 2));
-    console.log(
-      `[auth] ${envKey} 未设置：已自动生成随机密钥并保存到 ${JWT_SECRETS_FILE}。` +
-        `如需自定义请在 .env 中设置 ${envKey}。`
-    );
+    logger.info('auth', 'jwt_secret_generated', { source: 'config', secretKind: envKey });
   } catch (err) {
-    console.warn(
-      `[auth] ${envKey} 未设置且无法持久化自动生成的密钥（本次启动使用进程内临时密钥，重启后所有用户需重新登录）:`,
-      err instanceof Error ? err.message : err
-    );
+    logger.warn('auth', 'jwt_secret_persistence_failed', {
+      source: 'ephemeral',
+      secretKind: envKey,
+      error: err,
+    });
   }
   return generated;
 }

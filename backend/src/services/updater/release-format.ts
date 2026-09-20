@@ -25,6 +25,10 @@ export interface ReleaseManifest {
     size: number;
     sha256: string;
   };
+  inventory?: {
+    filename: 'artifact-inventory.json';
+    sha256: string;
+  };
   signature: {
     algorithm: 'Ed25519';
     keyId: string;
@@ -164,6 +168,16 @@ export function parseReleaseManifest(raw: Buffer | string): ReleaseManifest {
   }
   const sha256 = stringField(artifact.sha256, 'artifact.sha256', 64).toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(sha256)) throw new UpdateIntegrityError('manifest artifact SHA-256 is invalid');
+  let inventory: ReleaseManifest['inventory'];
+  if (value.inventory !== undefined) {
+    const candidate = value.inventory as ReleaseManifest['inventory'];
+    if (!candidate || candidate.filename !== 'artifact-inventory.json') {
+      throw new UpdateIntegrityError('manifest inventory filename is invalid');
+    }
+    const inventorySha256 = stringField(candidate.sha256, 'inventory.sha256', 64).toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(inventorySha256)) throw new UpdateIntegrityError('manifest inventory SHA-256 is invalid');
+    inventory = { filename: 'artifact-inventory.json', sha256: inventorySha256 };
+  }
   const signature = value.signature as ReleaseManifest['signature'] | undefined;
   if (!signature || signature.algorithm !== 'Ed25519') throw new UpdateIntegrityError('unsupported manifest signature algorithm');
   const keyId = stringField(signature.keyId, 'signature.keyId', 96);
@@ -184,6 +198,7 @@ export function parseReleaseManifest(raw: Buffer | string): ReleaseManifest {
     platform: value.platform,
     architecture: value.architecture,
     artifact: { filename, size: artifact.size, sha256 },
+    ...(inventory ? { inventory } : {}),
     signature: { algorithm: 'Ed25519', keyId },
     minimumUpdaterCompatibilityVersion: minimum,
     buildEnvironment: { node, npm, lockfileSha256, reproducible: false },

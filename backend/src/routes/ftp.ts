@@ -18,6 +18,7 @@ import {
   pipeRangeStream,
   sendRangeNotSatisfiable,
 } from '../services/proxy';
+import { logger } from '../observability';
 
 const router = Router();
 
@@ -49,7 +50,7 @@ router.get('/mounts', async (req: AuthenticatedRequest, res: Response): Promise<
       mounts: mounts.map(stripPassword),
     });
   } catch (err) {
-    console.error('[ftp] list mounts error:', err);
+    logger.error('storage-provider', 'list_mounts_failed', { providerType: 'ftp', error: err });
     res.status(500).json({ success: false, message: '获取 FTP 挂载列表失败' });
   }
 });
@@ -90,7 +91,7 @@ router.post('/mounts/test', async (req: AuthenticatedRequest, res: Response): Pr
       });
     }
   } catch (err) {
-    console.error('[ftp] test mount error:', err);
+    logger.error('storage-provider', 'test_mount_failed', { providerType: 'ftp', error: err });
     res.status(500).json({ success: false, message: '测试 FTP 连接失败' });
   }
 });
@@ -153,7 +154,7 @@ router.post('/mounts', async (req: AuthenticatedRequest, res: Response): Promise
       mount: stripPassword(mount),
     });
   } catch (err) {
-    console.error('[ftp] create mount error:', err);
+    logger.error('storage-provider', 'create_mount_failed', { providerType: 'ftp', error: err });
     res.status(500).json({ success: false, message: '创建 FTP 挂载失败' });
   }
 });
@@ -229,7 +230,7 @@ router.put('/mounts/:id', async (req: AuthenticatedRequest, res: Response): Prom
       mount: stripPassword(mount),
     });
   } catch (err) {
-    console.error('[ftp] update mount error:', err);
+    logger.error('storage-provider', 'update_mount_failed', { providerType: 'ftp', error: err });
     res.status(500).json({ success: false, message: '更新 FTP 挂载失败' });
   }
 });
@@ -257,7 +258,7 @@ router.delete('/mounts/:id', async (req: AuthenticatedRequest, res: Response): P
     await repo.remove(mount);
     res.json({ success: true });
   } catch (err) {
-    console.error('[ftp] delete mount error:', err);
+    logger.error('storage-provider', 'delete_mount_failed', { providerType: 'ftp', error: err });
     res.status(500).json({ success: false, message: '删除 FTP 挂载失败' });
   }
 });
@@ -302,7 +303,7 @@ router.get('/mounts/:id/browse', async (req: AuthenticatedRequest, res: Response
       });
     }
   } catch (err) {
-    console.error('[ftp] browse mount error:', err);
+    logger.error('storage-provider', 'browse_mount_failed', { providerType: 'ftp', error: err });
     res.status(500).json({ success: false, message: '浏览 FTP 挂载失败' });
   }
 });
@@ -370,7 +371,7 @@ router.get('/resolve', async (req: AuthenticatedRequest, res: Response): Promise
       });
     }
   } catch (err) {
-    console.error('[ftp] resolve error:', err);
+    logger.error('storage-provider', 'resolve_failed', { providerType: 'ftp', error: err });
     res.status(500).json({ success: false, message: '解析 FTP 文件失败' });
   }
 });
@@ -424,7 +425,7 @@ router.get('/proxy', async (req: AuthenticatedRequest, res: Response): Promise<v
       });
     }
   } catch (err) {
-    console.error('[ftp] proxy error:', err);
+    logger.error('storage-provider', 'proxy_failed', { providerType: 'ftp', error: err });
     res.status(500).json({ success: false, message: '代理 FTP 流失败' });
   }
 });
@@ -488,7 +489,7 @@ router.get('/stream', async (req: AuthenticatedRequest, res: Response): Promise<
       });
     }
   } catch (err) {
-    console.error('[ftp] stream error:', err);
+    logger.error('storage-provider', 'stream_failed', { providerType: 'ftp', error: err });
     if (!res.headersSent) {
       res.status(502).json({
         success: false,

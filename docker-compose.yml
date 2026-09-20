@@ -3,6 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.linux-browser
+      args:
+        TONGMU_BUILD_SHA: "${TONGMU_BUILD_SHA:-development}"
     # 推荐部署先执行：cp .env.example .env
     env_file:
       - .env

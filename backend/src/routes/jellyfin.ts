@@ -17,6 +17,7 @@ import { JellyfinClient, JellyfinError } from '../services/jellyfin-client';
 import { detectMediaFormat } from '../services/mediaFormat';
 import { resolveUserMount, resolveMovieStream, proxyHttpUpstream } from '../services/proxy';
 import { normalizeServerUrlWithScheme } from '../services/network-utils';
+import { logger } from '../observability';
 
 const router = Router();
 
@@ -85,7 +86,7 @@ router.get('/mounts', async (req: AuthenticatedRequest, res: Response): Promise<
     });
     res.json({ success: true, mounts: mounts.map(stripPassword) });
   } catch (err) {
-    console.error('[jellyfin] list mounts error:', err);
+    logger.error('media-provider', 'list_mounts_failed', { providerType: 'jellyfin', error: err });
     res.status(500).json({ success: false, message: '获取 Jellyfin 挂载列表失败' });
   }
 });
@@ -117,7 +118,7 @@ router.post('/mounts/test', async (req: AuthenticatedRequest, res: Response): Pr
       res.status(400).json({ success: false, message: extractErrorMessage(err, '连接 Jellyfin 失败'), code });
     }
   } catch (err) {
-    console.error('[jellyfin] test mount error:', err);
+    logger.error('media-provider', 'test_mount_failed', { providerType: 'jellyfin', error: err });
     res.status(500).json({ success: false, message: '测试 Jellyfin 连接失败' });
   }
 });
@@ -176,7 +177,7 @@ router.post('/mounts', async (req: AuthenticatedRequest, res: Response): Promise
       ...(httpsWarning ? { warning: httpsWarning } : {}),
     });
   } catch (err) {
-    console.error('[jellyfin] create mount error:', err);
+    logger.error('media-provider', 'create_mount_failed', { providerType: 'jellyfin', error: err });
     res.status(500).json({ success: false, message: '创建 Jellyfin 挂载失败' });
   }
 });
@@ -218,7 +219,7 @@ router.put('/mounts/:id', async (req: AuthenticatedRequest, res: Response): Prom
       ...(httpsWarning ? { warning: httpsWarning } : {}),
     });
   } catch (err) {
-    console.error('[jellyfin] update mount error:', err);
+    logger.error('media-provider', 'update_mount_failed', { providerType: 'jellyfin', error: err });
     res.status(500).json({ success: false, message: '更新 Jellyfin 挂载失败' });
   }
 });
@@ -240,7 +241,7 @@ router.delete('/mounts/:id', async (req: AuthenticatedRequest, res: Response): P
     await repo.remove(mount);
     res.json({ success: true });
   } catch (err) {
-    console.error('[jellyfin] delete mount error:', err);
+    logger.error('media-provider', 'delete_mount_failed', { providerType: 'jellyfin', error: err });
     res.status(500).json({ success: false, message: '删除 Jellyfin 挂载失败' });
   }
 });
@@ -269,7 +270,7 @@ router.get('/mounts/:id/browse', async (req: AuthenticatedRequest, res: Response
     }
     res.json({ success: true, entries: items.map(mapJellyfinEntry) });
   } catch (err) {
-    console.error('[jellyfin] browse mount error:', err);
+    logger.error('media-provider', 'browse_mount_failed', { providerType: 'jellyfin', error: err });
     const code = extractErrorCode(err);
     const status = code === 'AUTH_FAILED' ? 401 : code === 'TIMEOUT' ? 504 : 400;
     res.status(status).json({ success: false, message: extractErrorMessage(err, '浏览 Jellyfin 失败'), code });
@@ -339,7 +340,7 @@ router.get('/resolve', async (req: AuthenticatedRequest, res: Response): Promise
       jellyfin: { itemId, container: source.Container ?? '' },
     });
   } catch (err) {
-    console.error('[jellyfin] resolve error:', err);
+    logger.error('media-provider', 'resolve_failed', { providerType: 'jellyfin', error: err });
     res.status(400).json({ success: false, message: extractErrorMessage(err, '解析 Jellyfin 条目失败'), code: extractErrorCode(err) });
   }
 });
@@ -369,7 +370,7 @@ router.get('/proxy', async (req: AuthenticatedRequest, res: Response): Promise<v
       errorMessage: 'Jellyfin 视频流代理失败',
     });
   } catch (err) {
-    console.error('[jellyfin] proxy error:', err);
+    logger.error('media-provider', 'proxy_failed', { providerType: 'jellyfin', error: err });
     const status = extractErrorCode(err) === 'AUTH_FAILED' ? 401 : 502;
     res.status(status).json({ success: false, message: extractErrorMessage(err, '代理 Jellyfin 视频流失败'), code: extractErrorCode(err) });
   }
@@ -421,7 +422,7 @@ router.get('/stream', async (req: AuthenticatedRequest, res: Response): Promise<
       errorMessage: 'Jellyfin 视频流代理失败',
     });
   } catch (err) {
-    console.error('[jellyfin] stream error:', err);
+    logger.error('media-provider', 'stream_failed', { providerType: 'jellyfin', error: err });
     if (!res.headersSent) {
       const status = extractErrorCode(err) === 'AUTH_FAILED' ? 401 : 502;
       res.status(status).json({ success: false, message: extractErrorMessage(err, 'Jellyfin 视频流代理失败'), code: extractErrorCode(err) });

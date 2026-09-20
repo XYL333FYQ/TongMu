@@ -3,14 +3,21 @@
 The detailed TongMu integration notices are maintained in
 [`docs/integration-v2/THIRD-PARTY-NOTICES.md`](docs/integration-v2/THIRD-PARTY-NOTICES.md).
 
-Phase 5B-2B uses the pinned MIT package
-`@neteasecloudmusicapienhanced/api@4.40.1` only through the server-side,
-allowlisted `NcmApiClient`. No package source, reference-project asset, or
-raw NCM credential is copied into the browser bundle. The detailed notice
-also records the package source, license text, and current purpose.
+The canonical notice shipped in release archives is that detailed file, not
+this pointer. It covers the complete direct runtime dependency set plus these
+redistributed or adapted components:
 
-Phase 6B-1 packages `playwright-core@1.62.0` (Apache-2.0) for the optional
-BrowserResolver. `patches/playwright-core+1.62.0.patch` only makes debugger
-detection tolerate the inspector-free `@yao-pkg/pkg` runtime; it does not
-weaken browser network policy. Single-file archives require an operator-supplied
-Chromium/Chrome executable, while the recommended Docker image includes one.
+- ZViewer-derived public images, icon sprite, voice worklet and legacy CLI:
+  MIT, exact source and SHA-256 values in
+  [`provenance-inventory.md`](docs/integration-v2/provenance-inventory.md).
+- SyncTV-derived provider/media semantics and adaptations: MIT.
+- `mediabunny@1.38.1` compatibility snapshot: MPL-2.0.
+- `playsvideo@0.4.7` and its local patch: MIT.
+- playsvideo's audio-only `ffmpeg-core.wasm`: LGPL-2.1; no GPL codecs.
+- `playwright-core@1.62.0` and its pkg compatibility patch: Apache-2.0.
+- `@neteasecloudmusicapienhanced/api@4.40.1`: MIT, server-only.
+- `sql.js@1.14.1` and its WASM runtime: MIT.
+
+`package-lock.json` is the machine-auditable exact npm graph. Every signed
+archive additionally carries `PROVENANCE-INVENTORY.md` and a per-file
+`artifact-inventory.json` with SHA-256 digests.

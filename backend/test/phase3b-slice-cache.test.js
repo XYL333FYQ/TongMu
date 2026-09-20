@@ -234,19 +234,21 @@ test('single-flight supports per-caller abort and cleans failed flights for retr
 test('validator change and disappearance purge old slices instead of mixing versions', async (t) => {
   const origin = createOrigin(t);
   await listen(origin.origin);
-  const store = testStore({ ttlMs: 1 });
+  // Keep the expiry boundary comfortably above request/logging overhead so the
+  // assertion tests cache semantics instead of scheduler timing.
+  const store = testStore({ ttlMs: 50 });
   const gateway = gatewayFor(t, origin.origin, store);
   const gatewayPort = await listen(gateway);
   const first = await request(gatewayPort, '/proxy', { Range: 'bytes=0-3' });
   assert.equal(first.body.toString(), '0123');
   origin.setEtag('"v2"');
-  await new Promise((resolve) => setTimeout(resolve, 5));
+  await new Promise((resolve) => setTimeout(resolve, 75));
   const second = await request(gatewayPort, '/proxy', { Range: 'bytes=0-3' });
   assert.equal(second.body.toString(), '0123');
   assert.ok(origin.getCount() >= 2);
   assert.equal(store.currentSliceCount, 1);
   origin.setEtag(undefined);
-  await new Promise((resolve) => setTimeout(resolve, 5));
+  await new Promise((resolve) => setTimeout(resolve, 75));
   const disappeared = await request(gatewayPort, '/proxy', { Range: 'bytes=0-3' });
   assert.equal(disappeared.body.toString(), '0123');
   assert.ok(origin.getCount() >= 3, 'validator disappearance must not reuse the old slice');
@@ -309,7 +311,7 @@ test('invalid upstream 206 and ignored Range fail open to the existing validated
 });
 
 test('memory store enforces LRU, TTL and resource bounds', async () => {
-  const store = testStore({ maxBytes: 8, maxSlices: 2, maxSlicesPerResource: 2, ttlMs: 1 });
+  const store = testStore({ maxBytes: 8, maxSlices: 2, maxSlicesPerResource: 2, ttlMs: 50 });
   const metadata = {
     resourceKey: 'r',
     validator: resourceValidator('"v1"', undefined, 12),
@@ -326,7 +328,7 @@ test('memory store enforces LRU, TTL and resource bounds', async () => {
   assert.equal(store.putSlice('r', version, 2, Buffer.from('89ab')), true);
   assert.equal(store.getSlice('r', version, 0).toString(), '0123');
   assert.equal(store.getSlice('r', version, 1), undefined);
-  await new Promise((resolve) => setTimeout(resolve, 5));
+  await new Promise((resolve) => setTimeout(resolve, 75));
   assert.equal(store.getSlice('r', version, 0), undefined);
   assert.ok(store.getStats().evictions >= 2);
 });

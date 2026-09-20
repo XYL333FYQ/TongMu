@@ -8,6 +8,7 @@ import { createServer as createHttpsServer } from 'https';
 import { Server as SocketIOServer } from 'socket.io';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import fs from 'node:fs';
 import bcrypt from 'bcryptjs';
@@ -50,8 +51,16 @@ import statsRoutes from './routes/stats';
 import clientLogsRoutes from './routes/client-logs';
 import cliRoutes from './routes/cli';
 import { createRoomsRouter } from './routes/rooms';
-import { verifyAccessToken } from './middleware/auth';
+import { authenticateToken, requireRoot, verifyAccessToken } from './middleware/auth';
 import { cleanupStaleRoomSessions } from './services/media/room-access';
+import {
+  httpObservabilityMiddleware,
+  logger,
+  metrics,
+  metricsEnabled,
+  prometheusContentType,
+} from './observability';
+import { runBrowserResolverContainerSmoke, runMediaContainerSmoke } from './cli/container-runtime-smoke';
 
 // 新模块化架构
 import { SocketRegistry } from './modules/socket';
@@ -86,7 +95,7 @@ import { CommentHandler } from './modules/comment';
 import { CliHandler } from './modules/cli';
 import { nmsService, StreamPushHandler, streamPushRouter } from './modules/stream-push';
 import { SignalingHandler, ViewerEventsHandler } from './modules/webrtc-signaling';
-import { VoiceChatHandler } from './modules/voice-chat';
+import { VoiceChatHandler, voiceMetricSnapshot } from './modules/voice-chat';
 import { createMusicRouter, MusicSyncHandler, musicSyncService, stopNcmApiService } from './modules/music';
 import { ensureUploadsRoot } from './services/server-files/pathResolver';
 import {
@@ -155,7 +164,7 @@ async function cleanupInactiveRooms(io: SocketIOServer): Promise<void> {
   try {
     const settings = await getSystemSettings();
     if (!settings.autoDeleteInactiveRooms) {
-      console.log('Auto-delete inactive rooms is disabled, skipping cleanup');
+      logger.debug('room-cleanup', 'disabled');
       return;
     }
 
@@ -171,9 +180,9 @@ async function cleanupInactiveRooms(io: SocketIOServer): Promise<void> {
       await deleteRoomAndRelations(room.roomId, io);
     }
 
-    console.log(`Cleaned up ${rooms.length} inactive rooms`);
+    logger.info('room-cleanup', 'completed', { deletedCount: rooms.length });
   } catch (err) {
-    console.error('cleanupInactiveRooms error:', err);
+    logger.error('room-cleanup', 'failed', { error: err });
   }
 }
 
@@ -218,13 +227,13 @@ async function seedRootAdmin() {
         status: 'active',
       });
       await userRepo.save(root);
-      console.log('Default root user created: root / root');
+      logger.warn('auth', 'default_root_created');
     } else if (existingByName.role !== 'root') {
       // 迁移旧版管理员为 root
       existingByName.role = 'root';
       existingByName.status = 'active';
       await userRepo.save(existingByName);
-      console.log('Existing root user role migrated to root');
+      logger.info('auth', 'root_role_migrated');
     }
   }
   // 已存在 role='root' 的用户（可能是改过名的 root），不重新创建
@@ -245,21 +254,25 @@ async function bootstrap() {
   const databaseFileExisted = fs.existsSync(DATABASE_PATH);
 
   await AppDataSource.initialize();
-  console.log('TypeORM Data Source has been initialized.');
+  logger.info('database', 'data_source_initialized');
   const migrationResult = await runDatabaseUpgrade(AppDataSource, {
     configDir: CONFIG_DIR,
     databasePath: DATABASE_PATH,
     databaseFileExisted,
   });
-  console.log(
-    `[migration] ${migrationResult.sourceSchemaId} -> ${migrationResult.finalFingerprint}; ` +
-      `${migrationResult.executed.length} migration(s) applied; ` +
-      `baseline adopted: ${migrationResult.baselineAdopted}; ` +
-      `backup: ${migrationResult.backupDir || 'not required'}`,
-  );
+  metrics.increment('database_migration_total', {
+    result: migrationResult.executed.length > 0 || migrationResult.baselineAdopted ? 'success' : 'noop',
+  });
+  logger.info('database', 'migration_completed', {
+    sourceSchemaId: migrationResult.sourceSchemaId,
+    finalFingerprint: migrationResult.finalFingerprint,
+    executedCount: migrationResult.executed.length,
+    baselineAdopted: migrationResult.baselineAdopted,
+    backupCreated: Boolean(migrationResult.backupDir),
+  });
   const staleSessions = await cleanupStaleRoomSessions();
   if (staleSessions > 0) {
-    console.log(`Closed ${staleSessions} stale room sessions from the previous process.`);
+    logger.info('room-session', 'stale_sessions_closed', { count: staleSessions });
   }
   await seedRootAdmin();
   ensureUploadsRoot();
@@ -281,42 +294,31 @@ async function bootstrap() {
   // 确保 Nginx/Caddy 反向代理后 req.protocol 能正确反映 HTTPS。
   // 公网部署时建议改为具体代理 IP 以提高安全性。
   app.set('trust proxy', ['loopback', 'linklocal', 'uniquelocal', '172.16.0.0/12', '10.0.0.0/8', '192.168.0.0/16']);
+  app.use(httpObservabilityMiddleware());
   app.use(
     cors({
       origin: CORS_ORIGIN,
       credentials: true,
       // 暴露 Content-Range / Accept-Ranges 给前端，用于媒体代理的断点续传
-      exposedHeaders: ['Content-Range', 'Accept-Ranges'],
+      exposedHeaders: ['Content-Range', 'Accept-Ranges', 'X-Request-Id'],
     }),
   );
   app.use(express.json({ limit: '1mb' }));
   app.use(cookieParser());
 
-  // 轻量请求流量日志：记录所有 /api/ 请求的方法、路径、状态码、响应大小、耗时
-  // 用于排查带宽来源（区分代理流量 /api/stream/proxy vs 解析流量 /api/stream/resolve-bilibili）
-  app.use((req, res, next) => {
-    // 跳过健康检查和静态资源，减少噪音
-    if (req.path === '/health' || req.path.startsWith('/uploads/')) {
-      return next();
-    }
-    const start = Date.now();
-    res.on('finish', () => {
-      if (!req.path.startsWith('/api/')) return;
-      const elapsed = Date.now() - start;
-      // 从 Content-Length 响应头读取响应大小（proxyHttpUpstream 会透传上游的 Content-Length）
-      const contentLength = res.getHeader('content-length');
-      const bytes = contentLength ? Number(contentLength) : 0;
-      const size = bytes > 0
-        ? bytes < 1024 * 1024
-          ? `${(bytes / 1024).toFixed(1)}KB`
-          : `${(bytes / (1024 * 1024)).toFixed(2)}MB`
-        : '-';
-      console.log(
-        `[req] ${req.method} ${res.statusCode} ${size} ${elapsed}ms ${req.path}`,
-      );
+  if (metricsEnabled()) {
+    // Explicitly enabled and root-authenticated. This endpoint is not exposed
+    // anonymously even when an operator turns metrics on.
+    app.get('/internal/metrics', authenticateToken, requireRoot, (_req, res) => {
+      res.setHeader('Content-Type', prometheusContentType);
+      res.setHeader('Cache-Control', 'no-store');
+      res.send(metrics.render());
     });
-    next();
-  });
+  } else {
+    app.get('/internal/metrics', (_req, res) => {
+      res.status(404).json({ success: false, message: 'Metrics disabled' });
+    });
+  }
   // 前端浏览器控制台日志上报（不强制鉴权，便于收集 guest/未登录用户日志）
   app.use('/api/client-logs', clientLogsRoutes);
   // 头像静态文件服务（无需鉴权，头像通过 URL 公开访问）
@@ -374,7 +376,7 @@ async function bootstrap() {
   const frontendDist = path.resolve(PROJECT_ROOT, 'frontend/dist');
   const hasFrontendDist = fs.existsSync(frontendDist);
   if (hasFrontendDist) {
-    console.log(`[static] 提供前端静态文件: ${frontendDist}`);
+    logger.info('static', 'frontend_enabled');
     // ffmpeg.wasm 核心文件（~32MB）与 JASSUB 字体等大体积资源：
     // 强缓存（immutable + 1 年），配合文件名/ETag 变化自动失效。
     // 避免每次初始化 wasm 引擎都重新下载 32MB 核心。
@@ -389,8 +391,7 @@ async function bootstrap() {
     app.use(express.static(frontendDist));
     // SPA 回退延迟到所有 API 路由注册之后（见文件末尾）
   } else {
-    console.warn(`[static] 警告：前端构建产物不存在: ${frontendDist}`);
-    console.warn('[static] 后端无法提供前端页面，请先构建前端（npm run build -w frontend）');
+    logger.warn('static', 'frontend_missing');
   }
 
   let httpServer: ReturnType<typeof createHttpServer>;
@@ -565,15 +566,43 @@ async function bootstrap() {
   playbackBroadcasterService.start(io);
 
   io.on('connection', (socket) => {
-    console.log(`Socket connected: ${socket.id}`);
+    const connectionContext = randomUUID().replace(/-/g, '').slice(0, 12);
+    socket.data.connectionContext = connectionContext;
+    metrics.set('active_socket_count', {}, io.sockets.sockets.size);
+    logger.info('socket', 'connected', {
+      connectionContext,
+      actorCategory: socket.data.isCliAgent
+        ? 'cli'
+        : socket.data.role === 'root'
+          ? 'root'
+          : socket.data.role === 'guest'
+            ? 'guest'
+            : socket.data.userId
+              ? 'authenticated'
+              : 'anonymous',
+    });
+    socket.once('disconnect', (reason) => {
+      metrics.set('active_socket_count', {}, Math.max(0, io.sockets.sockets.size));
+      logger.info('socket', 'disconnected', { connectionContext, reason });
+    });
     socketRegistry.registerAll(socket, io);
   });
 
+  const updateRealtimeMetrics = () => {
+    const voice = voiceMetricSnapshot();
+    metrics.set('active_socket_count', {}, io.sockets.sockets.size);
+    metrics.set('active_room_count', {}, roomStateService.getActiveRoomIds().length);
+    metrics.set('active_voice_member_count', {}, voice.members);
+    metrics.set('music_room_count', {}, musicSyncService.getActiveMusicRoomCount());
+  };
+  updateRealtimeMetrics();
+  setInterval(updateRealtimeMetrics, 15_000).unref();
+
   httpServer.on('error', (err: NodeJS.ErrnoException) => {
     if (err.code === 'EADDRINUSE') {
-      console.error(`端口 ${PORT} 已被占用，请先结束占用该端口的进程后再启动后端。`);
+      logger.error('http-server', 'port_in_use', { port: PORT });
     } else {
-      console.error('HTTP server error:', err);
+      logger.error('http-server', 'server_error', { error: err });
     }
     process.exit(1);
   });
@@ -586,11 +615,9 @@ async function bootstrap() {
   httpServer.listen(listenOptions, () => {
     const displayHost = HOST === '::' ? '[::]' : HOST ?? '*';
     const protocol = useHttps ? 'https' : 'http';
-    console.log(`Server is running on ${protocol}://${displayHost}:${PORT}`);
+    logger.info('http-server', 'listening', { protocol, host: displayHost, port: PORT });
     if (process.env.NODE_ENV === 'production' && !process.env.CORS_ORIGIN) {
-      console.warn(
-        '警告：未设置 CORS_ORIGIN，当前允许所有来源跨域访问。公网部署请设置 CORS_ORIGIN 为具体域名。',
-      );
+      logger.warn('http-server', 'cors_origin_unrestricted');
     }
   });
 
@@ -600,27 +627,27 @@ async function bootstrap() {
     try {
       await playbackMemoryService.flushAllDirty();
     } catch (err) {
-      console.error('[flushAllDirty] error:', err);
+      logger.error('playback-memory', 'flush_failed', { error: err });
     }
     try {
       stopNms();
     } catch (err) {
-      console.error('[NMS] graceful shutdown error:', err);
+      logger.error('nms', 'shutdown_failed', { error: err });
     }
     try {
       stopNcmApiService();
     } catch (err) {
-      console.error('[NCM] graceful shutdown error:', err);
+      logger.error('ncm', 'shutdown_failed', { error: err });
     }
     try {
       if (AppDataSource.isInitialized) await AppDataSource.destroy();
     } catch (err) {
-      console.error('[database] graceful shutdown error:', err);
+      logger.error('database', 'shutdown_failed', { error: err });
     }
     try {
       releaseDatabaseRuntimeLock();
     } catch (err) {
-      console.error('[database] lock release error:', err);
+      logger.error('database', 'lock_release_failed', { error: err });
     }
     process.exit(0);
   };
@@ -629,7 +656,7 @@ async function bootstrap() {
 
   // 全局兜底：未捕获的 Promise rejection 不崩溃进程
   process.on('unhandledRejection', (reason) => {
-    console.error('[unhandledRejection]', reason);
+    logger.error('process', 'unhandled_rejection', { error: reason });
   });
 }
 
@@ -655,8 +682,10 @@ function runUpdaterCliMode(): boolean {
 async function runBrowserRuntimeSmoke(): Promise<void> {
   const playwright = require('playwright') as typeof import('playwright');
   const executablePath = process.env.PLAYWRIGHT_EXECUTABLE_PATH;
-  if (!executablePath) throw new Error('PLAYWRIGHT_EXECUTABLE_PATH is required for single-file browser smoke');
-  const browser = await playwright.chromium.launch({ headless: true, executablePath });
+  if (!executablePath && (process as NodeJS.Process & { pkg?: unknown }).pkg) {
+    throw new Error('PLAYWRIGHT_EXECUTABLE_PATH is required for single-file browser smoke');
+  }
+  const browser = await playwright.chromium.launch({ headless: true, ...(executablePath ? { executablePath } : {}) });
   try {
     const page = await browser.newPage();
     await page.goto('data:text/html,<title>TongMu browser runtime smoke</title>');
@@ -668,16 +697,25 @@ async function runBrowserRuntimeSmoke(): Promise<void> {
   }
 }
 
-if (!runUpdaterCliMode() && process.argv[2] === '--browser-runtime-smoke') {
-  runBrowserRuntimeSmoke().catch((error) => {
-    process.stderr.write(`[browser-runtime-smoke] ${error instanceof Error ? error.message : String(error)}\n`);
+const smokeCommands: Record<string, () => Promise<unknown>> = {
+  '--browser-runtime-smoke': runBrowserRuntimeSmoke,
+  '--browser-resolver-smoke': runBrowserResolverContainerSmoke,
+  '--media-runtime-smoke': runMediaContainerSmoke,
+};
+const smokeCommand = smokeCommands[process.argv[2] ?? ''];
+if (!runUpdaterCliMode() && smokeCommand) {
+  smokeCommand().then((result) => {
+    if (result !== undefined) process.stdout.write(`${JSON.stringify(result)}\n`);
+  }).catch((error) => {
+    process.stderr.write(`[runtime-smoke] ${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;
   });
 } else if (!process.argv[2]?.includes('pending-update')) {
   bootstrap().catch((err) => {
-    console.error('Error during bootstrap:', err instanceof Error ? err.message : err);
+    metrics.increment('database_migration_total', { result: 'failed' });
+    logger.error('bootstrap', 'failed', { error: err });
     try { releaseDatabaseRuntimeLock(); } catch (lockError) {
-      console.error('[database] lock release error:', lockError);
+      logger.error('database', 'lock_release_failed', { error: lockError });
     }
     process.exit(1);
   });

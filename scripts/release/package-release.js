@@ -6,16 +6,18 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const tar = require('tar');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const REQUIRED = {
-  windows: ['package.json', 'browser-runtime.json', 'frontend/dist/index.html', 'frontend/dist/voice-processor.js', 'frontend/dist/icons.svg', 'zviewer-backend.exe', 'zviewer-cert.exe', 'start.bat', 'start.ps1', 'THIRD-PARTY-NOTICES.md'],
-  linux: ['package.json', 'browser-runtime.json', 'frontend/dist/index.html', 'frontend/dist/voice-processor.js', 'frontend/dist/icons.svg', 'zviewer-backend', 'zviewer-cert', 'start.sh', 'THIRD-PARTY-NOTICES.md'],
+  windows: ['package.json', 'browser-runtime.json', 'frontend/dist/index.html', 'frontend/dist/voice-processor.js', 'frontend/dist/icons.svg', 'zviewer-backend.exe', 'zviewer-cert.exe', 'start.bat', 'start.ps1', 'THIRD-PARTY-NOTICES.md', 'PROVENANCE-INVENTORY.md'],
+  linux: ['package.json', 'browser-runtime.json', 'frontend/dist/index.html', 'frontend/dist/voice-processor.js', 'frontend/dist/icons.svg', 'zviewer-backend', 'zviewer-cert', 'start.sh', 'THIRD-PARTY-NOTICES.md', 'PROVENANCE-INVENTORY.md'],
 };
 const ALLOWED_TOP_LEVEL = new Set([
   'frontend', 'package.json', 'build-info.json', 'start.bat', 'start.ps1', 'start.sh',
   'zviewer-backend.exe', 'zviewer-cert.exe', 'zviewer-backend', 'zviewer-cert',
-  'THIRD-PARTY-NOTICES.md', 'LICENSE', 'browser-runtime.json',
+  'THIRD-PARTY-NOTICES.md', 'PROVENANCE-INVENTORY.md', 'artifact-inventory.json',
+  'LICENSE', 'browser-runtime.json',
 ]);
 const FORBIDDEN_NAMES = /^(?:config|uploads|media|backups?|logs?|\.env|dev\.sqlite|secret-vault\.json|jwt-secrets\.json)$/i;
 
@@ -88,7 +90,27 @@ function ensureRequired(root, platform) {
   if (!assets.some((name) => /worker.*\.js$/i.test(name))) fail('release input is missing a runtime Worker asset');
 }
 
-function makeArchive(packageDirectory, archivePath, platform) {
+function artifactInventory(root) {
+  const files = [];
+  const walk = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) walk(absolute);
+      else if (entry.isFile()) {
+        if (path.relative(root, absolute).replace(/\\/g, '/') === 'artifact-inventory.json') continue;
+        files.push({
+          path: path.relative(root, absolute).replace(/\\/g, '/'),
+          size: fs.statSync(absolute).size,
+          sha256: sha256File(absolute),
+        });
+      }
+    }
+  };
+  walk(root);
+  return { schemaVersion: 1, algorithm: 'SHA-256', files };
+}
+
+async function makeArchive(packageDirectory, archivePath, platform) {
   if (platform === 'windows') {
     const escapedSource = packageDirectory.replace(/'/g, "''");
     const escapedDest = archivePath.replace(/'/g, "''");
@@ -97,7 +119,7 @@ function makeArchive(packageDirectory, archivePath, platform) {
       { cwd: ROOT, stdio: 'inherit' });
   } else {
     const entries = fs.readdirSync(packageDirectory).sort();
-    execFileSync('tar', ['czf', archivePath, '-C', packageDirectory, ...entries], { cwd: ROOT, stdio: 'inherit' });
+    await tar.c({ file: archivePath, cwd: packageDirectory, gzip: true, portable: true, strict: true }, entries);
   }
 }
 
@@ -119,7 +141,7 @@ function promote(source, destination) {
   fs.renameSync(source, destination);
 }
 
-function main() {
+async function main() {
   const args = argumentsMap(process.argv.slice(2));
   const platform = args.get('--platform');
   const architecture = args.get('--arch');
@@ -159,10 +181,12 @@ function main() {
     const buildTimestamp = git('show', '-s', '--format=%cI', 'HEAD');
     const buildInfo = { schemaVersion: 1, product: 'TongMu', version, commitSha, buildTimestamp, platform, architecture };
     fs.writeFileSync(path.join(packageDirectory, 'build-info.json'), `${JSON.stringify(buildInfo, null, 2)}\n`, { encoding: 'utf8', mode: 0o644 });
+    const inventoryPath = path.join(packageDirectory, 'artifact-inventory.json');
+    fs.writeFileSync(inventoryPath, `${JSON.stringify(artifactInventory(packageDirectory), null, 2)}\n`, { encoding: 'utf8', mode: 0o644 });
     inspectTree(packageDirectory);
 
     const archivePath = path.join(incoming, canonicalName);
-    makeArchive(packageDirectory, archivePath, platform);
+    await makeArchive(packageDirectory, archivePath, platform);
     const artifactSize = fs.statSync(archivePath).size;
     const artifactSha256 = sha256File(archivePath);
     const lockfileSha256 = sha256File(path.join(ROOT, 'package-lock.json'));
@@ -178,6 +202,7 @@ function main() {
       platform,
       architecture,
       artifact: { filename: canonicalName, size: artifactSize, sha256: artifactSha256 },
+      inventory: { filename: 'artifact-inventory.json', sha256: sha256File(inventoryPath) },
       signature: { algorithm: 'Ed25519', keyId },
       minimumUpdaterCompatibilityVersion: '1.0.0',
       buildEnvironment: { node: process.version, npm: npmVersion, lockfileSha256, reproducible: false },
@@ -201,8 +226,7 @@ function main() {
   }
 }
 
-try { main(); }
-catch (error) {
+main().catch((error) => {
   process.stderr.write(`[release-package] ${error instanceof Error ? error.message : String(error)}\n`);
   process.exitCode = 1;
-}
+});

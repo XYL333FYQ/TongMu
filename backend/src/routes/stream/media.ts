@@ -51,6 +51,7 @@ import {
 } from '../../services/media/manifest/model';
 import { buildBilibiliUnifiedManifest } from '../../services/media/manifest/bilibili';
 import type { SliceCacheLifecycle, SliceCacheRequestContext } from '../../services/proxy/slice-cache';
+import { metrics } from '../../observability';
 
 const router = Router();
 const canPublishTarget = (url: string) => canDirect({ finalUrl: url } as MediaDescriptor);
@@ -65,6 +66,47 @@ const mediaResolveLimiter = rateLimit({
   legacyHeaders: false,
   message: { success: false, message: '媒体解析请求过于频繁，请稍后再试' },
 });
+
+function gatewayResourceKind(resource: MediaHandleResource | undefined): string {
+  const kind = resource?.resourceKind ?? '';
+  if (!kind) return 'media';
+  if (kind.includes('manifest')) return 'manifest';
+  if (kind.includes('segment') || kind === 'dash-media' || kind === 'dash-base') return 'segment';
+  if (kind.includes('part')) return 'part';
+  if (kind.includes('key')) return 'key';
+  if (kind.includes('initialization') || kind.includes('init')) return 'init';
+  if (kind.includes('auxiliary') || kind.includes('timing') || kind.includes('index')) return 'auxiliary';
+  return 'unknown';
+}
+
+function gatewayTransport(resource: MediaHandleResource | undefined): string {
+  const mode = resource?.transportMode;
+  if (mode === 'MANIFEST_ASSISTED') return 'manifest';
+  if (mode === 'PARTIAL_PROXY') return 'partial_proxy';
+  if (mode === 'FULL_PROXY') return 'full_proxy';
+  if (resource?.providerId === 'local-file' || resource?.providerId === 'ftp') return 'local';
+  return 'unknown';
+}
+
+function trackGatewayResponse(res: import('express').Response, resource: MediaHandleResource | undefined): void {
+  res.once('finish', () => {
+    const status = res.statusCode;
+    const result = status >= 200 && status < 400
+      ? 'success'
+      : status === 401 || status === 403
+        ? 'denied'
+        : status === 404
+          ? 'not_found'
+          : status >= 500
+            ? 'upstream_error'
+            : 'internal';
+    metrics.increment('media_gateway_requests_total', {
+      resource_kind: gatewayResourceKind(resource),
+      transport_mode: gatewayTransport(resource),
+      result,
+    });
+  });
+}
 
 function requiredPipelinesForDescriptor(descriptor: MediaDescriptor): PlaybackPipeline[] {
   if (descriptor.transport === 'hls') return ['native', 'mse'];
@@ -858,7 +900,24 @@ router.post('/media/resolve', authenticateToken, mediaResolveLimiter, async (req
       descriptor: { ...toPublicDescriptor(descriptor, first.url, first.audioUrl), transportPlan },
       viability: { removed: viability.removed },
     });
+    metrics.increment('media_resolve_total', {
+      provider_type: providerId || 'direct-url',
+      result: 'success',
+    });
   } catch (error) {
+    const rawCode = error && typeof error === 'object' && 'code' in error
+      ? String((error as { code?: unknown }).code ?? '')
+      : '';
+    const result = /TIMEOUT|ABORT/i.test(rawCode) || (error instanceof Error && error.name === 'AbortError')
+      ? 'timeout'
+      : /AUTH|CREDENTIAL|LOGIN|TOKEN/i.test(rawCode)
+        ? 'auth_error'
+        : /INVALID|MALFORMED/i.test(rawCode)
+          ? 'invalid'
+          : /UNAVAILABLE|NOT_FOUND|UNSUPPORTED/i.test(rawCode)
+            ? 'unavailable'
+            : 'internal';
+    metrics.increment('media_resolve_total', { provider_type: 'unknown', result });
     res.status(422).json({ success: false, message: redactMediaError(error) });
   } finally {
     clearTimeout(resolveTimer);
@@ -884,6 +943,7 @@ router.post('/media/:id/session/cleanup', authenticateToken, async (req: Authent
 
 async function pipeDashBaseResource(req: AuthenticatedRequest, res: import('express').Response): Promise<void> {
   const resource = await authorizedResource(req);
+  trackGatewayResponse(res, resource);
   if (!resource || resource.resourceKind !== 'dash-base' || !resource.assetPathPrefix) {
     res.status(403).end();
     return;
@@ -913,6 +973,7 @@ router.get('/media/:id/base/*splat', pipeDashBaseResource);
 router.get('/media/:id/asset', async (req: AuthenticatedRequest, res) => {
   const id = String(req.params.id);
   const resource = await authorizedResource(req);
+  trackGatewayResponse(res, resource);
   const relativePath = typeof req.query.path === 'string' ? req.query.path : '';
   const assetKinds = new Set([
     'dash-media', 'dash-initialization', 'dash-index', 'dash-bitstream-switching',
@@ -940,6 +1001,7 @@ router.get('/media/:id/asset', async (req: AuthenticatedRequest, res) => {
 
 router.get('/media/:id', async (req: AuthenticatedRequest, res) => {
   const resource = await authorizedResource(req);
+  trackGatewayResponse(res, resource);
   if (!resource || resource.kind === 'session') { res.status(403).json({ success: false, message: '媒体凭证无效或已过期' }); return; }
   if (resource.allowRange === false && req.headers.range) { res.status(416).end(); return; }
   if (resource.resourceKind === 'hls-key') {

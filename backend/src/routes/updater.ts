@@ -13,6 +13,7 @@ import {
   UpdateNotConfiguredError,
   type UpdateStageEvent,
 } from '../services/updater';
+import { logger, metrics } from '../observability';
 
 const router = Router();
 
@@ -36,7 +37,7 @@ export function safeUpdateErrorMessage(error: unknown, fallback: string): string
 
 function reportUpdateError(scope: string, error: unknown, fallback: string): string {
   const message = safeUpdateErrorMessage(error, fallback);
-  console.error(`[updater:${scope}] ${message}`);
+  logger.error('updater', `${scope}_failed`, { error, safeMessage: message });
   return message;
 }
 
@@ -103,8 +104,12 @@ router.get(
     try {
       const includePrerelease = req.query.includePrerelease === 'true';
       const info = await getUpdateInfo(includePrerelease);
+      metrics.increment('update_check_total', { result: info.hasUpdate ? 'success' : 'noop' });
       res.json({ success: true, info });
     } catch (err) {
+      metrics.increment('update_check_total', {
+        result: err instanceof UpdateNotConfiguredError ? 'blocked' : 'failed',
+      });
       const message = reportUpdateError('check', err, '检查更新失败');
       res.status(err instanceof UpdateNotConfiguredError ? 503 : 500).json({
         success: false,
@@ -139,7 +144,9 @@ router.post(
     try {
       const includePrerelease = req.query.includePrerelease === 'true';
       await applyUpdate(includePrerelease, (event) => sendSSE(res, event));
+      metrics.increment('update_apply_total', { result: 'success' });
     } catch (err) {
+      metrics.increment('update_apply_total', { result: 'failed' });
       sendSSE(res, {
         stage: 'error',
         message: reportUpdateError('apply-stream', err, '应用更新失败'),
@@ -161,8 +168,12 @@ router.post(
     try {
       const includePrerelease = req.query.includePrerelease === 'true';
       const result = await applyUpdate(includePrerelease);
+      metrics.increment('update_apply_total', { result: 'success' });
       res.json(result);
     } catch (err) {
+      metrics.increment('update_apply_total', {
+        result: err instanceof UpdateNotConfiguredError ? 'blocked' : 'failed',
+      });
       const message = reportUpdateError('apply', err, '应用更新失败');
       res.status(err instanceof UpdateNotConfiguredError ? 503 : 500).json({
         success: false,
@@ -225,7 +236,9 @@ router.post(
       await applyUpdateFromFile(req.body, filename, (event) =>
         sendSSE(res, event),
       );
+      metrics.increment('update_apply_total', { result: 'success' });
     } catch (err) {
+      metrics.increment('update_apply_total', { result: 'failed' });
       sendSSE(res, {
         stage: 'error',
         message: reportUpdateError('upload-stream', err, '上传更新失败'),
@@ -281,8 +294,10 @@ router.post(
       }
 
       const result = await applyUpdateFromFile(req.body, filename);
+      metrics.increment('update_apply_total', { result: 'success' });
       res.json(result);
     } catch (err) {
+      metrics.increment('update_apply_total', { result: 'failed' });
       res.status(500).json({
         success: false,
         message: reportUpdateError('upload', err, '上传更新失败'),

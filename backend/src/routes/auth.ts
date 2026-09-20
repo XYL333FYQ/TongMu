@@ -25,6 +25,7 @@ import {
 } from '../middleware/rate-limit';
 import { AVATARS_DIR } from '../services/paths';
 import { writeAuditLog } from '../services/audit';
+import { logger } from '../observability';
 
 const router = Router();
 const userRepository = () => AppDataSource.getRepository(User);
@@ -155,7 +156,7 @@ router.post(
         },
       });
     } catch (err) {
-      console.error('register error:', err);
+      logger.error('auth', 'register_failed', { error: err });
       res.status(500).json({ success: false, message: '注册失败' });
     }
   },
@@ -233,7 +234,7 @@ router.post(
         },
       });
     } catch (err) {
-      console.error('login error:', err);
+      logger.error('auth', 'login_failed', { error: err });
       res.status(500).json({ success: false, message: '登录失败' });
     }
   },
@@ -278,7 +279,7 @@ router.post(
       setAccessTokenCookie(req, res, accessToken);
       res.json({ success: true, accessToken });
     } catch (err) {
-      console.error('refresh error:', err);
+      logger.warn('auth', 'refresh_failed', { error: err });
       res.status(403).json({ success: false, message: '刷新令牌无效或已过期' });
     }
   },
@@ -307,7 +308,7 @@ router.get(
         mode: settings.registrationMode,
       });
     } catch (err) {
-      console.error('registration-mode error:', err);
+      logger.error('auth', 'registration_mode_failed', { error: err });
       res.status(500).json({ success: false, message: '获取注册模式失败' });
     }
   },
@@ -342,7 +343,7 @@ router.get(
         },
       });
     } catch (err) {
-      console.error('public-settings error:', err);
+      logger.error('auth', 'public_settings_failed', { error: err });
       res.status(500).json({ success: false, message: '获取公开设置失败' });
     }
   },
@@ -380,7 +381,7 @@ router.get(
         },
       });
     } catch (err) {
-      console.error('me error:', err);
+      logger.error('auth', 'profile_read_failed', { error: err });
       res.status(500).json({ success: false, message: '获取用户信息失败' });
     }
   },
@@ -447,7 +448,7 @@ router.patch(
         passwordHint: passwordStrengthHint(newPassword),
       });
     } catch (err) {
-      console.error('change password error:', err);
+      logger.error('auth', 'password_change_failed', { error: err });
       res.status(500).json({ success: false, message: '修改密码失败' });
     }
   },
@@ -510,7 +511,7 @@ router.patch(
         },
       });
     } catch (err) {
-      console.error('change username error:', err);
+      logger.error('auth', 'username_change_failed', { error: err });
       res.status(500).json({ success: false, message: '修改用户名失败' });
     }
   },
@@ -570,7 +571,7 @@ router.post(
         },
       });
     } catch (err) {
-      console.error('upload avatar error:', err);
+      logger.error('auth', 'avatar_upload_failed', { error: err });
       res.status(500).json({
         success: false,
         message: err instanceof Error ? err.message : '头像上传失败',
@@ -620,7 +621,7 @@ router.delete(
         },
       });
     } catch (err) {
-      console.error('delete avatar error:', err);
+      logger.error('auth', 'avatar_delete_failed', { error: err });
       res.status(500).json({ success: false, message: '删除头像失败' });
     }
   },
@@ -642,7 +643,7 @@ router.post(
         user: { id: 0, username: 'guest', role: 'guest', status: 'active', avatar: null },
       });
     } catch (err) {
-      console.error('guest token error:', err);
+      logger.error('auth', 'guest_token_failed', { error: err });
       res.status(500).json({ success: false, message: '获取游客令牌失败' });
     }
   },

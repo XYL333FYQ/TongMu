@@ -4,7 +4,7 @@
 
 This file is the persistent checkpoint for the TongMu V2 integration program. Phase 0 is an audit and design phase only: no product code, dependency, database, configuration, CI, or reference source was changed.
 
-Current state: **Phases 0–5, Phase 6A Historical Database Migration, and Phase 6B-1 Packaging + Secure Updater + Immutable Release CI + Artifact Provenance are complete within their approved boundaries. Phase 6 remains IN PROGRESS: Phase 6B-2 observability, full asset provenance inventory, and Docker/Linux runtime smoke are deliberately deferred.**
+Current state: **Phases 0–5, Phase 6A, Phase 6B-1, and the Phase 6B-2 implementation are complete within their approved boundaries. TongMu V2 is not yet a release candidate: the mandatory real Docker/browser image smoke could not run because this host has no Docker CLI. Phase 6 final status is BLOCKED ON ENVIRONMENTAL DOCKER SMOKE, not silently passed.**
 
 Phase 2 has a working core checkpoint: the versioned client profile, server
 viability filter, client-owned planner path, provider contract/registry, and
@@ -17,8 +17,9 @@ configured anime sources, public HLS/HTTP-FLV live inputs, and Bilibili DASH
 exact codec/profile filtering through the same Media Core entrypoint. Provider-
 specific catalog/browse routes remain compatibility surfaces; Phase 3 manifest
 typing is complete. Database migration safety is closed by Phase 6A; the
-bounded release/packaging gate is closed by Phase 6B-1, while Phase 6B-2 stays
-open.
+bounded release/packaging gate is closed by Phase 6B-1. Phase 6B-2 closes the
+code, observability, provenance, and artifact-audit work; only the external
+Docker execution gate remains open.
 
 Phase 1 restored the declared dependency baseline, closed the scoped credential and
 token-revocation P0/P1 defects, introduced the shared ByteRange core, and added a
@@ -83,12 +84,14 @@ validated restore, failure/retry/interruption coverage, and production
 5. Voice lifecycle, identity, reconnect replacement, decoder ownership, ghost cleanup, and voice-local moderation remain Phase 4B behavior; Phase 5A now supplies the shared permission decision boundary.
 6. Phase 4A player/subtitle lifetime hardening and Phase 4B Voice are complete within their scoped boundaries.
 7. Phase 6B-1 now gives releases canonical TongMu names while producing byte-identical historical aliases, and enforces signed manifests, SHA-256/size checks, safe staged extraction, transactional swap, health confirmation, and rollback. Formal production-key signing and GitHub-hosted release execution remain operational gates, not implementation claims.
-8. Third-party provenance is incomplete for fonts, images, icons, wasm/binaries, bundled JavaScript, and media fixtures. Upstream assets must not be copied until license and attribution are recorded.
-9. Docker and ffmpeg are unavailable on this host, so browser-enabled container and transcoding-specific validation remain environment-dependent.
+8. Full direct-dependency and redistributed-asset provenance is recorded in `provenance-inventory.md`; release archives now carry it, the legal notice, and a signed-digest per-file inventory. No redistributed asset remains `UNKNOWN`.
+9. Docker is unavailable on this host. The browser image workflow now encodes fresh-volume migration, health/build identity, persistence, real Chromium/BrowserResolver and Direct/HLS/DASH smoke, but it has not run in this worktree and cannot satisfy the final environment gate yet.
 
 ### P2 — valuable hardening and product maturity
 
-1. Add structured request/component logs, stable request IDs, response bytes/latency, and bounded metric labels without importing cluster-oriented observability infrastructure.
+1. Phase 6B-2 added structured request/component logs, stable request IDs,
+   actual streamed response bytes/latency, and bounded metric labels without
+   importing cluster-oriented observability infrastructure.
 2. Consolidate responsive/mobile primitives (`useMediaQuery`, safe-area, `dvh`, coarse-pointer and hover fallbacks) as features are adapted.
 3. Phase 4A protects subtitle track identity, sparse-probe race guards, late-join synchronization, extraction cleanup, and source-generation cleanup; broader product subtitle UX remains separate.
 4. Introduce bounded, validator-aware range slice caching only after Range correctness and authorization are proven.
@@ -111,7 +114,8 @@ validated restore, failure/retry/interruption coverage, and production
 - [x] Phase 5B-2B — NCM catalog and remaining product surface within the bounded provider/product contract.
 - [x] Phase 6A — Historical database migrations / backup / restore / `synchronize:false` / upgrade safety gate.
 - [x] Phase 6B-1 — Packaging / secure updater / immutable release CI / artifact provenance.
-- [ ] Phase 6B-2 — Observability / full provenance inventory / Docker and Linux runtime smoke.
+- [x] Phase 6B-2 implementation — Observability / full provenance inventory / release artifact audit support / Docker smoke workflow.
+- [ ] Phase 6 final deployment gate — execute the real Docker/browser image smoke at least once (environment blocked on this host).
 
 See `implementation-plan.md` for dependencies, file targets, tests, exit criteria, and risks.
 
@@ -669,6 +673,67 @@ operator procedure, backup/restore contract, and recovery instructions.
 See `release-artifacts.md`, `updater-security.md`, and `../updating.md` for the
 artifact contract, trust model, operator procedure, and recovery behavior.
 
+## Phase 6B-2 observability, provenance, artifact audit and final-gate closure
+
+Phase 6B-2 implementation is **COMPLETE**. The overall V2 release-candidate
+decision is **BLOCKED**, solely because the required real Docker/browser image
+smoke could not run on this host: `docker`, `docker compose`, and `docker info`
+are unavailable. The checked-in ordinary Docker CI workflow encodes that gate,
+but an unexecuted workflow is not reported as a pass.
+
+- Structured JSON logging uses bounded recursive redaction and request-local
+  correlation. HTTP metrics use matched route templates and fixed label enums;
+  the global registry is capped at 4,096 series. `/internal/metrics` is disabled
+  by default and remains root-authenticated when explicitly enabled.
+- Observability tests pass for nested secret/error redaction, valid/invalid
+  request IDs, a 100 MiB unknown-length stream without body buffering, actual
+  response-byte accounting, and 10,000 random paths collapsing to one
+  `UNMATCHED` metric series.
+- Direct dependencies, the 1,092 lockfile package entries, vendored Mediabunny,
+  patches, Workers, WASM, images/icons, the legacy binary, reference
+  adaptations, fonts (none), and generated fixtures are classified in
+  `provenance-inventory.md`. Unknown redistributed assets: **zero**.
+- Release archives carry the detailed legal notice, provenance inventory and a
+  complete per-file SHA-256/size inventory. The inventory digest is covered by
+  the signed canonical manifest, and extraction rejects missing, modified or
+  unlisted files.
+- A clean tracked-source export completed `npm ci` and the full Windows/Linux
+  build. Ephemeral-key packaging and independent verification passed for
+  `TongMu-1.0.0-windows-x64-6dd06000a0ec.zip`
+  (`44f934e55398b0df7cf411ce6b26ffda772728dc77f53c73cc8622a26aab4514`)
+  and `TongMu-1.0.0-linux-x64-6dd06000a0ec.tar.gz`
+  (`10f8daf0fa9482c758d5329bd35c52b728656bd76176c88d1b0766b635841cbb`).
+  Historical aliases were byte-identical. The ephemeral private key was never
+  written to disk and is not a production signing credential.
+- The extracted Windows archive passed from a Unicode/space path: launcher,
+  health/build identity, frontend, restart/config persistence, default-disabled
+  metrics, real Chromium BrowserResolver fallback, and deterministic
+  Direct/HLS/DASH probes. The Linux archive passed safe structural extraction
+  and complete inventory/secret/path audits; Linux executable runtime was not
+  run on this Windows host.
+
+### Phase 6B-2 final validation (2026-09-20)
+
+| Check | Result | Evidence / limitation |
+| --- | ---: | --- |
+| Backend lint/typecheck | PASS | `npm run lint -w backend` |
+| Backend Node tests | PASS with 1 skip | 148 pass; Windows symlink-creation case skipped |
+| Historical migration suite | PASS | 29/29 |
+| Frontend tests | PASS | 26/26 |
+| Frontend production build | PASS | Existing MediaBunny dynamic-import and large-chunk warnings only |
+| Updater + observability focus | PASS | 19/19 |
+| Chromium E2E | PASS with 1 skip | 27 pass; optional slice-cache E2E disabled unless explicitly enabled |
+| Source/package secret and path audit | PASS | No private key, credential value, runtime config/database/log, local absolute path or test credential in artifacts |
+| Dependency/reference drift | PASS | No package manifest/lockfile changes; `references/` unchanged |
+| Diff whitespace check | PASS | No whitespace errors; Git only reports expected LF/CRLF conversion notices |
+| Local Direct/HLS/DASH runtime smoke | PASS | Deterministic media fixtures retain Direct/Range and HLS/DASH behavior |
+| Local Chromium BrowserResolver fallback | PASS | Static resolver failed closed; real Chromium fallback returned direct MP4 |
+| Windows packaged runtime | PASS | Unicode/space path, health identity, frontend, restart, persistence and browser/media probes |
+| Linux package structure | PASS | Safe extraction, inventory, notice/provenance and forbidden-content audit |
+| Linux executable runtime | NOT RUN | No Linux runner on this host |
+| Docker Compose/image/browser/migration smoke | **NOT RUN — BLOCKING** | Docker CLI is absent; Phase 6 RC remains BLOCKED |
+| System ffmpeg smoke | NOT RUN | `ffmpeg` is absent; no video-transcode success is claimed |
+
 ## Known environment limitations
 
 - The declared Node dependency tree is restored from the lockfile.
@@ -713,6 +778,10 @@ artifact contract, trust model, operator procedure, and recovery behavior.
 - `player-lifecycle.md`
 - `release-artifacts.md`
 - `updater-security.md`
+- `observability.md`
+- `provenance-inventory.md`
+- `release-checklist.md`
+- `THIRD-PARTY-NOTICES.md`
 - `../updating.md`
 
 Phase 1 updated `progress.md`, `upstream-adoption-matrix.md`, and

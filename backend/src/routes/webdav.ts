@@ -40,6 +40,7 @@ import {
   pipeRangeStream,
   sendRangeNotSatisfiable,
 } from '../services/proxy';
+import { logger } from '../observability';
 
 export interface MountRouterOptions {
   /** 挂载类型（'webdav' | 'openlist'） */
@@ -133,7 +134,7 @@ export function createMountRouter(opts: MountRouterOptions): Router {
         mounts: mounts.map(stripPassword),
       });
     } catch (err) {
-      console.error(`[${logTag}] list mounts error:`, err);
+      logger.error('storage-provider', 'list_mounts_failed', { providerType: type, error: err });
       res.status(500).json({ success: false, message: `获取 ${displayName} 挂载列表失败` });
     }
   });
@@ -168,7 +169,7 @@ export function createMountRouter(opts: MountRouterOptions): Router {
         });
       }
     } catch (err) {
-      console.error(`[${logTag}] test mount error:`, err);
+      logger.error('storage-provider', 'test_mount_failed', { providerType: type, error: err });
       res.status(500).json({ success: false, message: `测试 ${displayName} 连接失败` });
     }
   });
@@ -230,7 +231,7 @@ export function createMountRouter(opts: MountRouterOptions): Router {
             : {}),
       });
     } catch (err) {
-      console.error(`[${logTag}] create mount error:`, err);
+      logger.error('storage-provider', 'create_mount_failed', { providerType: type, error: err });
       res.status(500).json({ success: false, message: `创建 ${displayName} 挂载失败` });
     }
   });
@@ -308,7 +309,7 @@ export function createMountRouter(opts: MountRouterOptions): Router {
             : {}),
       });
     } catch (err) {
-      console.error(`[${logTag}] update mount error:`, err);
+      logger.error('storage-provider', 'update_mount_failed', { providerType: type, error: err });
       res.status(500).json({ success: false, message: `更新 ${displayName} 挂载失败` });
     }
   });
@@ -336,7 +337,7 @@ export function createMountRouter(opts: MountRouterOptions): Router {
       await repo.remove(mount);
       res.json({ success: true });
     } catch (err) {
-      console.error(`[${logTag}] delete mount error:`, err);
+      logger.error('storage-provider', 'delete_mount_failed', { providerType: type, error: err });
       res.status(500).json({ success: false, message: `删除 ${displayName} 挂载失败` });
     }
   });
@@ -379,7 +380,7 @@ export function createMountRouter(opts: MountRouterOptions): Router {
         });
       }
     } catch (err) {
-      console.error(`[${logTag}] browse mount error:`, err);
+      logger.error('storage-provider', 'browse_mount_failed', { providerType: type, error: err });
       res.status(500).json({ success: false, message: `浏览 ${displayName} 挂载失败` });
     }
   });
@@ -451,7 +452,7 @@ export function createMountRouter(opts: MountRouterOptions): Router {
         });
       }
     } catch (err) {
-      console.error(`[${logTag}] resolve error:`, err);
+      logger.error('storage-provider', 'resolve_failed', { providerType: type, error: err });
       res.status(500).json({ success: false, message: `解析 ${displayName} 文件失败` });
     }
   });
@@ -511,7 +512,7 @@ export function createMountRouter(opts: MountRouterOptions): Router {
         softDestroy: true,
       });
     } catch (err) {
-      console.error(`[${logTag}] proxy error:`, err);
+      logger.error('storage-provider', 'proxy_failed', { providerType: type, error: err });
       if (!res.headersSent) {
         res.status(502).json({
           success: false,
@@ -650,7 +651,7 @@ export function createMountRouter(opts: MountRouterOptions): Router {
         directUrl: maybeUpgradeDirectUrl(directUrl, httpsDirect),
       });
     } catch (err) {
-      console.error(`[${logTag}] direct-url error:`, err);
+      logger.error('storage-provider', 'direct_url_failed', { providerType: type, error: err });
       res.status(500).json({ success: false, message: `获取 ${displayName} 直链失败` });
     }
   });
@@ -720,7 +721,7 @@ export function createMountRouter(opts: MountRouterOptions): Router {
         softDestroy: true,
       });
     } catch (err) {
-      console.error(`[${logTag}] stream error:`, err);
+      logger.error('storage-provider', 'stream_failed', { providerType: type, error: err });
       if (!res.headersSent) {
         res.status(502).json({ success: false, message: `代理 ${displayName} 影片失败` });
       } else {

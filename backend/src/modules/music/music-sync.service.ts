@@ -180,6 +180,10 @@ export class MusicSyncService {
     this.onlineChecker = checker;
   }
 
+  getActiveMusicRoomCount(): number {
+    return this.runtimes.size;
+  }
+
   private async readQueueRows(roomId: string): Promise<MusicQueueItem[]> {
     const rows = await this.dataSource.getRepository(MusicQueueItem).find({
       where: { roomId },

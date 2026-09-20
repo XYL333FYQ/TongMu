@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { authenticateToken, type AuthenticatedRequest } from '../../../middleware/auth';
 import { redactMediaError } from '../../../services/media/redact';
+import { logger } from '../../../observability';
 import { NcmProviderError } from './types';
 import { ncmCatalogService, NcmCatalogService } from './ncm-catalog.service';
 import type {
@@ -29,7 +30,7 @@ function errorPayload(error: unknown): { status: number; body: Record<string, un
 
 function sendError(res: Response, error: unknown): void {
   const payload = errorPayload(error);
-  console.error('[music:ncm:catalog]', redactMediaError(error));
+  logger.error('music-ncm-catalog', 'request_failed', { error });
   res.status(payload.status).json(payload.body);
 }
 

@@ -11,6 +11,7 @@ import type { SocketEventHandler } from "../socket";
 import { roomPermissionService } from "../room/room-permission.service";
 import { AppDataSource } from "../../data-source";
 import { Room } from "../../entities/Room";
+import { metrics } from "../../observability";
 
 export const VOICE_SAMPLE_RATE = 48_000;
 export const VOICE_CHANNELS = 1;
@@ -58,6 +59,12 @@ interface PacketRateState {
 }
 
 const voiceMembers = new Map<string, Map<string, VoiceMemberEntry>>();
+
+export function voiceMetricSnapshot(): { rooms: number; members: number } {
+  let members = 0;
+  for (const roomMembers of voiceMembers.values()) members += roomMembers.size;
+  return { rooms: voiceMembers.size, members };
+}
 const socketIndex = new Map<string, SocketIndexEntry>();
 const identityGenerations = new Map<string, number>();
 const voiceMutedKeys = new Map<string, Set<string>>();
@@ -381,11 +388,14 @@ export class VoiceChatHandler implements SocketEventHandler {
           encoded?: unknown;
           frameSamples?: unknown;
         };
-        if (
-          !isRoomId(value?.roomId) ||
-          !isBoundedRate(socket.id, MAX_AUDIO_PACKETS_PER_SECOND)
-        )
+        if (!isRoomId(value?.roomId)) {
+          metrics.increment('voice_packet_dropped_total', { reason: 'invalid' });
           return;
+        }
+        if (!isBoundedRate(socket.id, MAX_AUDIO_PACKETS_PER_SECOND)) {
+          metrics.increment('voice_packet_dropped_total', { reason: 'rate_limited' });
+          return;
+        }
         const index = socketIndex.get(socket.id);
         const entry = voiceMembers
           .get(value.roomId)
@@ -408,15 +418,22 @@ export class VoiceChatHandler implements SocketEventHandler {
           (value.frameSamples !== undefined &&
             value.frameSamples !== VOICE_FRAME_SAMPLES) ||
           !Number.isFinite(value.timestamp)
-        )
+        ) {
+          metrics.increment('voice_packet_dropped_total', { reason: 'invalid' });
           return;
-        if (voiceMutedKeys.get(value.roomId)?.has(index.identity)) return;
+        }
+        if (voiceMutedKeys.get(value.roomId)?.has(index.identity)) {
+          metrics.increment('voice_packet_dropped_total', { reason: 'muted' });
+          return;
+        }
         if (
           value.encoded === true &&
           value.mediaTs !== undefined &&
           !Number.isFinite(value.mediaTs)
-        )
+        ) {
+          metrics.increment('voice_packet_dropped_total', { reason: 'invalid' });
           return;
+        }
 
         socket.to(value.roomId).emit("voice-audio-data", {
           from: socket.id,
@@ -432,6 +449,7 @@ export class VoiceChatHandler implements SocketEventHandler {
           frameSamples: value.encoded ? VOICE_FRAME_SAMPLES : undefined,
         });
       } catch {
+        metrics.increment('voice_packet_dropped_total', { reason: 'internal' });
         // malformed voice input is an isolated drop, never a handler exception
       }
     });
@@ -445,11 +463,14 @@ export class VoiceChatHandler implements SocketEventHandler {
           channels?: unknown;
           description?: unknown;
         };
-        if (
-          !isRoomId(value?.roomId) ||
-          !isBoundedRate(`${socket.id}:codec`, MAX_CODEC_CONFIGS_PER_SECOND)
-        )
+        if (!isRoomId(value?.roomId)) {
+          metrics.increment('voice_packet_dropped_total', { reason: 'invalid' });
           return;
+        }
+        if (!isBoundedRate(`${socket.id}:codec`, MAX_CODEC_CONFIGS_PER_SECOND)) {
+          metrics.increment('voice_packet_dropped_total', { reason: 'rate_limited' });
+          return;
+        }
         const index = socketIndex.get(socket.id);
         const entry = voiceMembers
           .get(value.roomId)
@@ -468,8 +489,12 @@ export class VoiceChatHandler implements SocketEventHandler {
           description.byteLength > VOICE_MAX_CODEC_DESCRIPTION_BYTES ||
           description.byteLength === 0 ||
           voiceMutedKeys.get(value.roomId)?.has(index.identity)
-        )
+        ) {
+          metrics.increment('voice_packet_dropped_total', {
+            reason: index && voiceMutedKeys.get(value.roomId)?.has(index.identity) ? 'muted' : 'invalid',
+          });
           return;
+        }
         socket.to(value.roomId).emit("voice-codec-config", {
           from: socket.id,
           identity: entry.identity,
@@ -480,6 +505,7 @@ export class VoiceChatHandler implements SocketEventHandler {
           description,
         });
       } catch {
+        metrics.increment('voice_packet_dropped_total', { reason: 'internal' });
         // malformed config is an isolated drop
       }
     });

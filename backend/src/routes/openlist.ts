@@ -27,6 +27,7 @@ import { AppDataSource } from '../data-source';
 import { UserMount } from '../entities/UserMount';
 import { Movie } from '../entities/Movie';
 import { authenticateToken, AuthenticatedRequest } from '../middleware/auth';
+import { logger } from '../observability';
 import {
   stripPassword,
   extractErrorMessage,
@@ -168,7 +169,7 @@ router.get('/mounts', async (req: AuthenticatedRequest, res: Response): Promise<
       mounts: mounts.map(stripPassword),
     });
   } catch (err) {
-    console.error('[openlist] list mounts error:', err);
+    logger.error('storage-provider', 'list_mounts_failed', { providerType: 'openlist', error: err });
     res.status(500).json({ success: false, message: '获取 OpenList 挂载列表失败' });
   }
 });
@@ -194,7 +195,7 @@ router.post('/mounts/test', async (req: AuthenticatedRequest, res: Response): Pr
       res.status(400).json({ success: false, message: result.message, code: result.code });
     }
   } catch (err) {
-    console.error('[openlist] test mount error:', err);
+    logger.error('storage-provider', 'test_mount_failed', { providerType: 'openlist', error: err });
     res.status(500).json({ success: false, message: '测试 OpenList 连接失败' });
   }
 });
@@ -255,7 +256,7 @@ router.post('/mounts', async (req: AuthenticatedRequest, res: Response): Promise
           : {}),
     });
   } catch (err) {
-    console.error('[openlist] create mount error:', err);
+    logger.error('storage-provider', 'create_mount_failed', { providerType: 'openlist', error: err });
     res.status(500).json({ success: false, message: '创建 OpenList 挂载失败' });
   }
 });
@@ -344,7 +345,7 @@ router.put('/mounts/:id', async (req: AuthenticatedRequest, res: Response): Prom
           : {}),
     });
   } catch (err) {
-    console.error('[openlist] update mount error:', err);
+    logger.error('storage-provider', 'update_mount_failed', { providerType: 'openlist', error: err });
     res.status(500).json({ success: false, message: '更新 OpenList 挂载失败' });
   }
 });
@@ -368,7 +369,7 @@ router.delete('/mounts/:id', async (req: AuthenticatedRequest, res: Response): P
     await repo.remove(mount);
     res.json({ success: true });
   } catch (err) {
-    console.error('[openlist] delete mount error:', err);
+    logger.error('storage-provider', 'delete_mount_failed', { providerType: 'openlist', error: err });
     res.status(500).json({ success: false, message: '删除 OpenList 挂载失败' });
   }
 });
@@ -433,7 +434,7 @@ router.get('/mounts/:id/browse', async (req: AuthenticatedRequest, res: Response
       });
     }
   } catch (err) {
-    console.error('[openlist] browse mount error:', err);
+    logger.error('storage-provider', 'browse_mount_failed', { providerType: 'openlist', error: err });
     res.status(500).json({ success: false, message: '浏览 OpenList 挂载失败' });
   }
 });
@@ -499,7 +500,7 @@ router.get('/resolve', async (req: AuthenticatedRequest, res: Response): Promise
       });
     }
   } catch (err) {
-    console.error('[openlist] resolve error:', err);
+    logger.error('storage-provider', 'resolve_failed', { providerType: 'openlist', error: err });
     res.status(500).json({ success: false, message: '解析 OpenList 文件失败' });
   }
 });
@@ -580,7 +581,7 @@ router.get('/direct-url', async (req: AuthenticatedRequest, res: Response): Prom
       });
     }
   } catch (err) {
-    console.error('[openlist] direct-url error:', err);
+    logger.error('storage-provider', 'direct_url_failed', { providerType: 'openlist', error: err });
     res.status(500).json({ success: false, message: '获取 OpenList 直链失败' });
   }
 });
@@ -627,7 +628,7 @@ router.get('/me', async (req: AuthenticatedRequest, res: Response): Promise<void
       });
     }
   } catch (err) {
-    console.error('[openlist] me error:', err);
+    logger.error('storage-provider', 'account_read_failed', { providerType: 'openlist', error: err });
     res.status(500).json({ success: false, message: '获取 OpenList 账号信息失败' });
   }
 });
@@ -712,7 +713,7 @@ router.get('/proxy', async (req: AuthenticatedRequest, res: Response): Promise<v
       errorMessage: 'OpenList 代理流错误',
     });
   } catch (err) {
-    console.error('[openlist] proxy error:', err);
+    logger.error('storage-provider', 'proxy_failed', { providerType: 'openlist', error: err });
     if (!res.headersSent) {
       res.status(502).json({ success: false, message: '代理 OpenList 媒体失败' });
     } else {
@@ -811,7 +812,7 @@ router.get('/stream', async (req: AuthenticatedRequest, res: Response): Promise<
       errorMessage: 'OpenList 影片流错误',
     });
   } catch (err) {
-    console.error('[openlist] stream error:', err);
+    logger.error('storage-provider', 'stream_failed', { providerType: 'openlist', error: err });
     if (!res.headersSent) {
       res.status(502).json({ success: false, message: '代理 OpenList 影片失败' });
     } else {
@@ -874,7 +875,7 @@ router.get('/search', async (req: AuthenticatedRequest, res: Response): Promise<
       });
     }
   } catch (err) {
-    console.error('[openlist] search error:', err);
+    logger.error('storage-provider', 'search_failed', { providerType: 'openlist', error: err });
     res.status(500).json({ success: false, message: '搜索 OpenList 文件失败' });
   }
 });

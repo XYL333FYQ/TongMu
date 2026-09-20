@@ -25,6 +25,7 @@ import {
 import { detectMediaFormat, getContentType } from '../services/mediaFormat';
 import { resolveUserMount, resolveMovieStream, proxyHttpUpstream } from '../services/proxy';
 import { normalizeServerUrlWithScheme } from '../services/network-utils';
+import { logger } from '../observability';
 
 const router = Router();
 
@@ -103,7 +104,7 @@ router.get('/mounts', async (req: AuthenticatedRequest, res: Response): Promise<
     });
     res.json({ success: true, mounts: mounts.map(stripPassword) });
   } catch (err) {
-    console.error('[emby] list mounts error:', err);
+    logger.error('media-provider', 'list_mounts_failed', { providerType: 'emby', error: err });
     res.status(500).json({ success: false, message: '获取 Emby 挂载列表失败' });
   }
 });
@@ -156,7 +157,7 @@ router.post('/mounts/test', async (req: AuthenticatedRequest, res: Response): Pr
       });
     }
   } catch (err) {
-    console.error('[emby] test mount error:', err);
+    logger.error('media-provider', 'test_mount_failed', { providerType: 'emby', error: err });
     res.status(500).json({ success: false, message: '测试 Emby 连接失败' });
   }
 });
@@ -228,7 +229,7 @@ router.post('/mounts', async (req: AuthenticatedRequest, res: Response): Promise
       ...(httpsWarning ? { warning: httpsWarning } : {}),
     });
   } catch (err) {
-    console.error('[emby] create mount error:', err);
+    logger.error('media-provider', 'create_mount_failed', { providerType: 'emby', error: err });
     res.status(500).json({ success: false, message: '创建 Emby 挂载失败' });
   }
 });
@@ -280,7 +281,7 @@ router.put('/mounts/:id', async (req: AuthenticatedRequest, res: Response): Prom
       ...(httpsWarning ? { warning: httpsWarning } : {}),
     });
   } catch (err) {
-    console.error('[emby] update mount error:', err);
+    logger.error('media-provider', 'update_mount_failed', { providerType: 'emby', error: err });
     res.status(500).json({ success: false, message: '更新 Emby 挂载失败' });
   }
 });
@@ -306,7 +307,7 @@ router.delete('/mounts/:id', async (req: AuthenticatedRequest, res: Response): P
     await repo.remove(mount);
     res.json({ success: true });
   } catch (err) {
-    console.error('[emby] delete mount error:', err);
+    logger.error('media-provider', 'delete_mount_failed', { providerType: 'emby', error: err });
     res.status(500).json({ success: false, message: '删除 Emby 挂载失败' });
   }
 });
@@ -344,7 +345,7 @@ router.get('/mounts/:id/browse', async (req: AuthenticatedRequest, res: Response
 
     res.json({ success: true, entries: items.map(mapEmbyEntry) });
   } catch (err) {
-    console.error('[emby] browse mount error:', err);
+    logger.error('media-provider', 'browse_mount_failed', { providerType: 'emby', error: err });
     const code = extractErrorCode(err);
     const status = code === 'AUTH_FAILED' ? 401 : code === 'TIMEOUT' ? 504 : 400;
     res.status(status).json({
@@ -437,7 +438,7 @@ router.get('/resolve', async (req: AuthenticatedRequest, res: Response): Promise
       },
     });
   } catch (err) {
-    console.error('[emby] resolve error:', err);
+    logger.error('media-provider', 'resolve_failed', { providerType: 'emby', error: err });
     res.status(400).json({
       success: false,
       message: extractErrorMessage(err, '解析 Emby 条目失败'),
@@ -479,7 +480,7 @@ router.get('/proxy', async (req: AuthenticatedRequest, res: Response): Promise<v
       errorMessage: 'Emby 视频流代理失败',
     });
   } catch (err) {
-    console.error('[emby] proxy error:', err);
+    logger.error('media-provider', 'proxy_failed', { providerType: 'emby', error: err });
     const status = extractErrorCode(err) === 'AUTH_FAILED' ? 401 : 502;
     res.status(status).json({
       success: false,
@@ -545,7 +546,7 @@ router.get('/stream', async (req: AuthenticatedRequest, res: Response): Promise<
       errorMessage: 'Emby 视频流代理失败',
     });
   } catch (err) {
-    console.error('[emby] stream error:', err);
+    logger.error('media-provider', 'stream_failed', { providerType: 'emby', error: err });
     if (!res.headersSent) {
       const status = extractErrorCode(err) === 'AUTH_FAILED' ? 401 : 502;
       res.status(status).json({

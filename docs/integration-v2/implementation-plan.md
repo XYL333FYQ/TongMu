@@ -546,9 +546,10 @@ feature contract.
 - Phase 6A Historical Database Migration: **COMPLETE (2026-09-19)**.
 - Phase 6B-1 Packaging + Secure Updater + Immutable Release CI + Artifact
   Provenance: **COMPLETE (2026-09-19)**.
-- Phase 6 overall: **IN PROGRESS**.
-- Phase 6B-2 observability, full provenance inventory, Docker runtime/migration
-  smoke, and Linux executable runtime smoke: **DEFERRED TO PHASE 6B-2**.
+- Phase 6B-2 implementation: **COMPLETE (2026-09-20)**.
+- Phase 6 overall: **BLOCKED ON ENVIRONMENTAL DOCKER SMOKE**.
+- Linux standalone executable runtime smoke: **NOT RUN**; Docker/Linux is the
+  primary deployment boundary and remains the mandatory unexecuted gate.
 
 **Goal**
 
@@ -597,7 +598,19 @@ V2 is not complete if it only works on a clean development database or cannot pr
 - COMPLETE in Phase 6B-1: immutable release naming/provenance, exact tag/SHA and
   clean-checkout gates, per-ref concurrency, no mutable latest overwrite, and no
   automatic GitHub Release publication.
-- Redacted structured logs, request/source correlation, bounded-label metrics and response-byte accounting.
+- COMPLETE in Phase 6B-2: redacted structured logs, request correlation,
+  matched-route metrics, actual streamed response-byte accounting, 100 MiB
+  memory sanity and 10,000-random-path cardinality coverage.
+- COMPLETE in Phase 6B-2 implementation: full direct/runtime dependency and
+  redistributed-asset provenance, legal notices, and signed per-file release
+  inventory.
+- COMPLETE in Phase 6B-2 local regression: backend 148 PASS / 1 Windows
+  symlink environment SKIP plus migration 29/29; frontend 26/26; focused
+  updater/observability 19/19; Chromium 27 PASS / 1 optional slice-cache SKIP;
+  backend lint and frontend production build PASS.
+- ENVIRONMENT BLOCKED: execute the real Docker/browser workflow covering fresh
+  volume, historical migration/backup, persistence, Chromium,
+  BrowserResolver fallback and Direct/HLS/DASH probes.
 
 **Exit criteria**
 
@@ -608,9 +621,13 @@ V2 is not complete if it only works on a clean development database or cannot pr
 - COMPLETE in Phase 6B-1: release/update artifacts are signed, integrity-checked,
   commit-traceable, and packaged deterministically where the archive format
   permits; no unsupported bit-reproducibility claim is made.
-- COMPLETE for the Phase 6B-1 delta: `THIRD-PARTY-NOTICES.md` records the added
-  dependency/patch provenance. Full repository-wide asset provenance remains
-  Phase 6B-2.
+- COMPLETE in Phase 6B-2: `THIRD-PARTY-NOTICES.md` and
+  `provenance-inventory.md` cover direct dependencies, reference adaptations,
+  vendored JavaScript, patches, WASM, Workers, images/icons, the legacy binary,
+  fonts (none), generated fixtures and release boundaries. Unknown
+  redistributed assets: zero.
+- BLOCKED: Phase 6 cannot become release-candidate complete until the real
+  Docker/browser smoke has executed successfully.
 - Live/P2P decisions are updated from DEFER only with an approved user need and client-source audit.
 
 **Major risks**
