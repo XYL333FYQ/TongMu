@@ -15,7 +15,7 @@ services:
       MEDIA_BROWSER_RESOLVER: "${MEDIA_BROWSER_RESOLVER:-true}"
       MEDIA_BROWSER_MAX_CONCURRENCY: "${MEDIA_BROWSER_MAX_CONCURRENCY:-1}"
     ports:
-      - "3333:3333"
+      - "127.0.0.1:3333:3333"
       - "3334:3334"
     # Playwright Chromium 需要更大的 shared memory，避免页面解析时崩溃。
     shm_size: "1gb"
