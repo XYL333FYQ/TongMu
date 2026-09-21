@@ -8,6 +8,8 @@ export interface BilibiliResponse<T = unknown> {
 export interface BilibiliFetchOptions extends RequestInit {
   /** 用于请求的 B站 Cookie 字符串。 */
   cookie?: string;
+  /** 仅供明确允许业务失败但仍需读取 data 的接口使用。 */
+  ignoreBizCode?: boolean;
 }
 
 const DEFAULT_USER_AGENT =
@@ -40,6 +42,44 @@ function randomBackoffMs(): number {
  */
 let anonymousCookieJar: string | null = null;
 
+const ANONYMOUS_SESSION_TTL_MS = 30 * 60 * 1000;
+let anonymousSessionWarmedAt = 0;
+let anonymousSessionWarmPromise: Promise<void> | null = null;
+
+/**
+ * 通过匿名指纹接口初始化 buvid3/buvid4。失败只降低抗风控能力，不阻断主流程。
+ * 显式登录 Cookie 始终优先于这里的匿名 Cookie 罐。
+ */
+export function ensureAnonymousSession(): Promise<void> {
+  if (Date.now() - anonymousSessionWarmedAt < ANONYMOUS_SESSION_TTL_MS) {
+    return Promise.resolve();
+  }
+  if (!anonymousSessionWarmPromise) {
+    anonymousSessionWarmPromise = (async () => {
+      try {
+        const spi = await bilibiliGet<{ b_3?: string; b_4?: string }>(
+          'https://api.bilibili.com/x/frontend/finger/spi',
+        );
+        const parts = [
+          spi.data?.b_3 ? `buvid3=${spi.data.b_3}` : '',
+          spi.data?.b_4 ? `buvid4=${spi.data.b_4}` : '',
+        ].filter(Boolean);
+        if (parts.length > 0) {
+          anonymousCookieJar = anonymousCookieJar
+            ? `${anonymousCookieJar}; ${parts.join('; ')}`
+            : parts.join('; ');
+        }
+      } catch {
+        // 匿名会话预热是 best-effort；主请求仍可无 Cookie 继续。
+      }
+    })().finally(() => {
+      anonymousSessionWarmPromise = null;
+      anonymousSessionWarmedAt = Date.now();
+    });
+  }
+  return anonymousSessionWarmPromise;
+}
+
 function parseSetCookieHeader(headers: Headers): string {
   const getSetCookies = (headers as unknown as { getSetCookies?: () => string[] })
     .getSetCookies;
@@ -71,7 +111,7 @@ export async function bilibiliFetch<T = unknown>(
   url: string,
   options?: BilibiliFetchOptions,
 ): Promise<BilibiliResponse<T>> {
-  const { cookie, ...requestInit } = options || {};
+  const { cookie, ignoreBizCode, ...requestInit } = options || {};
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
@@ -125,7 +165,7 @@ export async function bilibiliFetch<T = unknown>(
 
       const json = (await res.json()) as BilibiliResponse<T>;
 
-      if (json.code !== 0) {
+      if (json.code !== 0 && !ignoreBizCode) {
         throw new Error(
           `B站 API 业务错误 [${json.code}] ${json.message || ''}: ${url}`,
         );

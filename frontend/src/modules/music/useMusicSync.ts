@@ -2,6 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import { useSocket } from '@/hooks/useSocket'
 import { MusicAudioLifecycle } from './audio-lifecycle'
+import {
+  ROOM_MEDIA_TEARDOWN_EVENT,
+  type RoomMediaTeardownDetail,
+} from '@/lib/mediaTeardown'
 import { expectedMusicPosition, shouldCorrectMusicDrift } from './domain'
 import { isMusicSnapshot, shouldApplyMusicEvent } from './realtime-version'
 import { useMusicStore } from './store'
@@ -56,6 +60,7 @@ export function useMusicSync({
   const lifecycleRef = useRef<MusicAudioLifecycle | null>(null)
   const attachedSourceRef = useRef<string | null>(null)
   const attachedGenerationRef = useRef<number | null>(null)
+  const resumeAfterSocketReconnectRef = useRef(false)
   const resolveEpochRef = useRef(0)
   const snapshotInitializedRef = useRef(false)
   const ackedTrackRef = useRef<string | null>(null)
@@ -413,6 +418,43 @@ export function useMusicSync({
     },
     []
   )
+
+  useEffect(() => {
+    const handleTeardown = (event: Event) => {
+      const detail = (event as CustomEvent<RoomMediaTeardownDetail>).detail
+      const full = detail?.full ?? true
+      if (full) {
+        resumeAfterSocketReconnectRef.current = false
+        lifecycleRef.current?.unload()
+        attachedSourceRef.current = null
+        attachedGenerationRef.current = null
+      } else {
+        const audio = audioRef.current
+        resumeAfterSocketReconnectRef.current = Boolean(
+          audio && (!audio.paused || useMusicStore.getState().isPlaying)
+        )
+        audio?.pause()
+      }
+    }
+    window.addEventListener(ROOM_MEDIA_TEARDOWN_EVENT, handleTeardown)
+    return () =>
+      window.removeEventListener(ROOM_MEDIA_TEARDOWN_EVENT, handleTeardown)
+  }, [audioRef])
+
+  useEffect(() => {
+    if (!socket) return
+    const handleReconnect = () => {
+      if (!resumeAfterSocketReconnectRef.current) return
+      resumeAfterSocketReconnectRef.current = false
+      const audio = audioRef.current
+      if (!audio || !useMusicStore.getState().isPlaying) return
+      void audio.play().catch(() => setError('浏览器阻止了自动播放，请点击播放按钮'))
+    }
+    socket.on('connect', handleReconnect)
+    return () => {
+      socket.off('connect', handleReconnect)
+    }
+  }, [audioRef, setError, socket])
 
   const emitHostMutation = useCallback(
     (event: string, payload: Record<string, unknown> = {}) => {

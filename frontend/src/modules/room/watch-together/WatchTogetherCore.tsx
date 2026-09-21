@@ -1715,7 +1715,7 @@ export function WatchTogetherCore({
       {loadMovieError &&
         isHost &&
         createPortal(
-          <div className="absolute inset-0 z-[60] flex flex-col items-center justify-center gap-4 bg-black/70">
+          <div className="pointer-events-auto absolute inset-0 z-[60] flex flex-col items-center justify-center gap-4 bg-black/70">
             <div className="text-center">
               <div className="mb-1 text-base font-medium text-white">
                 视频加载失败

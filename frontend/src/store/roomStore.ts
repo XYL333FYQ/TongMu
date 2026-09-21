@@ -189,6 +189,13 @@ export interface PreviewPlayRequest {
   playsvideoEnabled?: boolean
 }
 
+/** 当前页面内由房主明确点击影片播放按钮产生的一次选择意图。 */
+export interface ExplicitMoviePlayIntent {
+  roomId: string
+  movieId: number
+  generation: number
+}
+
 interface RoomState {
   roomId: string
   roomName: string
@@ -216,6 +223,7 @@ interface RoomState {
   watchTogether: WatchTogetherState
   movies: Movie[]
   currentMovieId: number | null
+  explicitMoviePlayIntent: ExplicitMoviePlayIntent | null
   pendingQualityChange: { movieId: number; resolved: ResolvedSource } | null
   /**
    * 观众端通过本地 CLI 自主切换的清晰度解析结果。
@@ -306,6 +314,7 @@ interface RoomState {
   setWatchTogether: (state: Partial<WatchTogetherState>) => void
   setMovies: (movies: Movie[]) => void
   setCurrentMovieId: (id: number | null) => void
+  requestMoviePlay: (movieId: number) => void
   setPendingQualityChange: (
     value: { movieId: number; resolved: ResolvedSource } | null
   ) => void
@@ -405,6 +414,7 @@ const defaultState = {
   },
   movies: [],
   currentMovieId: null,
+  explicitMoviePlayIntent: null as ExplicitMoviePlayIntent | null,
   pendingQualityChange: null,
   viewerCliResolvedSource: null,
   pendingPreviewPlay: null,
@@ -421,6 +431,8 @@ const defaultState = {
   streamStatus: 'unknown' as StreamStatus,
   streamKey: null,
 }
+
+let explicitMoviePlayGeneration = 0
 
 export const useRoomStore = create<RoomState>((set, get) => ({
   ...defaultState,
@@ -506,6 +518,15 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     })),
   setMovies: (movies) => set({ movies }),
   setCurrentMovieId: (id) => set({ currentMovieId: id }),
+  requestMoviePlay: (movieId) =>
+    set((state) => ({
+      currentMovieId: movieId,
+      explicitMoviePlayIntent: {
+        roomId: state.roomId,
+        movieId,
+        generation: ++explicitMoviePlayGeneration,
+      },
+    })),
   setPendingQualityChange: (value) => set({ pendingQualityChange: value }),
   setViewerCliResolvedSource: (value) =>
     set({ viewerCliResolvedSource: value }),

@@ -31,11 +31,7 @@ import type { P2PStatus } from '@/modules/p2p/types'
 import { MediaSettingsCard } from './MediaSettingsCard'
 import { ShareControlsBar } from './ShareControlsBar'
 import { SharingPausedOverlay } from './SharingPausedOverlay'
-import type {
-  CloseRoomResponse,
-  RoomClosedPayload,
-  RoomModeChangedPayload,
-} from '../types'
+import type { CloseRoomResponse, RoomModeChangedPayload } from '../types'
 
 /** P2P 状态快照，由 WebrtcSharePage 提升到 RoomPage 供 RoomLayout 使用 */
 export interface P2PStateSnapshot {
@@ -72,7 +68,6 @@ function WebrtcSharePage({
   const [maxBitrateMbps, setMaxBitrateMbps] = useState(8)
   const [shareSystemAudio, setShareSystemAudio] = useState(false)
   const [shareMicrophone, setShareMicrophone] = useState(false)
-  const [closing, setClosing] = useState(false)
   const [confirmClose, setConfirmClose] = useState(false)
 
   // 帧率切换时自动调整推荐码率（仅在未共享时）
@@ -162,17 +157,6 @@ function WebrtcSharePage({
     }
   }, [localVideoEl, stream])
 
-  const handleRoomClosed = useCallback(
-    (data: RoomClosedPayload) => {
-      message.warning(`房间 ${data.roomId} 已关闭`)
-      setClosing(true)
-      stop()
-      cleanupPeerConnections()
-      setTimeout(() => navigate('/', { replace: true }), 1500)
-    },
-    [stop, cleanupPeerConnections, navigate]
-  )
-
   const handleRoomModeChanged = useCallback(
     (data: RoomModeChangedPayload) => {
       setMode(data.mode)
@@ -244,7 +228,6 @@ function WebrtcSharePage({
     onViewerReady: handleViewerReady,
     onViewerJoined: handleViewerJoined,
     onViewerLeft: handleViewerLeft,
-    onRoomClosed: handleRoomClosed,
     onRoomModeChanged: handleRoomModeChanged,
   })
 
@@ -380,7 +363,7 @@ function WebrtcSharePage({
             connected={connected}
             viewerCount={viewerIds.length}
             connectionCount={connectionCount}
-            closing={closing}
+            closing={false}
             onTogglePause={handleTogglePause}
             onCopyLink={handleCopy}
             onClearAnnotations={handleClearAnnotations}
@@ -428,7 +411,7 @@ function WebrtcSharePage({
               icon={<Monitor className="h-5 w-5" />}
               onClick={start}
               loading={starting}
-              disabled={starting || closing}
+              disabled={starting}
             >
               {starting ? '正在请求权限...' : '开始共享'}
             </Button>

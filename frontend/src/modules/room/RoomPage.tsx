@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { useRoomStore } from '@/store/roomStore'
 import { useAuthStore } from '@/store/authStore'
 import { useDanmakuStore } from '@/store/danmakuStore'
@@ -24,6 +24,7 @@ import type { MediaFormat } from '@/lib/mediaFormat'
 
 import type { RoomMode } from '@/store/roomStore'
 import { storeRoomMediaGrant } from '@/modules/media/roomMediaGrant'
+import { dispatchRoomMediaTeardown } from '@/lib/mediaTeardown'
 
 // sessionStorage key：标记当前用户是哪个房间的房主。
 // 房主创建房间时写入，RoomPage 据此判断身份并走 register-host 流程。
@@ -50,6 +51,7 @@ function clearHostRoomMark(roomId: string) {
 
 function RoomPage() {
   const { roomId } = useParams<{ roomId?: string }>()
+  const navigate = useNavigate()
   // 身份判断：仅通过 sessionStorage 标记判断房主身份，URL 不再携带 role/mode 参数。
   // 房主创建房间时写入 sessionStorage，刷新后仍可识别；观众进入时 sessionStorage 无标记。
   const isHost = roomId ? isHostOfRoom(roomId) : false
@@ -100,6 +102,8 @@ function RoomPage() {
   // initialPlayback 已可用，避免 fetchMovies/current-movie 先到达导致 loadMovie
   // effect 在 initialPlayback=null 时执行，从而丢失播放进度恢复。
   const [hostRegistered, setHostRegistered] = useState(false)
+  const hostAlreadyInRoomRetriesRef = useRef(0)
+  const hostRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // roomId 变化时重置 roomStore（不包括首次挂载）。
   // 注意：组件卸载时不再 resetRoomStore —— 保留房间状态用于"不离开房间"功能：
@@ -179,6 +183,27 @@ function RoomPage() {
     }
   }, [])
 
+  // 房间关闭时统一卸载当前模式的媒体；短暂断线只暂停，保留重连恢复所需状态。
+  useEffect(() => {
+    if (!roomId || !socket) return
+
+    const handleRoomClosed = (data: { roomId: string }) => {
+      if (data.roomId !== roomId) return
+      dispatchRoomMediaTeardown(true)
+      clearHostRoomMark(roomId)
+      message.warning(`房间 ${data.roomId} 已关闭`)
+      navigate('/room', { replace: true })
+    }
+    const handleDisconnect = () => dispatchRoomMediaTeardown(false)
+
+    socket.on('room-closed', handleRoomClosed)
+    socket.on('disconnect', handleDisconnect)
+    return () => {
+      socket.off('room-closed', handleRoomClosed)
+      socket.off('disconnect', handleDisconnect)
+    }
+  }, [roomId, socket, navigate])
+
   // 监听后端广播的弹幕轨道同步事件（房主/观众均需要）
   useEffect(() => {
     if (!roomId || !socket) return
@@ -221,7 +246,17 @@ function RoomPage() {
   useEffect(() => {
     if (!isHost || !roomId || !socket) return
 
+    let disposed = false
+
+    const clearHostRetryTimer = () => {
+      if (hostRetryTimerRef.current) {
+        clearTimeout(hostRetryTimerRef.current)
+        hostRetryTimerRef.current = null
+      }
+    }
+
     const registerHost = () => {
+      clearHostRetryTimer()
       socket.emit(
         'register-host',
         { roomId },
@@ -263,16 +298,23 @@ function RoomPage() {
             }
           }
         }) => {
+          if (disposed) return
           if (!response?.success) {
             console.warn('[RoomPage] register-host failed:', response?.message)
-            // 同一账户已在另一个标签页进入此房间：显示提示并返回首页
+            // 刷新/快速重进时旧 socket 的 session 可能尚未清理；只对这个
+            // 明确错误做 3 次、每次 1.5 秒的有限重试。
             if (response?.code === 'ALREADY_IN_ROOM') {
+              hostAlreadyInRoomRetriesRef.current += 1
+              if (hostAlreadyInRoomRetriesRef.current <= 3) {
+                hostRetryTimerRef.current = setTimeout(registerHost, 1500)
+                return
+              }
+              hostAlreadyInRoomRetriesRef.current = 0
               message.error(response.message ?? '该账户已在此房间内')
-              setTimeout(() => {
-                window.location.href = '/'
-              }, 2000)
+              navigate('/', { replace: true })
               return
             }
+            hostAlreadyInRoomRetriesRef.current = 0
             // 房主身份恢复失败（房间被关闭/被接管等）：清除本地标记，回退到观众流程
             clearHostRoomMark(roomId)
             // 即使失败也标记为已完成，避免 WatchTogetherPanel 永远不渲染
@@ -280,6 +322,7 @@ function RoomPage() {
             return
           }
           // AckResponse 标准格式：业务数据在 data 字段内
+          hostAlreadyInRoomRetriesRef.current = 0
           const data = response.data
           storeRoomMediaGrant(roomId, data?.mediaGrant)
           // 使用后端返回的房间真实模式，避免 store 默认值 screen-share 导致 UI 错误。
@@ -327,6 +370,9 @@ function RoomPage() {
     socket.on('connect', registerHost)
     socket.on('room-name-updated', handleRoomNameUpdated)
     return () => {
+      disposed = true
+      clearHostRetryTimer()
+      hostAlreadyInRoomRetriesRef.current = 0
       socket.off('connect', registerHost)
       socket.off('room-name-updated', handleRoomNameUpdated)
     }
@@ -339,6 +385,7 @@ function RoomPage() {
     setStreamKey,
     setRoomName,
     setRoomSettings,
+    navigate,
   ])
 
   const mode = storeMode

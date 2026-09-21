@@ -12,6 +12,10 @@ import flvjs from 'flv.js'
 import Artplayer from 'artplayer'
 import type { Option } from 'artplayer'
 import {
+  ROOM_MEDIA_TEARDOWN_EVENT,
+  type RoomMediaTeardownDetail,
+} from '@/lib/mediaTeardown'
+import {
   Maximize,
   Maximize2,
   Minimize,
@@ -379,7 +383,24 @@ export function FlvPlayer({
     onStatusChangeRef.current?.('playing')
     setStreamStatus('playing')
 
+    const handleRoomMediaTeardown = (event: Event) => {
+      const detail = (event as CustomEvent<RoomMediaTeardownDetail>).detail
+      const full = detail?.full ?? true
+      if (!full) return
+      video.pause()
+      if (retryTimer) {
+        clearTimeout(retryTimer)
+        retryTimer = null
+      }
+      player.unload()
+    }
+    window.addEventListener(ROOM_MEDIA_TEARDOWN_EVENT, handleRoomMediaTeardown)
+
     return () => {
+      window.removeEventListener(
+        ROOM_MEDIA_TEARDOWN_EVENT,
+        handleRoomMediaTeardown
+      )
       video.removeEventListener('loadedmetadata', handleLoadedMetadata)
       video.removeEventListener('waiting', handleWaiting)
       video.removeEventListener('play', handlePlay)

@@ -20,6 +20,7 @@ import JoinByRoomIdPage from '@/pages/JoinByRoomIdPage'
 function AuthInitializer() {
   const setUser = useAuthStore((s) => s.setUser)
   const setAutoLoginStatus = useAuthStore((s) => s.setAutoLoginStatus)
+  const markAuthResolved = useAuthStore((s) => s.markAuthResolved)
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
@@ -44,6 +45,7 @@ function AuthInitializer() {
       const { isAuthenticated } = useAuthStore.getState()
       if (isAuthenticated) {
         setAutoLoginStatus('done')
+        markAuthResolved()
         return
       }
 
@@ -68,6 +70,7 @@ function AuthInitializer() {
         const { isAuthenticated: nowAuthed } = useAuthStore.getState()
         if (nowAuthed) {
           setAutoLoginStatus('done')
+          markAuthResolved()
           return
         }
 
@@ -91,6 +94,7 @@ function AuthInitializer() {
       } finally {
         // 无论成功失败都标记为 done，避免 UI 永久卡在"正在校验登录状态"
         setAutoLoginStatus('done')
+        markAuthResolved()
       }
     }
 
@@ -124,6 +128,7 @@ function AuthInitializer() {
             avatar: data.user.avatar,
           })
           setAutoLoginStatus('done')
+          markAuthResolved()
           return
         }
 
@@ -133,6 +138,7 @@ function AuthInitializer() {
         if (userIdNow !== userIdAtMount) {
           // 用户 ID 已变化 → 手动登录发生，不要覆盖
           setAutoLoginStatus('done')
+          markAuthResolved()
           return
         }
         // 用户 ID 未变 → 持久化的会话已过期，清除过期状态后降级为 guest
@@ -149,6 +155,7 @@ function AuthInitializer() {
           const userIdNow = useAuthStore.getState().user?.id
           if (userIdNow !== userIdAtMount) {
             setAutoLoginStatus('done')
+            markAuthResolved()
             return
           }
           useAuthStore.getState().expireSession()

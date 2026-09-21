@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { bilibiliFetch } from './client';
+import { bilibiliFetch, ensureAnonymousSession } from './client';
 
 /**
  * WBI mixin key 字符抽取表。
@@ -101,9 +101,15 @@ export async function fetchWbiKeys(cookie?: string): Promise<WbiKeyPair> {
     };
   }
 
+  if (!cookie) await ensureAnonymousSession();
+
   const res = await bilibiliFetch<NavData>(
     'https://api.bilibili.com/x/web-interface/nav',
-    { cookie },
+    {
+      cookie,
+      // 匿名 nav 可能返回 -101，但 data.wbi_img 仍是有效的签名密钥。
+      ignoreBizCode: true,
+    },
   );
 
   const imgUrl = res.data.wbi_img?.img_url;

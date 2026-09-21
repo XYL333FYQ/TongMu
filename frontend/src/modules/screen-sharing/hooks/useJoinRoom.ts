@@ -7,7 +7,6 @@ import type {
   JoinStatus,
   JoinApprovedPayload,
   JoinRejectedPayload,
-  RoomClosedPayload,
   RoomModeChangedPayload,
   RequestJoinResponse,
 } from '../types'
@@ -23,8 +22,6 @@ interface UseJoinRoomOptions {
   onApprovedScreenShare?: () => void
   /** 当 join-approved 且 mode === 'watch-together' 时调用 */
   onApprovedWatchTogether?: () => void
-  /** room-closed 事件回调 */
-  onRoomClosed?: (data: RoomClosedPayload) => void
   /** room-mode-changed 事件回调（含切换到 screen-share 时需要创建 PC） */
   onRoomModeChanged?: (data: RoomModeChangedPayload) => void
   /** 房间名称更新回调 */
@@ -51,7 +48,7 @@ interface UseJoinRoomResult {
  * - 维护 joinStatus / roomMode 状态机
  * - 自动监听 roomId 变化触发 requestJoin
  * - 处理 socket 重连后重新加入
- * - 订阅 join-approved / join-rejected / room-closed / room-name-updated / room-mode-changed 事件
+ * - 订阅 join-approved / join-rejected / room-name-updated / room-mode-changed 事件
  *
  * 不包含 WebRTC / video srcObject 逻辑，相关副作用由调用方在回调中处理。
  */
@@ -62,7 +59,6 @@ export function useJoinRoom(options: UseJoinRoomOptions): UseJoinRoomResult {
     connected,
     onApprovedScreenShare,
     onApprovedWatchTogether,
-    onRoomClosed,
     onRoomModeChanged,
     onRoomNameUpdated,
     autoJoin = true,
@@ -79,12 +75,34 @@ export function useJoinRoom(options: UseJoinRoomOptions): UseJoinRoomResult {
   const requestedRoomIdRef = useRef<string | null>(null)
   const hasJoinedRef = useRef(false)
   const pendingPasswordRef = useRef<string>('')
+  const alreadyInRoomRetriesRef = useRef(0)
+  const alreadyInRoomTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  )
+  const requestJoinRef = useRef<
+    (targetRoomId: string, password: string) => void
+  >(() => {})
+  const mountedRef = useRef(true)
+
+  const clearAlreadyInRoomTimer = useCallback(() => {
+    if (alreadyInRoomTimerRef.current) {
+      clearTimeout(alreadyInRoomTimerRef.current)
+      alreadyInRoomTimerRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      clearAlreadyInRoomTimer()
+    }
+  }, [clearAlreadyInRoomTimer])
 
   // 用 ref 保存最新回调，避免回调变化导致事件订阅重建
   const callbacksRef = useRef({
     onApprovedScreenShare,
     onApprovedWatchTogether,
-    onRoomClosed,
     onRoomModeChanged,
     onRoomNameUpdated,
   })
@@ -92,24 +110,24 @@ export function useJoinRoom(options: UseJoinRoomOptions): UseJoinRoomResult {
     callbacksRef.current = {
       onApprovedScreenShare,
       onApprovedWatchTogether,
-      onRoomClosed,
       onRoomModeChanged,
       onRoomNameUpdated,
     }
   }, [
     onApprovedScreenShare,
     onApprovedWatchTogether,
-    onRoomClosed,
     onRoomModeChanged,
     onRoomNameUpdated,
   ])
 
   const resetJoinState = useCallback(() => {
+    clearAlreadyInRoomTimer()
+    alreadyInRoomRetriesRef.current = 0
     setJoinStatus('idle')
     setRoomMode(null)
     requestedRoomIdRef.current = null
     hasJoinedRef.current = false
-  }, [])
+  }, [clearAlreadyInRoomTimer])
 
   const requestJoin = useCallback(
     (targetRoomId: string, password: string) => {
@@ -125,7 +143,10 @@ export function useJoinRoom(options: UseJoinRoomOptions): UseJoinRoomResult {
         'request-join',
         { roomId: targetRoomId, password },
         (response: RequestJoinResponse) => {
+          if (!mountedRef.current) return
           if (response.success) {
+            clearAlreadyInRoomTimer()
+            alreadyInRoomRetriesRef.current = 0
             storeRoomMediaGrant(targetRoomId, response.data?.mediaGrant)
             // 房主身份恢复：后端检测到当前用户是房间 owner，已自动恢复房主身份。
             // 写入 sessionStorage 标记并刷新页面，让 RoomPage 重新以房主身份渲染。
@@ -174,18 +195,33 @@ export function useJoinRoom(options: UseJoinRoomOptions): UseJoinRoomResult {
           } else {
             const isPasswordError = response.message === '密码错误'
             if (isPasswordError) {
+              clearAlreadyInRoomTimer()
+              alreadyInRoomRetriesRef.current = 0
               setJoinStatus('password-required')
               requestedRoomIdRef.current = null
               message.error('密码错误，请重新输入')
             } else if (response.code === 'ALREADY_IN_ROOM') {
-              // 同一账户已在另一个标签页进入此房间，拒绝加入并返回首页
+              // 刷新/快速重进时旧 socket 的 session 可能尚未清理；有限
+              // 重试后仍失败，才按真实的重复标签页处理。
+              alreadyInRoomRetriesRef.current += 1
+              if (alreadyInRoomRetriesRef.current <= 3) {
+                message.info('检测到账户已在房间内，正在重新加入…')
+                clearAlreadyInRoomTimer()
+                alreadyInRoomTimerRef.current = setTimeout(() => {
+                  alreadyInRoomTimerRef.current = null
+                  requestedRoomIdRef.current = null
+                  requestJoinRef.current(targetRoomId, password)
+                }, 1500)
+                return
+              }
+              clearAlreadyInRoomTimer()
+              alreadyInRoomRetriesRef.current = 0
               setJoinStatus('rejected')
               message.error(response.message ?? '该账户已在此房间内')
-              // 延迟导航，让用户看到提示
-              setTimeout(() => {
-                window.location.href = '/'
-              }, 2000)
+              window.location.href = '/'
             } else {
+              clearAlreadyInRoomTimer()
+              alreadyInRoomRetriesRef.current = 0
               setJoinStatus('idle')
               message.error(response.message ?? '加入房间失败')
             }
@@ -193,8 +229,19 @@ export function useJoinRoom(options: UseJoinRoomOptions): UseJoinRoomResult {
         }
       )
     },
-    [socket, connected, setStoreMode, setShareMethod, setStreamKey]
+    [
+      socket,
+      connected,
+      setStoreMode,
+      setShareMethod,
+      setStreamKey,
+      clearAlreadyInRoomTimer,
+    ]
   )
+
+  useEffect(() => {
+    requestJoinRef.current = requestJoin
+  }, [requestJoin])
 
   // roomId 变化时自动加入房间（autoJoin=false 时跳过，等待手动 requestJoin）
   useEffect(() => {
@@ -207,6 +254,8 @@ export function useJoinRoom(options: UseJoinRoomOptions): UseJoinRoomResult {
       requestedRoomIdRef.current !== null &&
       requestedRoomIdRef.current !== roomId
     ) {
+      clearAlreadyInRoomTimer()
+      alreadyInRoomRetriesRef.current = 0
       resetRoomStore()
       hasJoinedRef.current = false
     }
@@ -215,7 +264,15 @@ export function useJoinRoom(options: UseJoinRoomOptions): UseJoinRoomResult {
     const password = pendingPasswordRef.current
     pendingPasswordRef.current = ''
     requestJoin(roomId, password)
-  }, [socket, connected, roomId, requestJoin, resetRoomStore, autoJoin])
+  }, [
+    socket,
+    connected,
+    roomId,
+    requestJoin,
+    resetRoomStore,
+    autoJoin,
+    clearAlreadyInRoomTimer,
+  ])
 
   // Bug #3 修复：socket 断线重连后服务端分配新 socket.id，新 socket 不在任何房间内。
   // 监听 'connect' 事件重置 requestedRoomIdRef，触发上面的 effect 重新 requestJoin。
@@ -224,6 +281,8 @@ export function useJoinRoom(options: UseJoinRoomOptions): UseJoinRoomResult {
     if (!socket) return
     const handleReconnect = () => {
       console.log('[useJoinRoom] socket reconnected, re-join room:', roomId)
+      clearAlreadyInRoomTimer()
+      alreadyInRoomRetriesRef.current = 0
       requestedRoomIdRef.current = null
       hasJoinedRef.current = false
       setJoinStatus('idle')
@@ -232,7 +291,7 @@ export function useJoinRoom(options: UseJoinRoomOptions): UseJoinRoomResult {
     return () => {
       socket.off('connect', handleReconnect)
     }
-  }, [socket, roomId])
+  }, [socket, roomId, clearAlreadyInRoomTimer])
 
   // 事件订阅
   useEffect(() => {
@@ -282,10 +341,6 @@ export function useJoinRoom(options: UseJoinRoomOptions): UseJoinRoomResult {
       message.warning(`加入房间 ${data.roomId} 被拒绝`)
     }
 
-    const handleRoomClosed = (data: RoomClosedPayload) => {
-      callbacksRef.current.onRoomClosed?.(data)
-    }
-
     const handleRoomNameUpdated = (data: { roomId: string; name: string }) => {
       callbacksRef.current.onRoomNameUpdated?.(data)
     }
@@ -298,14 +353,12 @@ export function useJoinRoom(options: UseJoinRoomOptions): UseJoinRoomResult {
 
     socket.on('join-approved', handleJoinApproved)
     socket.on('join-rejected', handleJoinRejected)
-    socket.on('room-closed', handleRoomClosed)
     socket.on('room-name-updated', handleRoomNameUpdated)
     socket.on('room-mode-changed', handleRoomModeChanged)
 
     return () => {
       socket.off('join-approved', handleJoinApproved)
       socket.off('join-rejected', handleJoinRejected)
-      socket.off('room-closed', handleRoomClosed)
       socket.off('room-name-updated', handleRoomNameUpdated)
       socket.off('room-mode-changed', handleRoomModeChanged)
     }

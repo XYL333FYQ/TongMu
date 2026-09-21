@@ -12,10 +12,12 @@ export function RequireAuth({
   adminOnly = false,
   forbiddenRoles,
 }: RequireAuthProps) {
-  const { isAuthenticated, user, autoLoginStatus } = useAuthStore()
+  const { isAuthenticated, user, authResolved } = useAuthStore()
   const location = useLocation()
 
-  if (!isAuthenticated && autoLoginStatus !== 'done') {
+  // 持久化的 autoLoginStatus 可能来自上一次页面生命周期；只有本页真正
+  // 完成 /auth/me 或 guest 初始化后，才允许把未认证用户重定向到登录页。
+  if (!isAuthenticated && !authResolved) {
     return null
   }
 

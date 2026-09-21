@@ -12,6 +12,7 @@ import type { NcmLoginService } from './ncm-login.service';
 import type { MusicPlaybackService } from './music-playback.service';
 import type { NcmCredentialService } from './ncm-credential.service';
 import type { NcmCatalogService } from './ncm-catalog.service';
+import { logger, metrics } from '../../../observability';
 
 const SESSION_ID_RE = /^[0-9a-f-]{20,64}$/i;
 const ROOM_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
@@ -90,7 +91,7 @@ export function createNcmMusicRouter(dependencies: NcmMusicRouterDependencies = 
     try {
       res.json({ success: true, ...(await credentials.getStatus(userIdOf(req))) });
     } catch (error) {
-      console.error('[music:ncm] status error:', redactMediaError(error));
+      logger.error('music-ncm', 'status_failed', { error });
       sendError(res, error);
     }
   });
@@ -104,7 +105,7 @@ export function createNcmMusicRouter(dependencies: NcmMusicRouterDependencies = 
     try {
       res.json({ success: true, ...(await login.createQr(userId)) });
     } catch (error) {
-      console.error('[music:ncm] qr create error:', redactMediaError(error));
+      logger.error('music-ncm', 'qr_create_failed', { error });
       sendError(res, error);
     }
   });
@@ -134,7 +135,7 @@ export function createNcmMusicRouter(dependencies: NcmMusicRouterDependencies = 
       await login.logout(userId);
       res.json({ success: true, loggedIn: false });
     } catch (error) {
-      console.error('[music:ncm] logout error:', redactMediaError(error));
+      logger.error('music-ncm', 'logout_failed', { error });
       sendError(res, error);
     }
   });
@@ -147,7 +148,16 @@ export function createNcmMusicRouter(dependencies: NcmMusicRouterDependencies = 
     }
     try {
       res.json({ success: true, ...(await playbackService.resolve(request)) });
+      metrics.increment('media_resolve_total', { provider_type: 'ncm', result: 'success' });
     } catch (error) {
+      const result = error instanceof NcmProviderError && /AUTH|LOGIN|CREDENTIAL/i.test(error.code)
+        ? 'auth_error'
+        : error instanceof NcmProviderError && /INVALID/i.test(error.code)
+          ? 'invalid'
+          : error instanceof NcmProviderError && /UNAVAILABLE|QUALITY/i.test(error.code)
+            ? 'unavailable'
+            : 'internal';
+      metrics.increment('media_resolve_total', { provider_type: 'ncm', result });
       sendError(res, error);
     }
   });
@@ -161,7 +171,16 @@ export function createNcmMusicRouter(dependencies: NcmMusicRouterDependencies = 
     }
     try {
       await playbackService.proxy(req, res, token, roomGrant);
+      metrics.increment('media_gateway_requests_total', {
+        resource_kind: 'music', transport_mode: 'full_proxy', result: 'success',
+      });
     } catch (error) {
+      const status = error instanceof NcmProviderError ? error.status : 500;
+      metrics.increment('media_gateway_requests_total', {
+        resource_kind: 'music',
+        transport_mode: 'full_proxy',
+        result: status === 403 ? 'denied' : status === 404 ? 'not_found' : 'upstream_error',
+      });
       sendError(res, error);
     }
   };

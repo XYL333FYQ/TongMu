@@ -61,7 +61,7 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
   const { socket } = useSocket()
   const movies = useRoomStore((state) => state.movies)
   const currentMovieId = useRoomStore((state) => state.currentMovieId)
-  const setCurrentMovieId = useRoomStore((state) => state.setCurrentMovieId)
+  const requestMoviePlay = useRoomStore((state) => state.requestMoviePlay)
   const roomId = useRoomStore((state) => state.roomId)
   const removeMovie = useRoomStore((state) => state.removeMovie)
   const updateMovie = useRoomStore((state) => state.updateMovie)
@@ -121,7 +121,7 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
       return
     }
     socket.emit('play-movie', { roomId, movieId })
-    setCurrentMovieId(movieId)
+    requestMoviePlay(movieId)
   }
 
   const handleRemove = async (movieId: number) => {

@@ -25,6 +25,8 @@ interface AuthState {
   user: User | null
   isAuthenticated: boolean
   autoLoginStatus: AutoLoginStatus
+  /** 本次页面加载的认证恢复是否已有终态；不持久化。 */
+  authResolved: boolean
   /** 标记用户主动登出（用于 AuthInitializer 跳过 guest 自动登录等场景） */
   hasLoggedOut: boolean
   setUser: (user: User | null) => void
@@ -36,6 +38,7 @@ interface AuthState {
   /** 主动登出：清空 user 状态（cookie 由调用方调 /api/auth/logout 清除） */
   logout: () => void
   setAutoLoginStatus: (status: AutoLoginStatus) => void
+  markAuthResolved: () => void
   /** 会话过期（refresh 失败）：清空 user 状态 */
   expireSession: () => void
 }
@@ -48,6 +51,7 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       isAuthenticated: false,
       autoLoginStatus: 'idle',
+      authResolved: false,
       hasLoggedOut: false,
       setUser: (user) => set({ user, isAuthenticated: !!user }),
       login: (user) =>
@@ -65,6 +69,7 @@ export const useAuthStore = create<AuthState>()(
           hasLoggedOut: true,
         }),
       setAutoLoginStatus: (status) => set({ autoLoginStatus: status }),
+      markAuthResolved: () => set({ authResolved: true }),
       expireSession: () =>
         set({
           user: null,

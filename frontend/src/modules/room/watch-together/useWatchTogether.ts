@@ -2,6 +2,10 @@ import { isProxiedMediaTransport } from '@/modules/media/transport'
 import { useEffect, useRef, useCallback, useState } from 'react'
 import type { MutableRefObject } from 'react'
 import { formatDuration } from '@/lib/utils'
+import {
+  ROOM_MEDIA_TEARDOWN_EVENT,
+  type RoomMediaTeardownDetail,
+} from '@/lib/mediaTeardown'
 import { useShallow } from 'zustand/react/shallow'
 import { useSocket } from '@/hooks/useSocket'
 import { message } from '@/components/ui/message'
@@ -118,6 +122,7 @@ export function useWatchTogether({
     setWatchTogether,
     movies,
     currentMovieId,
+    explicitMoviePlayIntent,
     setMovies,
     setCurrentMovieId,
     fetchMovies,
@@ -134,6 +139,7 @@ export function useWatchTogether({
       setWatchTogether: s.setWatchTogether,
       movies: s.movies,
       currentMovieId: s.currentMovieId,
+      explicitMoviePlayIntent: s.explicitMoviePlayIntent,
       setMovies: s.setMovies,
       setCurrentMovieId: s.setCurrentMovieId,
       fetchMovies: s.fetchMovies,
@@ -147,6 +153,10 @@ export function useWatchTogether({
     }))
   )
   const isHostRef = useRef(isHost)
+  // RoomPage remounts the player for a movie change. The outgoing player must
+  // not start resolving the new movie while that remount is being committed.
+  const playerMovieIdAtMountRef = useRef(currentMovieId)
+  const hasMountedMovieRef = useRef(currentMovieId !== null)
   // 事件抑制采用计数式实现：多个异步流程（attach/恢复/seek/缓冲下载）重叠时，
   // 任一流程完成只释放自己的一次抑制，不再误伤其他进行中的流程
   // （旧单布尔实现存在"先完成者提前释放抑制窗口"导致事件泄漏广播的问题）。
@@ -191,6 +201,7 @@ export function useWatchTogether({
   const isViewerReloadingRef = useRef(false)
   // 观众端 reload 忙时补跑标记（语义同 pendingBilibiliRerunRef）。
   const pendingViewerRerunRef = useRef(false)
+  const resumeAfterSocketReconnectRef = useRef(false)
 
   // Socket.IO reconnects issue a new room grant. Keep one serialized media-core
   // reattach in flight and coalesce further grant changes to the newest value.
@@ -289,11 +300,17 @@ export function useWatchTogether({
   // retryLoadMovie 清除 lastLoadedMovieRef 并递增令牌重新触发加载 effect。
   const [loadMovieError, setLoadMovieError] = useState<string | null>(null)
   const [retryToken, setRetryToken] = useState(0)
+  // 同一影片自动加载失败后保持熔断，避免 movies 引用更新反复触发解析请求。
+  const failedLoadMovieIdsRef = useRef<Set<number>>(new Set())
+  const consumedMoviePlayIntentRef = useRef(0)
   const retryLoadMovie = useCallback(() => {
     setLoadMovieError(null)
     lastLoadedMovieRef.current = null
+    if (currentMovieId !== null) {
+      failedLoadMovieIdsRef.current.delete(currentMovieId)
+    }
     setRetryToken((t) => t + 1)
-  }, [])
+  }, [currentMovieId])
 
   useEffect(() => {
     isHostRef.current = isHost
@@ -342,12 +359,18 @@ export function useWatchTogether({
         const video = videoRef.current
         const state = useRoomStore.getState().watchTogether
         if (!video || !isMediaCoreUrl(state.sourceUrl)) return
+        const shouldResume =
+          resumeAfterSocketReconnectRef.current || state.isPlaying
         suppressEventsRef.current = true
         try {
           await reloadVideo(video)
+          if (shouldResume) {
+            await safePlay(video)
+          }
         } catch (error) {
           console.error('[useWatchTogether] 房间媒体凭证更新后重挂载失败:', redactMediaError(error))
         } finally {
+          resumeAfterSocketReconnectRef.current = false
           suppressEventsRef.current = false
         }
       }
@@ -1039,8 +1062,29 @@ export function useWatchTogether({
   useEffect(() => {
     if (!currentMovieId) return
     if (!isHostRef.current) return
+    if (!hasMountedMovieRef.current) {
+      // The first selected movie uses the already-empty player; it does not
+      // cause usePlayerRemountKey to remount the panel.
+      playerMovieIdAtMountRef.current = currentMovieId
+      hasMountedMovieRef.current = true
+    } else if (currentMovieId !== playerMovieIdAtMountRef.current) {
+      return
+    }
     const movie = movies.find((m) => m.id === currentMovieId)
     if (!movie) return
+
+    // 仅房主点击影片播放按钮时会产生新 generation；普通 room/current-movie
+    // 同步和 movies 刷新不会改变它，因此不能解除失败熔断。
+    if (
+      explicitMoviePlayIntent &&
+      explicitMoviePlayIntent.roomId === roomId &&
+      explicitMoviePlayIntent.generation > consumedMoviePlayIntentRef.current
+    ) {
+      consumedMoviePlayIntentRef.current = explicitMoviePlayIntent.generation
+      if (explicitMoviePlayIntent.movieId === movie.id) {
+        failedLoadMovieIdsRef.current.delete(movie.id)
+      }
+    }
 
     // 避免 movies 列表刷新时重复加载同一部影片
     if (
@@ -1049,6 +1093,8 @@ export function useWatchTogether({
     ) {
       return
     }
+
+    if (failedLoadMovieIdsRef.current.has(movie.id)) return
 
     const video = videoRef.current
     if (!video) return
@@ -1110,6 +1156,7 @@ export function useWatchTogether({
       const resetForRetry = (errMsg?: string) => {
         suppressEventsRef.current = false
         lastLoadedMovieRef.current = null
+        failedLoadMovieIdsRef.current.add(movie.id)
         if (isRecovery) {
           appliedPlaybackRef.current = false
         }
@@ -1359,6 +1406,7 @@ export function useWatchTogether({
     void loadMovie()
   }, [
     currentMovieId,
+    explicitMoviePlayIntent,
     movies,
     videoRef,
     watchTogether.playbackRate,
@@ -1390,6 +1438,7 @@ export function useWatchTogether({
     }
     cleanupMedia()
     lastLoadedMovieRef.current = null
+    failedLoadMovieIdsRef.current.clear()
   }, [currentMovieId, cleanupMedia, endMediaServerSession, videoRef, suppressEventsRef])
 
   // 组件卸载或切换房间时释放 MSE blob URL 与音频同步资源
@@ -1399,6 +1448,63 @@ export function useWatchTogether({
       cleanupMedia()
     }
   }, [cleanupMedia, endMediaServerSession])
+
+  useEffect(() => {
+    const handleTeardown = (event: Event) => {
+      const detail = (event as CustomEvent<RoomMediaTeardownDetail>).detail
+      const full = detail?.full ?? true
+      const video = videoRef.current
+      if (!full) {
+        resumeAfterSocketReconnectRef.current = Boolean(
+          video &&
+            (!video.paused ||
+              useRoomStore.getState().watchTogether.isPlaying)
+        )
+      } else {
+        resumeAfterSocketReconnectRef.current = false
+      }
+      video?.pause()
+      downloadAbortRef.current?.abort()
+      if (!full) return
+      endMediaServerSession()
+      cleanupMedia()
+      if (video) {
+        video.removeAttribute('src')
+        video.load()
+      }
+    }
+    window.addEventListener(ROOM_MEDIA_TEARDOWN_EVENT, handleTeardown)
+    return () =>
+      window.removeEventListener(ROOM_MEDIA_TEARDOWN_EVENT, handleTeardown)
+  }, [cleanupMedia, endMediaServerSession, videoRef])
+
+  useEffect(() => {
+    if (!socket) return
+    const handleReconnect = () => {
+      if (!resumeAfterSocketReconnectRef.current) return
+      const video = videoRef.current
+      const sourceUrl = useRoomStore.getState().watchTogether.sourceUrl
+      let waitsForRoomGrant = isProxiedMediaTransport(sourceUrl)
+      if (!waitsForRoomGrant) {
+        try {
+          waitsForRoomGrant = new URL(
+            sourceUrl,
+            window.location.origin
+          ).pathname.startsWith('/api/stream/media/')
+        } catch {
+          waitsForRoomGrant = false
+        }
+      }
+      if (waitsForRoomGrant) return
+      resumeAfterSocketReconnectRef.current = false
+      if (!video) return
+      void safePlay(video)
+    }
+    socket.on('connect', handleReconnect)
+    return () => {
+      socket.off('connect', handleReconnect)
+    }
+  }, [socket, videoRef])
 
   // Bug #14 修复：B站 CDN 地址 deadline 过期后，MSE 流式下载 fetch 会返回 403，
   // 播放器进入 stalled 状态。监听 video 的 stalled/error 事件，

@@ -63,10 +63,6 @@ function WatchPage() {
     roomId,
     connected,
     autoJoin: !(fromList && listHasPassword),
-    onRoomClosed: (data) => {
-      message.warning(`房间 ${data.roomId} 已关闭`)
-      setTimeout(() => navigate('/room', { replace: true }), 1500)
-    },
   })
 
   // 2. 推流子模式状态（仅 screen-share + stream-push 时使用）
