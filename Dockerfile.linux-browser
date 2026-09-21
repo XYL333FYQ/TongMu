@@ -1,6 +1,5 @@
 FROM mcr.microsoft.com/playwright:v1.62.0-noble
 
-ARG TONGMU_BUILD_SHA=development
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=3333 \
@@ -9,8 +8,7 @@ ENV NODE_ENV=production \
     PROJECT_ROOT=/app \
     CONFIG_DIR=/app/config \
     MEDIA_BROWSER_RESOLVER=true \
-    MEDIA_BROWSER_MAX_CONCURRENCY=1 \
-    TONGMU_BUILD_SHA=${TONGMU_BUILD_SHA}
+    MEDIA_BROWSER_MAX_CONCURRENCY=1
 
 WORKDIR /app
 
@@ -30,6 +28,9 @@ RUN npm run build --workspace=backend \
     && npm run build --workspace=frontend \
     && npm prune --omit=dev \
     && mkdir -p config/ssl config/uploads config/media log
+
+ARG TONGMU_BUILD_SHA=development
+ENV TONGMU_BUILD_SHA=${TONGMU_BUILD_SHA}
 
 EXPOSE 3333 3334
 
