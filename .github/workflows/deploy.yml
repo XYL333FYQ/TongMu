@@ -1,0 +1,85 @@
+name: Deploy TongMu
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tongmu-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to VPS
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Prepare SSH
+        shell: bash
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/tongmu_actions
+          chmod 600 ~/.ssh/tongmu_actions
+
+          ssh-keyscan -p "$VPS_PORT" -H "$VPS_HOST" >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Deploy TongMu
+        shell: bash
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+        run: |
+          set -Eeuo pipefail
+
+          ssh \
+            -i ~/.ssh/tongmu_actions \
+            -p "$VPS_PORT" \
+            "$VPS_USER@$VPS_HOST" \
+            'bash -se' <<'REMOTE'
+          set -Eeuo pipefail
+
+          cd /opt/TongMu
+
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "Refusing to deploy: /opt/TongMu has local changes."
+            git status --short
+            exit 1
+          fi
+
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+
+          export TONGMU_BUILD_SHA="$(git rev-parse HEAD)"
+
+          docker compose config --quiet
+          docker compose up -d --build
+
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3333/health >/tmp/tongmu-health.json; then
+              cat /tmp/tongmu-health.json
+              echo
+              echo "TongMu deployment succeeded."
+              exit 0
+            fi
+
+            echo "Waiting for TongMu health check... ($attempt/30)"
+            sleep 2
+          done
+
+          echo "TongMu health check failed."
+          docker compose ps
+          docker compose logs --tail=150 tongmu
+          exit 1
+          REMOTE
