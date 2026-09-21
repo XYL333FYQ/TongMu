@@ -209,11 +209,13 @@ export function TogetherListenPanel({
       >
         <span className="truncate">
           网易云：
-          {ncmStatus?.loggedIn
-            ? `已登录${ncmStatus.displayName ? ` · ${ncmStatus.displayName}` : ''}`
-            : '未登录'}
+          {!ncmStatus
+            ? '检测中…'
+            : ncmStatus.loggedIn
+              ? `已登录${ncmStatus.displayName ? ` · ${ncmStatus.displayName}` : ''}`
+              : '未登录'}
         </span>
-        {isHost && (
+        {isHost && ncmStatus && (
           <Button
             type="button"
             size="sm"

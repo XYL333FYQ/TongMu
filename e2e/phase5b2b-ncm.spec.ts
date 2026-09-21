@@ -89,7 +89,11 @@ test("Phase 5B-2B NCM catalog, stable queue add, lyrics/comments, private librar
     await expect
       .poll(async () => (await ncmStatus.textContent()) || "")
       .toMatch(/网易云：(?:未登录|已登录)/);
-    if ((await ncmStatus.textContent())?.includes("未登录")) {
+    const resolvedNcmStatus = (await ncmStatus.textContent()) || "";
+    if (resolvedNcmStatus.includes("未登录")) {
+      await expect(
+        panel.getByRole("button", { name: "扫码登录", exact: true }),
+      ).toBeEnabled();
       await panel
         .getByRole("button", { name: "扫码登录", exact: true })
         .click();
@@ -99,6 +103,9 @@ test("Phase 5B-2B NCM catalog, stable queue add, lyrics/comments, private librar
       });
     } else {
       await expect(ncmStatus).toContainText("网易云：已登录");
+      await expect(
+        panel.getByRole("button", { name: "退出", exact: true }),
+      ).toBeVisible();
     }
 
     const search = panel.getByRole("textbox", { name: "音乐目录搜索" });
