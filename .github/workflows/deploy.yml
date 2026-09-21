@@ -66,9 +66,12 @@ jobs:
           set -Eeuo pipefail
 
           ssh \
-            -i ~/.ssh/tongmu_actions \
-            -p "$VPS_PORT" \
-            "$VPS_USER@$VPS_HOST" \
+             -i ~/.ssh/tongmu_actions \
+             -o ServerAliveInterval=30 \
+             -o ServerAliveCountMax=120 \
+             -o TCPKeepAlive=yes \
+             -p "$VPS_PORT" \
+             "$VPS_USER@$VPS_HOST" \
             "bash -se -- '$DEPLOY_SHA'" <<'REMOTE'
           set -Eeuo pipefail
 
