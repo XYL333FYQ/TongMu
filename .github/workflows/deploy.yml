@@ -2,6 +2,10 @@ name: Deploy TongMu
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: ["TongMu CI"]
+    types:
+      - completed
 
 permissions:
   contents: read
@@ -13,6 +17,14 @@ concurrency:
 jobs:
   deploy:
     name: Deploy to VPS
+
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'main'
+      )
+
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -33,6 +45,17 @@ jobs:
           ssh-keyscan -p "$VPS_PORT" -H "$VPS_HOST" >> ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
+      - name: Resolve deployment commit
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            echo "DEPLOY_SHA=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_ENV"
+          else
+            echo "DEPLOY_SHA=${{ github.sha }}" >> "$GITHUB_ENV"
+          fi
+
       - name: Deploy TongMu
         shell: bash
         env:
@@ -46,8 +69,10 @@ jobs:
             -i ~/.ssh/tongmu_actions \
             -p "$VPS_PORT" \
             "$VPS_USER@$VPS_HOST" \
-            'bash -se' <<'REMOTE'
+            "bash -se -- '$DEPLOY_SHA'" <<'REMOTE'
           set -Eeuo pipefail
+
+          EXPECTED_SHA="$1"
 
           cd /opt/TongMu
 
@@ -58,6 +83,16 @@ jobs:
           fi
 
           git fetch origin main
+
+          REMOTE_SHA="$(git rev-parse origin/main)"
+
+          if [ "$REMOTE_SHA" != "$EXPECTED_SHA" ]; then
+            echo "Skipping stale deployment."
+            echo "CI commit:      $EXPECTED_SHA"
+            echo "Current main:   $REMOTE_SHA"
+            exit 0
+          fi
+
           git checkout main
           git pull --ff-only origin main
 
