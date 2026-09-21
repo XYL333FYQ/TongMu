@@ -22,7 +22,7 @@ COPY backend/package.json backend/package.json
 COPY frontend/package.json frontend/package.json
 COPY patches ./patches
 COPY frontend/vendor ./frontend/vendor
-RUN npm ci
+RUN npm ci --include=dev
 
 COPY backend ./backend
 COPY frontend ./frontend

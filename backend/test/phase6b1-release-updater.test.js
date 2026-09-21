@@ -397,13 +397,47 @@ test('release packager produces signed canonical bytes and a byte-identical lega
     assert.notEqual(wrongSha.status, 0);
     assert.match(wrongSha.stderr, /GITHUB_SHA does not match/);
 
-    const dirtyRelease = spawnSync(process.execPath, [
-      path.join(ROOT, 'scripts', 'release', 'package-release.js'),
-      '--platform', 'linux', '--arch', 'x64', '--input-dir', input,
-      '--output-dir', path.join(root, 'dirty-release'), '--release-mode',
-    ], { cwd: ROOT, env: environment, encoding: 'utf8' });
-    assert.notEqual(dirtyRelease.status, 0);
-    assert.match(dirtyRelease.stderr, /clean checkout/);
+    const dirtyCheckout = temporary('dirty-release-checkout');
+    try {
+      const fixtureScript = path.join(dirtyCheckout, 'scripts', 'release', 'package-release.js');
+      fs.mkdirSync(path.dirname(fixtureScript), { recursive: true });
+      fs.copyFileSync(path.join(ROOT, 'scripts', 'release', 'package-release.js'), fixtureScript);
+      fs.writeFileSync(path.join(dirtyCheckout, 'package.json'), JSON.stringify({
+        name: 'tongmu-release-fixture',
+        version: JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version,
+      }, null, 2) + '\n');
+
+      const runFixtureGit = (...args) => {
+        const result = spawnSync('git', args, { cwd: dirtyCheckout, encoding: 'utf8' });
+        assert.equal(result.status, 0, result.stderr);
+        return result.stdout.trim();
+      };
+      runFixtureGit('init');
+      runFixtureGit('config', 'user.name', 'TongMu release test');
+      runFixtureGit('config', 'user.email', 'tongmu-release-test@example.invalid');
+      runFixtureGit('config', 'commit.gpgsign', 'false');
+      runFixtureGit('add', 'package.json', 'scripts/release/package-release.js');
+      runFixtureGit('commit', '-m', 'clean release fixture');
+      const fixtureHead = runFixtureGit('rev-parse', 'HEAD');
+      fs.appendFileSync(path.join(dirtyCheckout, 'package.json'), '\n');
+
+      const nodePath = [path.join(ROOT, 'node_modules'), process.env.NODE_PATH]
+        .filter(Boolean)
+        .join(path.delimiter);
+      const dirtyRelease = spawnSync(process.execPath, [
+        fixtureScript,
+        '--platform', 'linux', '--arch', 'x64', '--input-dir', input,
+        '--output-dir', path.join(root, 'dirty-release'), '--release-mode',
+      ], {
+        cwd: dirtyCheckout,
+        env: { ...environment, GITHUB_SHA: fixtureHead, NODE_PATH: nodePath },
+        encoding: 'utf8',
+      });
+      assert.notEqual(dirtyRelease.status, 0);
+      assert.match(dirtyRelease.stderr, /clean checkout/);
+    } finally {
+      fs.rmSync(dirtyCheckout, { recursive: true, force: true });
+    }
 
     fs.appendFileSync(path.join(output, metadata.canonicalName), 'tampered');
     const tampered = spawnSync(process.execPath, [
