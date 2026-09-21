@@ -52,6 +52,7 @@ jobs:
         run: |
           volume="${COMPOSE_PROJECT_NAME}_zviewer-browser-data"
           docker volume create "$volume"
+          docker compose create tongmu
           image="$(docker compose images -q tongmu)"
           test -n "$image"
           docker run --rm -v "$volume:/app/config" --entrypoint node "$image" -e '
