@@ -1,0 +1,59 @@
+/* TongMu semantic layer. Material and legacy --glass-* variables remain the
+   source of truth so existing pages and portal components keep working. */
+:root {
+  --tm-header-height: 64px;
+  --tm-canvas: color-mix(
+    in srgb,
+    var(--md-sys-color-surface) 91%,
+    var(--md-sys-color-primary) 9%
+  );
+  --tm-surface: var(--md-sys-color-surface);
+  --tm-surface-floating: var(--glass-bg);
+  --tm-soft: color-mix(
+    in srgb,
+    var(--md-sys-color-surface) 88%,
+    var(--md-sys-color-primary) 12%
+  );
+  --tm-text-primary: var(--md-sys-color-on-surface);
+  --tm-text-secondary: var(--md-sys-color-on-surface-variant);
+  --tm-border: var(--md-sys-color-outline-variant);
+  --tm-brand: var(--md-sys-color-primary);
+  --tm-brand-hover: color-mix(
+    in srgb,
+    var(--md-sys-color-primary) 80%,
+    var(--md-sys-color-on-surface) 20%
+  );
+  --tm-radius: var(--md-sys-shape-corner);
+  /* The UI labels transparency as 1 - opacity. Keep the existing stored value. */
+  --tm-glass-opacity: var(--glass-strength);
+  --tm-glass-blur: var(--glass-blur);
+  --tm-glass-card-bg: color-mix(
+    in srgb,
+    var(--md-sys-color-surface) calc(82% + var(--tm-glass-opacity) * 18%),
+    transparent
+  );
+  --tm-motion-duration: 300ms;
+  --tm-motion-ease: var(--ease-out-expo);
+
+  /* Existing experience CSS names remain available during page migration. */
+  --tm-ink: var(--tm-text-primary);
+  --tm-muted: var(--tm-text-secondary);
+  --tm-line: var(--tm-border);
+}
+
+@media (min-width: 768px) {
+  :root {
+    --tm-header-height: 76px;
+  }
+}
+
+body[data-reduced-motion='true'] {
+  --tm-motion-duration: 180ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root,
+  body[data-reduced-motion='true'] {
+    --tm-motion-duration: 0.01ms;
+  }
+}

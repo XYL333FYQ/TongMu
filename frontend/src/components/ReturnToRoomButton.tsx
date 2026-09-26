@@ -6,10 +6,10 @@ import { useSocket } from '@/hooks/useSocket'
 import { cn } from '@/lib/utils'
 
 /**
- * "回到房间"浮动入口。
+ * "回到房间"入口，收在顶栏账户控件旁，避免遮住页面标题。
  *
  * 当用户进入过房间后不在房间页面时（无论是不离开房间导航到其他页面，
- * 还是主动离开房间），在右上角显示一个浮动按钮，点击即可快速回到房间。
+ * 还是主动离开房间），在顶栏显示一个快捷入口，点击即可快速回到房间。
  *
  * 工作原理：
  * - RoomPage 挂载时设置 roomStore.activeRoomId
@@ -64,8 +64,7 @@ export function ReturnToRoomButton() {
     navigate(`/room/${activeRoomId}`)
   }
 
-  const handleExit = (e: React.MouseEvent) => {
-    e.stopPropagation()
+  const handleExit = () => {
     // 真正退出：房主此时才 emit host-leave（房间进入 10 分钟宽限期后关闭，
     // 期间可通过房间链接重新进入恢复房主身份），并清除本地房间状态。
     try {
@@ -86,28 +85,27 @@ export function ReturnToRoomButton() {
   return (
     <div
       className={cn(
-        'fixed top-20 right-4 z-40',
+        'flex shrink-0 items-center gap-1',
         exiting ? 'zen-toast-exit' : 'zen-toast-enter'
       )}
     >
       <button
+        type="button"
         onClick={handleReturn}
+        aria-label={`回到房间 ${roomName || activeRoomId}`}
         className={cn(
-          'group flex items-center gap-2.5 rounded-[var(--md-sys-shape-corner)] border border-[var(--glass-border)] px-4 py-2.5 shadow-lg transition-all duration-200',
-          'hover:scale-[1.02] hover:shadow-xl active:scale-[0.98]'
+          'group flex h-9 max-w-[180px] items-center gap-2 rounded-xl border border-[var(--glass-border)] px-1.5 transition-colors sm:max-w-[240px] sm:px-2.5',
+          'hover:bg-[var(--md-sys-color-surface-container-high)] active:scale-[0.98]'
         )}
         style={{
           backgroundColor: 'var(--glass-bg)',
           backdropFilter: 'blur(var(--glass-blur-strong))',
           WebkitBackdropFilter: 'blur(var(--glass-blur-strong))',
-          boxShadow:
-            '0 8px 24px -8px color-mix(in srgb, var(--md-sys-color-primary) 25%, transparent)',
         }}
         title="回到房间"
       >
-        {/* 图标容器：Material 3 container 纯色背景 */}
         <span
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--md-sys-shape-corner)]"
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg"
           style={{
             backgroundColor: 'var(--md-sys-color-primary-container)',
             color: 'var(--md-sys-color-on-primary-container)',
@@ -116,35 +114,23 @@ export function ReturnToRoomButton() {
           <DoorOpen className="h-4 w-4" />
         </span>
 
-        <div className="flex flex-col items-start">
-          <span className="text-sm font-medium text-[var(--md-sys-color-on-surface)]">
+        <div className="hidden min-w-0 flex-col items-start xl:flex">
+          <span className="text-xs font-medium text-[var(--md-sys-color-on-surface)]">
             回到房间
           </span>
-          {roomName ? (
-            <span className="text-[10px] uppercase tracking-wide text-[var(--md-sys-color-on-surface-variant)]">
-              {roomName}
-            </span>
-          ) : (
-            <span className="text-[10px] uppercase tracking-wide text-[var(--md-sys-color-on-surface-variant)]">
-              {activeRoomId}
-            </span>
-          )}
+          <span className="max-w-[140px] truncate text-[10px] uppercase tracking-wide text-[var(--md-sys-color-on-surface-variant)]">
+            {roomName || activeRoomId}
+          </span>
         </div>
-
-        {/* 关闭按钮：点击退出房间（清除活跃房间标记） */}
-        <span
-          onClick={handleExit}
-          role="button"
-          tabIndex={0}
-          className="ml-1 flex h-5 w-5 cursor-pointer items-center justify-center rounded-full opacity-50 transition-all hover:scale-110 hover:opacity-100"
-          title="退出房间"
-          style={{
-            backgroundColor:
-              'color-mix(in srgb, var(--md-sys-color-on-surface) 10%, transparent)',
-          }}
-        >
-          <X className="h-3 w-3 text-[var(--md-sys-color-on-surface)]" />
-        </span>
+      </button>
+      <button
+        type="button"
+        onClick={handleExit}
+        aria-label="退出房间"
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[var(--md-sys-color-on-surface-variant)] transition-colors hover:bg-[var(--md-sys-color-surface-container-high)] hover:text-[var(--md-sys-color-on-surface)]"
+        title="退出房间"
+      >
+        <X className="h-3 w-3 text-[var(--md-sys-color-on-surface)]" />
       </button>
     </div>
   )

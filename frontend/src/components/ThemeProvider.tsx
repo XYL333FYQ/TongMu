@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useLayoutEffect } from 'react'
 import {
   useThemeStore,
   radiusPresetToPx,
@@ -52,7 +52,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     useThemeStore()
 
   // 根据当前种子色与深浅模式生成并应用 Material You CSS 变量
-  useEffect(() => {
+  useLayoutEffect(() => {
     const root = document.documentElement
     const safeSourceColor = isValidHexColor(sourceColor)
       ? sourceColor

@@ -67,7 +67,7 @@ test("Voice fake-media join, socket replacement, and unmount release resources",
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByText("已连接", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "开始共享", exact: true }).click();
+  await page.getByRole("button", { name: "创建房间", exact: true }).click();
   await page.getByRole("button", { name: "创建房间", exact: true }).click();
   await expect(page).toHaveURL(/\/room\//);
 

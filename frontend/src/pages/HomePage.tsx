@@ -1,310 +1,308 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  Share2,
-  PlayCircle,
-  Shield,
-  LayoutDashboard,
-  Wifi,
-  WifiOff,
-  Loader2,
-  Settings,
-  User,
+  ArrowRight,
+  Clapperboard,
+  Headphones,
+  MessageCircle,
+  MonitorUp,
+  Play,
+  Plus,
+  Radio,
+  Users,
 } from 'lucide-react'
-import { Button } from '@/components/ui/Button'
-import { Card } from '@/components/ui/Card'
-import { Space } from '@/components/ui/Space'
-import { Title, Paragraph } from '@/components/ui/Typography'
+import { JoinRoomDialog } from '@/components/JoinRoomDialog'
+import { useRoomExitGuard } from '@/hooks/useRoomExitGuard'
+import type { RoomDirectoryView } from '@/hooks/useRoomDirectory'
+import { featuredRooms, roomPath } from '@/lib/roomDirectory'
 import { useAuthStore } from '@/store/authStore'
+import { useRoomStore } from '@/store/roomStore'
 import { useSystemSettingsStore } from '@/store/systemSettingsStore'
 import { useSocket } from '@/hooks/useSocket'
-import { useHideBodyScrollbar } from '@/hooks/useHideBodyScrollbar'
-import { cn } from '@/lib/utils'
 
-const Fade = ({
-  children,
-  delay = 0,
-  className,
+const experiences = [
+  {
+    label: '一起看',
+    description: '同步播放视频，与朋友共享每一幕。',
+    icon: Clapperboard,
+    tone: 'watch',
+    activity: 'watch',
+    detail: '在房间里添加影片，播放进度会与朋友同步。',
+    action: '创建一起看房间',
+  },
+  {
+    label: '一起听',
+    description: '同步听音乐，分享喜欢的旋律。',
+    icon: Headphones,
+    tone: 'listen',
+    activity: 'listen',
+    detail: '房间里的「一起听」可以添加音乐、管理播放队列，并同步播放。',
+    action: '创建房间并打开一起听',
+  },
+  {
+    label: '屏幕共享',
+    description: '分享你的屏幕，一起看更多内容。',
+    icon: MonitorUp,
+    tone: 'screen',
+    activity: 'screen',
+    detail: '进入屏幕共享房间后，可与朋友分享屏幕和系统音频。',
+    action: '创建屏幕共享房间',
+  },
+  {
+    label: '实时聊天',
+    description: '在房间里聊天，分享此刻的心情。',
+    icon: MessageCircle,
+    tone: 'chat',
+    activity: 'chat',
+    detail: '聊天、弹幕和语音都在房间内。先找到朋友的房间，再一起交流。',
+    action: '寻找房间',
+  },
+] as const
+type ExperienceActivity = (typeof experiences)[number]['activity']
+
+export default function HomePage({
+  directory,
 }: {
-  children: React.ReactNode
-  delay?: number
-  className?: string
-}) => (
-  <div
-    className={cn('zen-stagger-fade-up', className)}
-    style={{ '--stagger-delay': `${delay}ms` } as React.CSSProperties}
-  >
-    {children}
-  </div>
-)
-
-function HomePage() {
-  // 隐藏浏览器最右侧滚动条（复用房间列表/管理后台的视觉隐藏方案）
-  useHideBodyScrollbar()
+  directory: RoomDirectoryView
+}) {
   const navigate = useNavigate()
+  const { guardNavigate, confirmModal } = useRoomExitGuard()
   const { user, autoLoginStatus } = useAuthStore()
+  const roomCreationMode = useSystemSettingsStore(
+    (state) => state.roomCreationMode
+  )
+  const activeRoomId = useRoomStore((state) => state.activeRoomId)
+  const activeRoomName = useRoomStore((state) => state.roomName)
+  const setRoomMode = useRoomStore((state) => state.setMode)
   const { connected } = useSocket()
-  const { roomCreationMode } = useSystemSettingsStore()
+  const [joinOpen, setJoinOpen] = useState(false)
+  const [selectedExperience, setSelectedExperience] =
+    useState<ExperienceActivity | null>(null)
+  const { rooms, loading: roomsLoading, error: roomsError } = directory
+  const guest = !user || user.role === 'guest'
+  const canCreate =
+    !!user &&
+    user.role !== 'guest' &&
+    user.status !== 'pending' &&
+    (user.role === 'root' ||
+      user.role === 'admin' ||
+      roomCreationMode === 'all-users')
 
-  const isRoot = user?.role === 'root'
-  const isAdmin = user?.role === 'admin' || isRoot
-  const isGuest = user?.role === 'guest'
-  // 创建房间权限由系统设置 roomCreationMode 决定，禁止在此处硬编码角色判断。
-  // - guest 始终禁止
-  // - admin-only：仅 root / admin
-  // - all-users：root / admin / user
-  const canCreateRoom =
-    !isGuest && (isAdmin || roomCreationMode === 'all-users')
-
-  // 连接状态区分三种情况：
-  // 1. autoLogin 未完成 / socket 刚创建还未建立连接 → "连接中…"
-  //    （避免在认证完成瞬间、socket.connect() 发起到 connect 事件触发之间
-  //     误显示"连接断开"）
-  // 2. socket 已连接 → "已连接"
-  // 3. autoLogin 完成 + socket 已存在 + 连接建立后断开 → "连接断开"
-  //
-  // 实现方式：autoLogin done 后延迟 1.5s 才允许显示"断开"，
-  // 给 socket.io 足够的握手时间（含 websocket 升级 + 后端认证中间件）。
-  const [allowDisconnected, setAllowDisconnected] = useState(false)
-  // React Compiler 严格规则误报：根据 autoLogin 状态同步显示标记。
-  /* eslint-disable react-hooks/set-state-in-effect */
-  useEffect(() => {
-    if (autoLoginStatus !== 'done') {
-      setAllowDisconnected(false)
+  const startRoom = (activity: Exclude<ExperienceActivity, 'chat'>) => {
+    if (!canCreate) {
+      if (guest) guardNavigate('/login')
       return
     }
-    // autoLogin 完成后延迟 1.5s 启用"断开"显示
-    const timer = setTimeout(() => setAllowDisconnected(true), 1500)
-    return () => clearTimeout(timer)
-  }, [autoLoginStatus])
-  /* eslint-enable react-hooks/set-state-in-effect */
+    setRoomMode(activity === 'screen' ? 'screen-share' : 'watch-together')
+    guardNavigate(`/room?activity=${activity}`)
+  }
 
-  const isConnecting =
-    autoLoginStatus !== 'done' || (!connected && !allowDisconnected)
+  const visibleFeaturedRooms = featuredRooms(rooms)
 
   return (
-    <div className="flex-1 flex items-center justify-center p-6">
-      <Card className="w-full max-w-md text-center">
-        <div className="mb-6">
-          <Fade delay={80} className="inline-block">
-            <img
-              src="/favicon.jpg"
-              alt="TongMu"
-              className="w-16 h-16 rounded-2xl mx-auto object-cover"
-              style={{
-                boxShadow:
-                  '0 12px 32px -8px color-mix(in srgb, var(--md-sys-color-primary) 35%, transparent)',
-              }}
-            />
-          </Fade>
-          <Fade delay={120}>
-            <Title level={2} className="m-0">
-              TongMu
-            </Title>
-            <Paragraph type="secondary" className="m-0 mt-2">
-              多人同步追番、观影与远程共享平台
-            </Paragraph>
-          </Fade>
-        </div>
+    <>
+      <div className="tongmu-home">
+        <section className="tongmu-home__hero" aria-labelledby="home-title">
+          <img
+            className="tongmu-home__hero-image"
+            src="/home-hero.png"
+            alt=""
+          />
+          <div className="tongmu-home__hero-copy">
+            <h1 id="home-title">一起看，也一起听。</h1>
+            <p>
+              在同一个房间里看视频、追番、听音乐、共享屏幕。
+              <br />
+              和有相同喜好的伙伴，一起创造更多美好的时光。
+            </p>
+            <div className="tongmu-home__hero-actions">
+              <button
+                type="button"
+                className="tongmu-home__primary-action"
+                disabled={!guest && !canCreate}
+                onClick={() => startRoom('watch')}
+              >
+                <Plus className="h-5 w-5" aria-hidden="true" />
+                创建房间
+                <ArrowRight className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </div>
+            {!guest && !canCreate && (
+              <p className="tongmu-home__permission">
+                {user?.status === 'pending'
+                  ? '账号正在等待审核，暂时不能创建房间。'
+                  : '当前站点仅允许管理员创建房间。'}
+              </p>
+            )}
+          </div>
+          <span className="tongmu-home__connection" role="status">
+            <Radio className="h-3.5 w-3.5" aria-hidden="true" />
+            {connected
+              ? '已连接'
+              : autoLoginStatus !== 'done'
+                ? '连接中…'
+                : '连接暂不可用'}
+          </span>
+        </section>
 
-        <Space direction="vertical" className="w-full px-1">
-          {isGuest ? (
-            <>
-              <Fade delay={180}>
-                <Paragraph className="m-0 text-sm">
-                  当前以游客身份访问，可加入房间观看、发送评论与弹幕
-                </Paragraph>
-              </Fade>
-              <Fade delay={220} className="w-full">
-                <Button
-                  variant="primary"
-                  size="lg"
-                  icon={<PlayCircle className="h-5 w-5" />}
-                  block
-                  onClick={() => navigate('/join')}
-                >
-                  加入房间
-                </Button>
-              </Fade>
-              <Fade delay={260} className="w-full">
-                <Button
-                  size="lg"
-                  icon={<LayoutDashboard className="h-5 w-5" />}
-                  block
-                  onClick={() => navigate('/rooms')}
-                >
-                  房间列表
-                </Button>
-              </Fade>
-              <Fade delay={300}>
-                <Paragraph type="secondary" className="text-xs m-0">
-                  登录后可保留历史与身份，注册后需管理员审核
-                </Paragraph>
-              </Fade>
-            </>
-          ) : (
-            <>
-              <Fade delay={180} className="w-full">
-                <Button
-                  variant="primary"
-                  size="lg"
-                  icon={<Share2 className="h-5 w-5" />}
-                  block
-                  disabled={!canCreateRoom}
-                  onClick={() => canCreateRoom && navigate('/room')}
-                >
-                  开始共享
-                </Button>
-              </Fade>
-              {!canCreateRoom && (
-                <Fade delay={220}>
-                  <Paragraph type="secondary" className="text-xs m-0">
-                    {isGuest
-                      ? '登录后可创建房间'
-                      : '当前仅管理员可创建房间，请联系管理员开启权限'}
-                  </Paragraph>
-                </Fade>
-              )}
-              <Fade delay={260} className="w-full">
-                <Button
-                  size="lg"
-                  icon={<PlayCircle className="h-5 w-5" />}
-                  block
-                  onClick={() => navigate('/join')}
-                >
-                  加入房间
-                </Button>
-              </Fade>
-              <Fade delay={300} className="w-full">
-                <Button
-                  size="lg"
-                  icon={<LayoutDashboard className="h-5 w-5" />}
-                  block
-                  onClick={() => navigate('/rooms')}
-                >
-                  房间列表
-                </Button>
-              </Fade>
-
-              {isAdmin && (
-                <Fade delay={360} className="w-full">
-                  <Button
-                    variant="secondary"
-                    size="lg"
-                    icon={<Shield className="h-5 w-5" />}
-                    block
-                    onClick={() => navigate('/admin')}
-                  >
-                    权限管理
-                  </Button>
-                </Fade>
-              )}
-            </>
+        <section
+          className="tongmu-home__experiences"
+          aria-label="在 TongMu 一起做什么"
+        >
+          {experiences.map(
+            ({ label, description, icon: Icon, tone, activity }) => (
+              <button
+                key={label}
+                type="button"
+                className={`tongmu-home__experience${selectedExperience === activity ? ' is-selected' : ''}`}
+                aria-expanded={selectedExperience === activity}
+                aria-controls="home-experience-detail"
+                onClick={() =>
+                  setSelectedExperience(
+                    selectedExperience === activity ? null : activity
+                  )
+                }
+              >
+                <span className={`tongmu-home__experience-icon is-${tone}`}>
+                  <Icon className="h-6 w-6" aria-hidden="true" />
+                </span>
+                <span className="tongmu-home__experience-copy">
+                  <strong>{label}</strong>
+                  <span>{description}</span>
+                  <small>
+                    了解更多{' '}
+                    <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+                  </small>
+                </span>
+              </button>
+            )
           )}
-        </Space>
+        </section>
 
-        <Fade delay={400}>
-          <div className="mt-6 flex flex-col items-center gap-2">
-            {user ? (
+        {selectedExperience &&
+          (() => {
+            const experience = experiences.find(
+              (item) => item.activity === selectedExperience
+            )!
+            return (
               <div
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium"
-                style={{
-                  backgroundColor: 'var(--glass-bg)',
-                  color: 'var(--md-sys-color-on-surface)',
-                  border: '1px solid var(--md-sys-color-outline)',
-                }}
+                id="home-experience-detail"
+                className="tongmu-home__experience-detail"
               >
-                {isRoot ? (
-                  <>
-                    <Shield
-                      className="w-3.5 h-3.5"
-                      style={{ color: 'var(--md-sys-color-primary)' }}
-                    />
-                    超级管理员：{user.username}
-                  </>
-                ) : isAdmin ? (
-                  <>
-                    <Shield
-                      className="w-3.5 h-3.5"
-                      style={{ color: 'var(--md-sys-color-primary)' }}
-                    />
-                    管理员：{user.username}
-                  </>
-                ) : (
-                  <>
-                    <User className="w-3.5 h-3.5" />
-                    当前用户：{user.username}
-                  </>
-                )}
+                <div>
+                  <span className="tongmu-home__experience-detail-label">
+                    {experience.label}
+                  </span>
+                  <p>{experience.detail}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    selectedExperience === 'chat'
+                      ? guardNavigate('/rooms')
+                      : startRoom(selectedExperience)
+                  }
+                >
+                  {experience.action}{' '}
+                  <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                </button>
               </div>
-            ) : (
-              <div
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium"
-                style={{
-                  backgroundColor: 'var(--glass-bg)',
-                  color: 'var(--md-sys-color-on-surface-variant)',
-                  border: '1px solid var(--md-sys-color-outline)',
-                }}
-              >
-                <WifiOff className="w-3.5 h-3.5" />
-                正在校验登录状态…
-              </div>
-            )}
-            {connected ? (
-              <div
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium"
-                style={{
-                  backgroundColor:
-                    'color-mix(in srgb, var(--md-sys-color-secondary) 12%, transparent)',
-                  color: 'var(--md-sys-color-secondary)',
-                  border:
-                    '1px solid color-mix(in srgb, var(--md-sys-color-secondary) 25%, transparent)',
-                }}
-              >
-                <Wifi className="w-3.5 h-3.5" />
-                已连接
-              </div>
-            ) : isConnecting ? (
-              <div
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium"
-                style={{
-                  backgroundColor:
-                    'color-mix(in srgb, var(--md-sys-color-primary) 12%, transparent)',
-                  color: 'var(--md-sys-color-primary)',
-                  border:
-                    '1px solid color-mix(in srgb, var(--md-sys-color-primary) 25%, transparent)',
-                }}
-              >
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                连接中…
-              </div>
-            ) : (
-              <div
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium"
-                style={{
-                  backgroundColor:
-                    'color-mix(in srgb, var(--md-sys-color-error) 12%, transparent)',
-                  color: 'var(--md-sys-color-error)',
-                  border:
-                    '1px solid color-mix(in srgb, var(--md-sys-color-error) 25%, transparent)',
-                }}
-              >
-                <WifiOff className="w-3.5 h-3.5" />
-                连接断开
-              </div>
-            )}
-          </div>
-        </Fade>
+            )
+          })()}
 
-        <Fade delay={460}>
-          <div className="mt-5 flex items-center justify-center gap-1 text-xs text-[var(--md-sys-color-on-surface-variant)]">
-            <Settings className="h-3 w-3" />
-            <span>主题设置可在右上角菜单中调整</span>
+        {activeRoomId && (
+          <section
+            className="tongmu-home__continue"
+            aria-labelledby="continue-title"
+          >
+            <div>
+              <p className="tongmu-home__section-kicker">继续相聚</p>
+              <h2 id="continue-title">{activeRoomName || '返回当前房间'}</h2>
+            </div>
+            <button
+              type="button"
+              onClick={() => navigate(roomPath(activeRoomId) ?? '/')}
+            >
+              回到房间 <ArrowRight className="h-4 w-4" />
+            </button>
+          </section>
+        )}
+
+        <section className="tongmu-home__rooms" aria-labelledby="rooms-title">
+          <div className="tongmu-home__section-head">
+            <h2 id="rooms-title">
+              <span aria-hidden="true">✦</span> 正在进行的房间
+            </h2>
+            <button type="button" onClick={() => navigate('/rooms')}>
+              查看全部 <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </button>
           </div>
-        </Fade>
-      </Card>
-    </div>
+          {roomsLoading ? (
+            <p className="tongmu-home__room-message" role="status">
+              正在获取房间…
+            </p>
+          ) : roomsError ? (
+            <p className="tongmu-home__room-message" role="alert">
+              {roomsError}
+            </p>
+          ) : visibleFeaturedRooms.length === 0 ? (
+            <div className="tongmu-home__empty">
+              <span className="tongmu-home__empty-icon" aria-hidden="true">
+                <Users className="h-5 w-5" />
+              </span>
+              <div className="tongmu-home__empty-copy">
+                <p>暂时还没有公开房间。</p>
+                <p>
+                  有朋友的房间号？{' '}
+                  <button type="button" onClick={() => setJoinOpen(true)}>
+                    输入房间号加入 <ArrowRight className="h-4 w-4" />
+                  </button>
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="tongmu-home__room-list">
+              {visibleFeaturedRooms.map((room) => (
+                <button
+                  key={room.roomId}
+                  type="button"
+                  className="tongmu-home__room"
+                  onClick={() => navigate(roomPath(room.roomId) ?? '/')}
+                >
+                  <span className="tongmu-home__room-visual" aria-hidden="true">
+                    {room.mode === 'screen-share' ? (
+                      <MonitorUp className="h-9 w-9" />
+                    ) : (
+                      <Play className="h-9 w-9" />
+                    )}
+                    <span>
+                      {room.mode === 'screen-share' ? '屏幕共享' : '一起看'}
+                    </span>
+                  </span>
+                  <span className="tongmu-home__room-info">
+                    <strong>{room.name || '未命名房间'}</strong>
+                    <span>
+                      <i aria-hidden="true" />
+                      {room.sharerOnline ? '房主在线' : '房主离线'}
+                      <span className="tongmu-home__room-count">
+                        <Users className="h-3.5 w-3.5" aria-hidden="true" />
+                        {room.viewerCount}
+                        {room.maxViewers > 0 ? ` / ${room.maxViewers}` : ''}
+                      </span>
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+      <JoinRoomDialog
+        open={joinOpen}
+        onClose={() => setJoinOpen(false)}
+        onJoin={guardNavigate}
+      />
+      {confirmModal}
+    </>
   )
 }
-
-export default HomePage

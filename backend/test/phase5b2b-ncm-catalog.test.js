@@ -311,6 +311,33 @@ test("comments normalize author/time/count and preserve unsafe-looking content a
   assert.equal(result.items[0].authorName, "Commenter");
 });
 
+test("hot comments normalize the provider hotComments response shape", async () => {
+  const client = new FakeCatalogClient();
+  client.getComments = async () => ({
+    code: 200,
+    hotComments: [
+      {
+        commentId: "902",
+        content: "Popular comment",
+        user: { nickname: "Commenter" },
+        likedCount: 7,
+      },
+    ],
+    total: 1,
+  });
+  const catalog = new NcmCatalogService(client, credentialsForOwnerOne());
+  const result = await catalog.getComments({
+    resourceType: "song",
+    resourceId: "801",
+    mode: "hot",
+    limit: 10,
+  });
+  assert.equal(result.mode, "hot");
+  assert.equal(result.items[0].commentId, "902");
+  assert.equal(result.items[0].authorName, "Commenter");
+  assert.equal(result.items[0].likedCount, 7);
+});
+
 test("artwork metadata accepts public HTTP(S) only and rejects local or credential-bearing URLs", () => {
   assert.equal(
     safePublicHttpUrl("https://music.126.net/cover.jpg"),

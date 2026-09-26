@@ -1,0 +1,1564 @@
+.tongmu-shell {
+  color: var(--tm-ink);
+  background:
+    radial-gradient(
+      ellipse 37% 58% at 4% 45%,
+      color-mix(in srgb, var(--tm-brand) 14%, transparent) 0%,
+      transparent 100%
+    ),
+    radial-gradient(
+      ellipse 37% 55% at 95% 24%,
+      color-mix(in srgb, var(--tm-brand) 12%, transparent) 0%,
+      transparent 100%
+    ),
+    var(--tm-canvas);
+}
+
+.dark .tongmu-shell {
+  background:
+    radial-gradient(
+      ellipse 38% 55% at 5% 40%,
+      color-mix(in srgb, var(--tm-brand) 11%, transparent),
+      transparent
+    ),
+    var(--tm-canvas);
+}
+
+.tongmu-shell--custom-background,
+.dark .tongmu-shell--custom-background {
+  background: transparent;
+}
+
+.tongmu-header.glass {
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--tm-line) 65%, transparent);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+  height: var(--tm-header-height);
+  font-size: clamp(15px, 0.72vw, 18px);
+}
+
+.tongmu-header .tongmu-header__inner > div:first-child span {
+  font-size: clamp(18px, 0.9vw, 23px);
+}
+
+.tongmu-nav__desktop {
+  display: none;
+}
+.tongmu-nav__link,
+.tongmu-nav__toggle {
+  border-radius: calc(var(--md-sys-shape-corner) - 4px);
+  color: var(--tm-ink);
+}
+.tongmu-nav__link {
+  padding: 8px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.tongmu-nav__link:hover,
+.tongmu-nav__link[aria-current='page'],
+.tongmu-nav__toggle:hover {
+  color: var(--tm-brand);
+  background: color-mix(in srgb, var(--tm-brand) 9%, transparent);
+}
+.tongmu-nav__join {
+  margin-left: 5px;
+  color: var(--tm-brand);
+  border: 1px solid color-mix(in srgb, var(--tm-brand) 32%, transparent);
+}
+.tongmu-nav__compact {
+  position: relative;
+}
+.tongmu-nav__toggle {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+}
+.tongmu-nav__menu {
+  position: absolute;
+  top: calc(100% + 12px);
+  left: 0;
+  z-index: 60;
+  display: grid;
+  min-width: 150px;
+  padding: 6px;
+  border-radius: var(--md-sys-shape-corner);
+}
+.tongmu-nav__menu .tongmu-nav__link {
+  text-align: left;
+}
+@media (min-width: 1280px) {
+  .tongmu-nav__desktop {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+  .tongmu-nav__compact {
+    display: none;
+  }
+}
+.tongmu-header__mobile-search {
+  display: inline-grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  color: var(--tm-ink);
+  border-radius: max(0px, calc(var(--md-sys-shape-corner) - 5px));
+  transition:
+    background-color 180ms ease,
+    color 180ms ease;
+}
+.tongmu-header__mobile-search:hover {
+  color: var(--tm-brand);
+  background: color-mix(in srgb, var(--tm-brand) 9%, transparent);
+}
+.tongmu-header__mobile-search-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.tongmu-header__mobile-search-form > :first-child {
+  flex: 1 1 190px;
+}
+
+.tongmu-header__inner {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(240px, 500px) minmax(0, 1fr);
+  align-items: center;
+  gap: clamp(12px, 1.6vw, 28px);
+  width: min(100%, 2240px);
+  height: 100%;
+  margin: 0 auto;
+}
+
+.tongmu-header__search-input {
+  border: 1px solid color-mix(in srgb, var(--tm-line) 68%, transparent) !important;
+  border-radius: calc(var(--md-sys-shape-corner) * 2) !important;
+  background: var(--glass-bg) !important;
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+  box-shadow: none !important;
+}
+
+.tongmu-header__search-input:focus-within {
+  border-color: var(--tm-brand) !important;
+}
+
+.tongmu-header__search-input input {
+  height: 100%;
+  padding-left: 36px;
+  border: 0;
+  border-radius: calc(var(--md-sys-shape-corner) * 2);
+  background: transparent;
+  box-shadow: none;
+}
+
+.tongmu-header__search-input input:focus {
+  border: 0;
+  box-shadow: none;
+  --tw-ring-shadow: 0 0 #0000;
+}
+
+.tongmu-header__actions {
+  min-width: 0;
+}
+.tongmu-header__spacer {
+  height: var(--tm-header-height);
+  flex: none;
+}
+
+.tongmu-profile-page,
+.tongmu-settings-page {
+  height: calc(100dvh - var(--tm-header-height));
+}
+
+.tongmu-room-layout {
+  height: 100dvh;
+  --tm-room-stage-chrome: 86px;
+}
+
+@media (min-width: 768px) {
+  .tongmu-room-layout {
+    --tm-room-stage-chrome: 144px;
+  }
+}
+
+.tongmu-appearance-menu {
+  border-radius: var(--md-sys-shape-corner);
+  background: color-mix(
+    in srgb,
+    var(--glass-bg) 84%,
+    var(--md-sys-color-surface) 16%
+  );
+  -webkit-backdrop-filter: blur(var(--glass-blur-strong));
+  backdrop-filter: blur(var(--glass-blur-strong));
+  box-shadow: 0 18px 48px
+    color-mix(in srgb, var(--md-sys-color-on-surface) 14%, transparent);
+}
+
+.tongmu-home {
+  position: relative;
+  width: min(calc(100% - clamp(32px, 6vw, 112px)), 2240px);
+  margin: 0 auto;
+  padding: 20px 0 64px;
+}
+
+/* Home and discovery use one hall canvas; only their content density changes. */
+.tongmu-hall {
+  width: min(calc(100% - clamp(32px, 6vw, 112px)), 2240px);
+  margin: 0 auto;
+  padding: 20px 0 64px;
+}
+
+.tongmu-hall .tongmu-home {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+.tongmu-hall .tongmu-rooms-page {
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 0;
+}
+
+.tongmu-hall .tongmu-rooms-page__content {
+  width: 100%;
+  max-width: none;
+}
+
+.tongmu-hall__directory-head {
+  margin-bottom: 28px;
+  padding: 8px 0 24px;
+  border-bottom: 1px solid var(--tm-border);
+}
+
+.tongmu-hall__directory-head h1 {
+  margin: 5px 0 4px;
+  color: var(--tm-text-primary);
+  font-size: clamp(30px, 3vw, 42px);
+  font-weight: 750;
+  letter-spacing: -0.035em;
+  line-height: 1.15;
+}
+
+.tongmu-hall__directory-head > p:last-child {
+  margin: 0;
+  color: var(--tm-text-secondary);
+  font-size: 14px;
+}
+
+.tongmu-directory-filters {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.tongmu-directory-filters > .hall-select {
+  width: 180px;
+}
+.tongmu-directory-filters__more {
+  position: relative;
+  min-width: 132px;
+  font-size: 13px;
+}
+.tongmu-directory-filters__more > summary {
+  min-height: 40px;
+  padding: 9px 12px;
+  border: 1px solid var(--tm-border);
+  border-radius: var(--md-sys-shape-corner);
+  color: var(--tm-text-secondary);
+  cursor: pointer;
+}
+.tongmu-directory-filters__advanced {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 0;
+}
+.tongmu-directory-filters__advanced .hall-select {
+  width: 160px;
+}
+.tongmu-directory-results {
+  margin-bottom: 16px;
+  text-align: right;
+}
+.room-discovery-card__primary {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.room-discovery-card__name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--tm-text-primary);
+  font-size: 17px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.room-discovery-card__mode {
+  flex: none;
+  color: var(--tm-brand);
+  font-size: 12px;
+  font-weight: 650;
+}
+.room-discovery-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 11px;
+  opacity: 0.78;
+}
+.room-discovery-card__details {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 14px;
+  margin-top: 14px;
+  color: var(--tm-text-secondary);
+  font-size: 12px;
+}
+.room-discovery-card__details dd {
+  min-width: 0;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.room-discovery-card__count {
+  color: var(--tm-text-primary);
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.tongmu-cursor-glow {
+  position: fixed;
+  top: var(--tm-pointer-y, -1000px);
+  left: var(--tm-pointer-x, -1000px);
+  z-index: 55;
+  width: var(--tm-glow-size, 640px);
+  height: var(--tm-glow-size, 640px);
+  border-radius: 50%;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate3d(-50%, -50%, 0);
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--tm-brand) 26%, transparent) 0%,
+    color-mix(in srgb, var(--tm-brand) 14%, transparent) 34%,
+    color-mix(in srgb, var(--tm-brand) 5%, transparent) 57%,
+    transparent 73%
+  );
+  transition: opacity 150ms ease;
+  will-change: transform;
+}
+
+.tongmu-cursor-glow[data-active='true'] {
+  opacity: var(--tm-glow-opacity, 0.65);
+}
+
+.tongmu-shell[data-glow-enabled='false'] .tongmu-cursor-glow {
+  display: none;
+}
+@media (hover: none), (pointer: coarse) {
+  .tongmu-cursor-glow {
+    display: none;
+  }
+}
+
+.tongmu-shell[data-reduced-motion='true'] .tongmu-cursor-glow {
+  transition: none;
+}
+
+.tongmu-home__hero {
+  position: relative;
+  height: clamp(300px, 27vw, 430px);
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  border-radius: var(--md-sys-shape-corner);
+  background: #dbeaff;
+  box-shadow: none;
+}
+
+.tongmu-home__hero::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    rgba(238, 247, 255, 0.88),
+    rgba(240, 247, 255, 0.45) 39%,
+    transparent 63%
+  );
+  pointer-events: none;
+}
+
+.tongmu-home__hero-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 46%;
+}
+
+.tongmu-home__hero-copy {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  width: min(58%, 800px);
+  height: 100%;
+  padding: 0 0 0 clamp(34px, 5.5vw, 112px);
+}
+
+.tongmu-home__hero h1 {
+  margin: 0;
+  color: #142b56;
+  font-size: clamp(34px, 2.9vw, 58px);
+  font-weight: 700;
+  letter-spacing: -0.05em;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.tongmu-home__hero-copy > p:not(.tongmu-home__permission) {
+  margin: 8px 0 18px;
+  color: #405a7d;
+  font-size: 15px;
+  line-height: 1.9;
+}
+
+.tongmu-home__hero-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.tongmu-home__primary-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 46px;
+  padding: 0 22px;
+  border-radius: calc(var(--md-sys-shape-corner) * 2);
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.tongmu-home__primary-action {
+  min-width: 196px;
+  color: #fff;
+  color: var(--md-sys-color-on-primary);
+  background: var(--tm-brand);
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--tm-brand) 22%, transparent);
+  transition:
+    transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    box-shadow 320ms ease,
+    background-color 320ms ease;
+}
+
+.tongmu-home__primary-action:hover:not(:disabled) {
+  background: var(--tm-brand-hover);
+  box-shadow: 0 14px 32px color-mix(in srgb, var(--tm-brand) 29%, transparent);
+  transform: translateY(-3px) scale(1.015);
+}
+.tongmu-home__primary-action:active:not(:disabled) {
+  transform: translateY(0) scale(0.985);
+  transition-duration: 120ms;
+}
+body[data-no-hover-transform='true']
+  .tongmu-home__primary-action:hover:not(:disabled) {
+  transform: none;
+}
+.tongmu-shell[data-reduced-motion='true'] .tongmu-home__primary-action {
+  transition: background-color 160ms ease;
+}
+.tongmu-shell[data-reduced-motion='true']
+  .tongmu-home__primary-action:hover:not(:disabled) {
+  transform: none;
+}
+
+.tongmu-home__primary-action:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.tongmu-home__permission {
+  margin: 7px 0 0;
+  color: #4c6282;
+  font-size: 12px;
+}
+
+.tongmu-home__connection {
+  position: absolute;
+  right: 20px;
+  bottom: 14px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: rgba(42, 73, 111, 0.66);
+  font-size: 10px;
+}
+
+.tongmu-home__connection svg {
+  width: 12px;
+  height: 12px;
+  color: rgba(33, 148, 126, 0.68);
+}
+
+.tongmu-home__experiences {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  min-height: 100px;
+  margin-top: 12px;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--glass-border) 52%, transparent);
+  border-radius: var(--md-sys-shape-corner);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+}
+
+.tongmu-home__experience {
+  display: flex;
+  align-items: center;
+  position: relative;
+  min-width: 0;
+  min-height: 88px;
+  padding: 12px 20px;
+  border: 0;
+  border-radius: max(0px, calc(var(--md-sys-shape-corner) - 5px));
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 180ms ease,
+    transform 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.tongmu-home__experience:hover:not(:disabled) {
+  z-index: 2;
+  background: color-mix(in srgb, var(--tm-brand) 13%, var(--glass-bg));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--tm-brand) 24%, transparent),
+    0 8px 20px color-mix(in srgb, var(--tm-brand) 14%, transparent);
+  transform: translateY(-2px);
+}
+.tongmu-home__experience.is-selected {
+  background: color-mix(in srgb, var(--tm-brand) 12%, var(--glass-bg));
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--tm-brand) 24%, transparent);
+}
+
+.tongmu-home__experience:hover:not(:disabled) .tongmu-home__experience-icon {
+  transform: scale(1.08);
+  box-shadow: 0 4px 12px color-mix(in srgb, currentColor 20%, transparent);
+}
+
+body[data-no-hover-transform='true']
+  .tongmu-home__experience:hover:not(:disabled),
+body[data-no-hover-transform='true']
+  .tongmu-home__experience:hover:not(:disabled)
+  .tongmu-home__experience-icon {
+  transform: none !important;
+}
+
+.tongmu-shell[data-reduced-motion='true'] .tongmu-home__experience {
+  transition: none;
+}
+
+.tongmu-shell[data-reduced-motion='true']
+  .tongmu-home__experience:hover:not(:disabled),
+.tongmu-shell[data-reduced-motion='true']
+  .tongmu-home__experience:hover:not(:disabled)
+  .tongmu-home__experience-icon {
+  transform: none;
+}
+
+.tongmu-home__experience-icon {
+  transition:
+    transform 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.tongmu-home__experience:focus-visible {
+  z-index: 5;
+  outline: 2px solid color-mix(in srgb, var(--tm-brand) 64%, transparent);
+  outline-offset: -3px;
+}
+
+.tongmu-home__experience:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.tongmu-home__experience + .tongmu-home__experience::before {
+  content: '';
+  position: absolute;
+  top: 15px;
+  bottom: 15px;
+  left: 0;
+  width: 1px;
+  background: color-mix(in srgb, var(--tm-line) 55%, transparent);
+}
+
+.tongmu-home__experience-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 46px;
+  width: 46px;
+  height: 46px;
+  margin-right: 14px;
+  border-radius: max(0px, calc(var(--md-sys-shape-corner) - 2px));
+  color: #1671df;
+  background: #e2efff;
+}
+
+.tongmu-home__experience-icon.is-listen {
+  color: #d83b91;
+  background: #ffe9f5;
+}
+
+.tongmu-home__experience-icon.is-screen {
+  color: #7955d8;
+  background: #efe9ff;
+}
+
+.tongmu-home__experience-icon.is-chat {
+  color: #108c81;
+  background: #dff8f3;
+}
+
+.tongmu-home__experience-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 4px;
+}
+
+.tongmu-home__experience-copy strong {
+  color: var(--tm-ink);
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.tongmu-home__experience-copy > span {
+  color: var(--tm-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.tongmu-home__experience-copy small {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--tm-brand);
+  font-size: 11px;
+  opacity: 0.7;
+  transition:
+    opacity 180ms ease,
+    gap 180ms ease;
+}
+.tongmu-home__experience:hover .tongmu-home__experience-copy small,
+.tongmu-home__experience.is-selected .tongmu-home__experience-copy small {
+  opacity: 1;
+  gap: 7px;
+}
+.tongmu-home__experience-detail {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  min-height: 104px;
+  margin-top: 8px;
+  padding: 16px clamp(22px, 3vw, 56px);
+  border-left: 3px solid var(--tm-brand);
+  border-radius: 0 var(--md-sys-shape-corner) var(--md-sys-shape-corner) 0;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+  animation: zen-dropdown-enter 240ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+}
+.tongmu-home__experience-detail-label {
+  color: var(--tm-brand);
+  font-size: 13px;
+  font-weight: 650;
+}
+.tongmu-home__experience-detail p {
+  margin: 5px 0 0;
+  color: var(--tm-ink);
+  font-size: clamp(14px, 0.75vw, 17px);
+  line-height: 1.6;
+}
+.tongmu-home__experience-detail button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  padding: 11px 15px;
+  border-radius: max(0px, calc(var(--md-sys-shape-corner) - 6px));
+  color: var(--tm-brand);
+  font-size: 14px;
+  font-weight: 650;
+  transition:
+    background-color 200ms ease,
+    gap 200ms ease,
+    transform 200ms ease;
+}
+.tongmu-home__experience-detail button:hover {
+  gap: 12px;
+  background: color-mix(in srgb, var(--tm-brand) 9%, transparent);
+  transform: translateX(2px);
+}
+
+.tongmu-home__continue {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 20px;
+  padding: 12px 18px;
+  border-radius: var(--md-sys-shape-corner);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+}
+
+.tongmu-home__continue h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.tongmu-home__section-kicker {
+  margin: 0 0 2px;
+  color: var(--tm-brand);
+  font-size: 11px;
+}
+
+.tongmu-home__continue button,
+.tongmu-home__section-head button,
+.tongmu-home__empty button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--tm-brand);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition:
+    color 200ms ease,
+    gap 200ms ease,
+    transform 200ms ease,
+    background-color 200ms ease;
+}
+.tongmu-home__continue button:hover,
+.tongmu-home__section-head button:hover,
+.tongmu-home__empty button:hover {
+  color: var(--tm-brand-hover);
+  gap: 10px;
+  transform: translateX(2px);
+}
+.tongmu-home__section-head button {
+  padding: 8px 10px;
+  border-radius: var(--md-sys-shape-corner);
+}
+.tongmu-home__section-head button:hover {
+  background: color-mix(in srgb, var(--tm-brand) 8%, transparent);
+}
+
+.tongmu-home__rooms {
+  margin-top: 21px;
+}
+
+.tongmu-home__section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 10px;
+  padding: 0 4px;
+}
+
+.tongmu-home__section-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--tm-ink);
+  font-size: 21px;
+  font-weight: 650;
+  letter-spacing: -0.035em;
+}
+
+.tongmu-home__section-head h2 span {
+  color: var(--tm-brand);
+  font-size: 24px;
+}
+
+.tongmu-home__room-message {
+  padding: 25px 18px;
+  color: var(--tm-muted);
+  font-size: 14px;
+}
+
+.tongmu-home__empty {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  min-height: 112px;
+  padding: 18px 24px;
+  border: 1px solid color-mix(in srgb, var(--tm-line) 48%, transparent);
+  border-radius: var(--md-sys-shape-corner);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+}
+
+.tongmu-home__empty-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 38px;
+  width: 38px;
+  height: 38px;
+  border-radius: max(0px, calc(var(--md-sys-shape-corner) - 5px));
+  color: var(--tm-brand);
+  background: color-mix(in srgb, var(--tm-surface) 76%, transparent);
+}
+
+.tongmu-home__empty-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.tongmu-home__empty-copy p {
+  margin: 0;
+  color: var(--tm-muted);
+  font-size: 12px;
+}
+
+.tongmu-home__empty-copy p:first-child {
+  color: var(--tm-ink);
+  font-size: 14px;
+}
+
+.tongmu-home__empty button {
+  color: var(--tm-brand);
+}
+
+.tongmu-home__join-dialog {
+  display: grid;
+  gap: 10px;
+}
+
+.tongmu-home__join-dialog label {
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: 13px;
+}
+
+.tongmu-home__join-dialog input {
+  width: 100%;
+  height: 44px;
+  padding: 0 13px;
+  border: 1px solid
+    color-mix(in srgb, var(--md-sys-color-outline) 78%, transparent);
+  border-radius: var(--md-sys-shape-corner);
+  outline: none;
+  color: var(--md-sys-color-on-surface);
+  background: var(--md-sys-color-surface);
+}
+
+.tongmu-home__join-dialog input:focus {
+  border-color: var(--md-sys-color-primary);
+  box-shadow: 0 0 0 3px
+    color-mix(in srgb, var(--md-sys-color-primary) 14%, transparent);
+}
+
+.tongmu-home__join-dialog button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 42px;
+  margin-top: 3px;
+  border-radius: var(--md-sys-shape-corner);
+  color: var(--md-sys-color-on-primary);
+  background: var(--md-sys-color-primary);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.tongmu-home__join-dialog button:hover:not(:disabled) {
+  filter: brightness(0.94);
+}
+
+.tongmu-home__join-dialog button:disabled {
+  opacity: 0.52;
+  cursor: not-allowed;
+}
+
+.tongmu-home__room-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+  gap: 12px;
+}
+
+.tongmu-home__room {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--md-sys-shape-corner);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+  text-align: left;
+  transition: transform 160ms;
+}
+
+.tongmu-home__room:hover {
+  transform: translateY(-2px);
+}
+
+.tongmu-home__room-visual {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 88px;
+  padding: 16px 22px;
+  color: var(--tm-brand);
+  background:
+    radial-gradient(
+      circle at 72% 36%,
+      color-mix(in srgb, var(--tm-brand) 34%, transparent),
+      transparent 31%
+    ),
+    linear-gradient(115deg, var(--tm-soft), var(--glass-bg));
+}
+
+.tongmu-home__room-visual span {
+  align-self: start;
+  padding: 4px 8px;
+  border-radius: calc(var(--md-sys-shape-corner) * 2);
+  background: var(--glass-bg);
+  font-size: 11px;
+}
+
+.tongmu-home__room-info {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 15px 12px;
+}
+
+.tongmu-home__room-info strong {
+  overflow: hidden;
+  color: var(--tm-ink);
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tongmu-home__room-info > span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--tm-muted);
+  font-size: 11px;
+}
+
+.tongmu-home__room-info i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #25ad88;
+}
+
+.tongmu-home__room-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+}
+
+.tongmu-create-wrap {
+  padding-top: 48px;
+  padding-bottom: 64px;
+}
+.tongmu-create {
+  max-width: 768px;
+  padding: clamp(24px, 3vw, 52px);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--md-sys-shape-corner);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+  box-shadow: 0 18px 48px
+    color-mix(in srgb, var(--md-sys-color-on-surface) 9%, transparent);
+}
+.tongmu-profile-page__content,
+.tongmu-settings-page__content {
+  max-width: 1024px;
+}
+
+.tongmu-space {
+  display: grid;
+  gap: 28px;
+  padding-bottom: 48px;
+}
+.tongmu-shell--custom-background .tongmu-profile-page {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--tm-canvas) 70%, transparent),
+    color-mix(in srgb, var(--tm-canvas) 56%, transparent)
+  );
+}
+.tongmu-space__intro,
+.tongmu-space__identity,
+.tongmu-space__surface-title {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.tongmu-space__intro {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.tongmu-space__intro {
+  padding: 8px 0 20px;
+  border-bottom: 1px solid var(--tm-border);
+}
+.tongmu-space__intro h1 {
+  margin: 0 0 4px;
+  color: var(--tm-text-primary);
+  font-size: clamp(24px, 2vw, 30px);
+  font-weight: 650;
+}
+.tongmu-space__identity-meta {
+  margin: 0;
+  color: var(--tm-text-secondary);
+  font-size: 13px;
+}
+.tongmu-space__identity-meta strong {
+  color: var(--tm-text-primary);
+  font-weight: 600;
+}
+.tongmu-space__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.tongmu-space__intro p:last-child,
+.tongmu-space__heading > p:last-child {
+  color: var(--tm-text-secondary);
+  font-size: 13px;
+}
+.tongmu-space__section {
+  display: grid;
+  gap: 14px;
+  scroll-margin-top: 20px;
+}
+.tongmu-space__heading {
+  display: grid;
+  gap: 3px;
+}
+.tongmu-space__heading h2 {
+  margin: 0;
+  color: var(--tm-text-primary);
+  font-size: 20px;
+  font-weight: 650;
+}
+.tongmu-space__heading > p:last-child {
+  margin: 0;
+}
+.tongmu-space__surface {
+  padding: 18px 20px;
+  border: 1px solid color-mix(in srgb, var(--tm-border) 70%, transparent);
+  border-radius: var(--tm-radius);
+  background: var(--tm-glass-card-bg);
+  backdrop-filter: blur(var(--tm-glass-blur));
+}
+.tongmu-space__surface-title {
+  gap: 8px;
+  margin-bottom: 16px;
+  color: var(--tm-brand);
+}
+.tongmu-space__surface-title h3 {
+  color: var(--tm-text-primary);
+  font-size: 15px;
+  font-weight: 600;
+}
+.tongmu-space__bilibili-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+.tongmu-space__mounts > .py-6.text-center {
+  padding-block: 10px;
+}
+@media (max-width: 639px) {
+  .tongmu-space {
+    gap: 24px;
+  }
+  .tongmu-space__intro {
+    align-items: flex-start;
+  }
+  .tongmu-space__actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .tongmu-space__surface {
+    padding: 16px;
+  }
+}
+.tongmu-rooms-page {
+  max-width: 1280px;
+}
+.tongmu-rooms-page__content,
+.tongmu-admin-page__content,
+.tongmu-room__stage,
+.tongmu-room__workspace {
+  max-width: 1152px;
+}
+.tongmu-create__activity {
+  min-height: 178px;
+  padding: 22px;
+  border: 1px solid color-mix(in srgb, var(--glass-border) 45%, transparent);
+  border-radius: var(--md-sys-shape-corner);
+  background: color-mix(in srgb, var(--glass-bg) 70%, transparent);
+  text-align: left;
+  transition:
+    background-color 220ms ease,
+    border-color 220ms ease,
+    transform 240ms ease,
+    box-shadow 240ms ease;
+}
+.tongmu-create__activity:hover {
+  transform: translateY(-3px);
+  border-color: color-mix(
+    in srgb,
+    var(--md-sys-color-primary) 40%,
+    transparent
+  );
+  box-shadow: 0 12px 24px
+    color-mix(in srgb, var(--md-sys-color-primary) 12%, transparent);
+}
+.tongmu-create__activity[aria-pressed='true'] {
+  border-color: var(--md-sys-color-primary);
+  background: color-mix(
+    in srgb,
+    var(--md-sys-color-primary) 12%,
+    var(--glass-bg)
+  );
+}
+.tongmu-create__icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  margin-bottom: 14px;
+  border-radius: max(0px, calc(var(--md-sys-shape-corner) - 5px));
+  color: var(--md-sys-color-primary);
+  background: color-mix(in srgb, var(--md-sys-color-primary) 13%, transparent);
+}
+.tongmu-create__icon--music {
+  color: #c44d99;
+  background: color-mix(in srgb, #e86aae 15%, transparent);
+}
+.tongmu-room__listen-shortcut {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 10px;
+  border-radius: max(0px, calc(var(--md-sys-shape-corner) - 6px));
+  color: var(--md-sys-color-primary);
+  font-size: 13px;
+  font-weight: 650;
+  white-space: nowrap;
+  transition:
+    background-color 180ms ease,
+    transform 180ms ease;
+}
+.tongmu-room__listen-shortcut:hover {
+  background: color-mix(in srgb, var(--md-sys-color-primary) 10%, transparent);
+  transform: translateY(-1px);
+}
+
+@media (min-width: 768px) {
+  .tongmu-header__mobile-search {
+    display: none;
+  }
+}
+body[data-no-hover-transform='true'] .tongmu-create__activity:hover,
+body[data-no-hover-transform='true'] .tongmu-room__listen-shortcut:hover,
+body[data-no-hover-transform='true']
+  .tongmu-home__experience-detail
+  button:hover,
+body[data-no-hover-transform='true'] .tongmu-home__section-head button:hover,
+body[data-no-hover-transform='true'] .tongmu-home__empty button:hover {
+  transform: none;
+}
+
+@media (max-width: 1120px) {
+  .tongmu-header__inner {
+    grid-template-columns: auto minmax(180px, 1fr) auto;
+  }
+  .tongmu-home__experience {
+    padding: 10px 12px;
+  }
+  .tongmu-home__experience-icon {
+    flex-basis: 44px;
+    width: 44px;
+    height: 44px;
+    margin-right: 8px;
+  }
+}
+
+@media (min-width: 1800px) {
+  .tongmu-create {
+    max-width: 1120px;
+  }
+  .tongmu-create__activity {
+    min-height: 215px;
+    padding: 30px;
+  }
+  .tongmu-create__activities h5 {
+    font-size: 20px;
+  }
+  .tongmu-create__activities p {
+    font-size: 15px;
+    line-height: 1.6;
+  }
+  .tongmu-profile-page__content {
+    max-width: 1620px;
+  }
+  .tongmu-settings-page__content {
+    max-width: 1480px;
+  }
+  .tongmu-rooms-page {
+    max-width: 1920px;
+  }
+  .tongmu-rooms-page__content,
+  .tongmu-admin-page__content {
+    max-width: 1800px;
+  }
+  .tongmu-room__stage,
+  .tongmu-room__workspace {
+    max-width: min(calc(100vw - 8vw), 2160px);
+  }
+  .tongmu-home {
+    padding-top: 20px;
+  }
+  .tongmu-home__hero {
+    height: clamp(470px, 44svh, 620px);
+  }
+  .tongmu-home__hero-copy {
+    width: min(56%, 900px);
+    padding-left: clamp(88px, 7vw, 168px);
+  }
+  .tongmu-home__hero h1 {
+    font-size: clamp(54px, 2.8vw, 72px);
+  }
+  .tongmu-home__hero-copy > p:not(.tongmu-home__permission) {
+    margin: 14px 0 24px;
+    font-size: clamp(18px, 0.9vw, 22px);
+  }
+  .tongmu-home__primary-action {
+    min-height: 56px;
+    padding: 0 30px;
+    font-size: 17px;
+  }
+  .tongmu-home__experiences {
+    min-height: 152px;
+    margin-top: 20px;
+    padding: 10px 18px;
+  }
+  .tongmu-home__experience {
+    min-height: 130px;
+    padding: 16px 28px;
+  }
+  .tongmu-home__experience-icon {
+    flex-basis: 54px;
+    width: 54px;
+    height: 54px;
+    margin-right: 18px;
+  }
+  .tongmu-home__experience-copy strong {
+    font-size: 19px;
+  }
+  .tongmu-home__experience-copy > span {
+    font-size: 15px;
+  }
+  .tongmu-home__experience-copy small {
+    font-size: 12px;
+  }
+  .tongmu-header__search-input {
+    min-height: 46px;
+    font-size: 16px;
+  }
+  .tongmu-header .tongmu-header__inner > div:first-child img {
+    width: 40px;
+    height: 40px;
+  }
+  .tongmu-header__actions > div > button[aria-label='外观设置'] {
+    width: 43px;
+    height: 43px;
+  }
+  .tongmu-home__hero {
+    height: clamp(500px, 46svh, 640px);
+  }
+  .tongmu-home__primary-action {
+    min-height: 62px;
+    min-width: 220px;
+    font-size: 18px;
+  }
+  .tongmu-home__section-head button {
+    font-size: 16px;
+  }
+  .tongmu-home__rooms {
+    margin-top: 34px;
+  }
+  .tongmu-home__empty {
+    min-height: 166px;
+  }
+  .tongmu-home__empty button {
+    font-size: 15px;
+  }
+  .tongmu-home__empty-copy {
+    gap: 8px;
+  }
+  .tongmu-home__empty-icon {
+    width: 46px;
+    height: 46px;
+    flex-basis: 46px;
+  }
+  .tongmu-home__section-head {
+    margin-bottom: 14px;
+  }
+  .tongmu-home__section-head h2 {
+    font-size: 27px;
+  }
+  .tongmu-home__empty {
+    justify-content: flex-start;
+    padding-left: clamp(28px, 4vw, 76px);
+  }
+  .tongmu-home__empty-copy p {
+    font-size: 14px;
+  }
+  .tongmu-home__empty-copy p:first-child {
+    font-size: 17px;
+  }
+}
+
+@media (max-width: 960px) {
+  .tongmu-home__experiences {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .tongmu-home__experience + .tongmu-home__experience::before {
+    display: none;
+  }
+  .tongmu-home__experience:nth-child(even)::before {
+    display: block;
+  }
+  .tongmu-home__experience:nth-child(n + 3)::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 12px;
+    left: 12px;
+    height: 1px;
+    background: color-mix(in srgb, var(--tm-line) 55%, transparent);
+  }
+  .tongmu-home__room-list {
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+  }
+}
+
+@media (max-width: 767px) {
+  .tongmu-header__inner {
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+  }
+  .tongmu-hall {
+    width: min(100% - 28px, 620px);
+    padding-top: 12px;
+  }
+  .tongmu-hall__directory-head {
+    margin-bottom: 12px;
+    padding: 4px 0 12px;
+  }
+  .tongmu-directory-filters {
+    gap: 8px;
+  }
+  .tongmu-directory-filters > .hall-select {
+    width: min(52%, 180px);
+  }
+  .tongmu-directory-filters__more {
+    flex: 1;
+  }
+  .tongmu-directory-filters__advanced {
+    position: absolute;
+    right: 0;
+    z-index: 2;
+    display: grid;
+    width: min(290px, calc(100vw - 36px));
+    padding: 12px;
+    border: 1px solid var(--tm-border);
+    border-radius: var(--md-sys-shape-corner);
+    background: var(--tm-surface-floating);
+    box-shadow: 0 12px 30px color-mix(in srgb, var(--tm-ink) 12%, transparent);
+  }
+  .tongmu-directory-filters__advanced .hall-select {
+    width: 100%;
+  }
+  .tongmu-home {
+    width: min(100% - 28px, 620px);
+    padding-top: 12px;
+  }
+  .tongmu-home__hero {
+    height: clamp(360px, 98vw, 440px);
+  }
+  .tongmu-home__hero-image {
+    object-position: 64% center;
+  }
+  .tongmu-home__hero::after {
+    background: linear-gradient(
+      180deg,
+      rgba(240, 248, 255, 0.96) 0%,
+      rgba(238, 247, 255, 0.85) 47%,
+      transparent 82%
+    );
+  }
+  .tongmu-home__hero-copy {
+    width: 100%;
+    height: auto;
+    justify-content: flex-start;
+    padding: 26px 22px 0;
+  }
+  .tongmu-home__hero h1 {
+    font-size: clamp(28px, 8vw, 38px);
+  }
+  .tongmu-home__hero-copy > p:not(.tongmu-home__permission) {
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .tongmu-home__primary-action {
+    min-width: 0;
+    min-height: 39px;
+    padding: 0 12px;
+    font-size: 12px;
+  }
+  .tongmu-home__experiences {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .tongmu-home__experience {
+    min-height: 70px;
+  }
+  .tongmu-home__experience-copy strong {
+    font-size: 14px;
+  }
+  .tongmu-home__experience {
+    min-height: 82px;
+    padding: 10px;
+  }
+  .tongmu-home__experience-icon {
+    flex-basis: 38px;
+    width: 38px;
+    height: 38px;
+    margin-right: 8px;
+  }
+  .tongmu-home__experience-icon svg {
+    width: 20px;
+    height: 20px;
+  }
+  .tongmu-home__experience-copy > span {
+    display: -webkit-box;
+    overflow: hidden;
+    font-size: 11px;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+  .tongmu-home__experience-copy small {
+    font-size: 11px;
+  }
+  .tongmu-home__experience-detail {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+    padding: 16px 18px;
+  }
+  .tongmu-home__experience-detail button {
+    padding-left: 0;
+  }
+  .tongmu-create-wrap {
+    padding: 20px 14px 48px;
+  }
+  .tongmu-create__activity {
+    min-height: 0;
+  }
+  .tongmu-home__section-head h2 {
+    font-size: 18px;
+  }
+  .tongmu-home__empty {
+    gap: 12px;
+    padding: 16px;
+  }
+  .tongmu-home__room-list {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 420px) {
+  .tongmu-home__hero {
+    height: max(360px, 106vw);
+  }
+  .tongmu-home__hero-copy {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+  .tongmu-home__hero h1 {
+    font-size: clamp(27px, 8vw, 34px);
+  }
+  .tongmu-home__empty {
+    align-items: flex-start;
+    padding: 14px;
+  }
+  .tongmu-home__empty-copy p:last-child {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 8px;
+  }
+}
+
+@media (max-width: 767px) and (orientation: landscape) {
+  .tongmu-home__hero {
+    height: max(300px, calc(100svh - 150px));
+  }
+  .tongmu-home__hero-copy {
+    width: min(64%, 560px);
+    height: 100%;
+    padding: 0 0 0 22px;
+  }
+  .tongmu-home__hero h1 {
+    font-size: clamp(26px, 5vw, 38px);
+  }
+}

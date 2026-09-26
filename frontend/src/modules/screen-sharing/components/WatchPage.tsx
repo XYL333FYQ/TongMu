@@ -34,6 +34,7 @@ import { JoinRoomForm } from './JoinRoomForm'
 import StreamPushViewer from './StreamPushViewer'
 import WebrtcWatchPage from './WebrtcWatchPage'
 import type { JoinFormValues } from '../types'
+import { roomPath } from '@/lib/roomDirectory'
 
 function WatchPage() {
   const { roomId } = useParams<{ roomId?: string }>()
@@ -157,7 +158,7 @@ function WatchPage() {
     }
     const targetRoomId = values.roomId.trim()
     if (targetRoomId !== roomId) {
-      navigate(`/room/${targetRoomId}`)
+      navigate(roomPath(targetRoomId) ?? '/')
     } else {
       requestJoin(targetRoomId, values.password ?? '')
     }

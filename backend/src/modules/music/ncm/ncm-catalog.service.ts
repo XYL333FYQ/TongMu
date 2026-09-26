@@ -413,7 +413,11 @@ export function parseNcmLyricText(value: unknown): MusicCatalogLyricsLine[] {
 
 function commentRoot(body: NcmUpstreamResponse): Record<string, unknown> {
   const root = payloadRoot(body);
-  return Array.isArray(root.comments) ? root : objectValue(body.data);
+  if (Array.isArray(root.comments)) return root;
+  if (Array.isArray(root.hotComments)) {
+    return { ...root, comments: root.hotComments };
+  }
+  return objectValue(body.data);
 }
 
 function normalizeComment(value: unknown): MusicCatalogComment {

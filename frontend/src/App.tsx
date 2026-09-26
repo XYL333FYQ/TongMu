@@ -1,21 +1,19 @@
 import { useEffect, useRef } from 'react'
 import { Routes, Route, Navigate, useParams } from 'react-router-dom'
 import { Layout } from '@/components/Layout'
-import { ThemeProvider } from '@/components/ThemeProvider'
 import { RequireAuth } from '@/components/RequireAuth'
 import { useAuthStore, type User } from '@/store/authStore'
 import { useSystemSettingsStore } from '@/store/systemSettingsStore'
 import { apiFetch, resetSessionExpired, saveAuthTokens } from '@/lib/api'
 import { reconnectSocket } from '@/hooks/useSocket'
 import { useBackendHealth } from '@/hooks/useBackendHealth'
-import { ReturnToRoomButton } from '@/components/ReturnToRoomButton'
-import HomePage from '@/pages/HomePage'
+import HallPage from '@/pages/HallPage'
 import LoginPage from '@/pages/LoginPage'
 import RoomPage from '@/modules/room/RoomPage'
 import AdminPage from '@/pages/AdminPage'
 import ProfilePage from '@/pages/ProfilePage'
-import RoomsListPage from '@/pages/RoomsListPage'
 import JoinByRoomIdPage from '@/pages/JoinByRoomIdPage'
+import SettingsPage from '@/pages/SettingsPage'
 
 function AuthInitializer() {
   const setUser = useAuthStore((s) => s.setUser)
@@ -207,58 +205,56 @@ function App() {
 
   return (
     <Layout>
-      <ThemeProvider>
-        <AuthInitializer />
-        <ReturnToRoomButton />
-        <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/login" element={<LoginPage />} />
-          <Route
-            path="/room/:roomId?"
-            element={
-              <RequireAuth>
-                <RoomPage />
-              </RequireAuth>
-            }
-          />
-          <Route path="/share/:roomId?" element={<ShareRedirect />} />
-          <Route path="/watch/:roomId?" element={<WatchRedirect />} />
-          <Route path="/direct-share" element={<Navigate to="/" replace />} />
-          <Route path="/direct-watch" element={<Navigate to="/" replace />} />
-          <Route
-            path="/admin"
-            element={
-              <RequireAuth adminOnly>
-                <AdminPage />
-              </RequireAuth>
-            }
-          />
-          <Route
-            path="/profile"
-            element={
-              <RequireAuth forbiddenRoles={['guest']}>
-                <ProfilePage />
-              </RequireAuth>
-            }
-          />
-          <Route
-            path="/rooms"
-            element={
-              <RequireAuth>
-                <RoomsListPage />
-              </RequireAuth>
-            }
-          />
-          <Route
-            path="/join"
-            element={
-              <RequireAuth>
-                <JoinByRoomIdPage />
-              </RequireAuth>
-            }
-          />
-        </Routes>
-      </ThemeProvider>
+      <AuthInitializer />
+      <Routes>
+        <Route path="/" element={<HallPage mode="home" />} />
+        <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/login" element={<LoginPage />} />
+        <Route
+          path="/room/:roomId?"
+          element={
+            <RequireAuth>
+              <RoomPage />
+            </RequireAuth>
+          }
+        />
+        <Route path="/share/:roomId?" element={<ShareRedirect />} />
+        <Route path="/watch/:roomId?" element={<WatchRedirect />} />
+        <Route path="/direct-share" element={<Navigate to="/" replace />} />
+        <Route path="/direct-watch" element={<Navigate to="/" replace />} />
+        <Route
+          path="/admin"
+          element={
+            <RequireAuth adminOnly>
+              <AdminPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/profile"
+          element={
+            <RequireAuth forbiddenRoles={['guest']}>
+              <ProfilePage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/rooms"
+          element={
+            <RequireAuth>
+              <HallPage mode="discover" />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/join"
+          element={
+            <RequireAuth>
+              <JoinByRoomIdPage />
+            </RequireAuth>
+          }
+        />
+      </Routes>
     </Layout>
   )
 }

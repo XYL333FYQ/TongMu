@@ -110,6 +110,7 @@ test('explicitly reselecting a failed movie retries once while state refreshes s
     })
   })
 
+  await page.getByRole('tab', { name: '影片列表', exact: true }).click()
   await expect(page.getByText('Failed fixture A', { exact: true }).last()).toBeVisible()
   await expect(page.getByText('Playable fixture B', { exact: true }).last()).toBeVisible()
   const movieRow = (title: string) =>

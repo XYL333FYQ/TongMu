@@ -93,7 +93,7 @@ const ALL_SOURCE_OPTIONS: {
   rootOnly?: boolean
 }[] = [
   { value: 'bilibili', label: '哔哩哔哩' },
-  { value: 'mp4', label: '统一媒体 / 网页 URL' },
+  { value: 'mp4', label: '视频链接 / 网页' },
   { value: 'webdav', label: 'WebDAV' },
   { value: 'ftp', label: 'FTP' },
   { value: 'openlist', label: 'OpenList' },
@@ -1727,9 +1727,12 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
 
         {/* 卡片内容 */}
         <div className="zen-scroll flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-4 py-3">
-          <Dropdown
-            value={sourceType}
-            options={ALL_SOURCE_OPTIONS.filter(
+          <div
+            className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5"
+            role="group"
+            aria-label="内容来源"
+          >
+            {ALL_SOURCE_OPTIONS.filter(
               (opt) =>
                 (!opt.rootOnly || userRole === 'root') &&
                 (betaFeaturesEnabled ||
@@ -1740,9 +1743,23 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
                     opt.value
                   ) && mounts.filter((m) => m.type === opt.value).length === 0
                 )
-            )}
-            onChange={(value) => setSourceType(value as SourceType)}
-          />
+            ).map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                aria-pressed={sourceType === option.value}
+                onClick={() => setSourceType(option.value as SourceType)}
+                className={cn(
+                  'rounded-xl border px-3 py-3 text-left text-xs font-medium transition-colors',
+                  sourceType === option.value
+                    ? 'border-[var(--md-sys-color-primary)] bg-[var(--md-sys-color-primary-container)] text-[var(--md-sys-color-on-primary-container)]'
+                    : 'border-[var(--glass-border)] hover:bg-[var(--md-sys-color-surface-container-high)]'
+                )}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
 
           {renderSourceForm()}
 

@@ -1,29 +1,25 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { LogIn } from 'lucide-react'
-import { PageBackButton } from '@/components/PageBackButton'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { Title, Paragraph } from '@/components/ui/Typography'
 import { Input } from '@/components/ui/Input'
+import { roomPath } from '@/lib/roomDirectory'
 
 export default function JoinByRoomIdPage() {
   const navigate = useNavigate()
   const [roomIdInput, setRoomIdInput] = useState('')
 
   const handleJoin = () => {
-    const trimmed = roomIdInput.trim()
-    if (!trimmed) return
-    navigate(`/room/${trimmed}`)
+    const path = roomPath(roomIdInput)
+    if (path) navigate(path)
   }
 
   return (
     <div className="flex flex-1 items-center justify-center p-6">
       <Card className="relative w-full max-w-md text-center">
-        <PageBackButton to="/" />
-
-        {/* 顶部留白，避免内容与返回按钮重叠 */}
-        <div className="pt-8">
+        <div>
           <div
             className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-[var(--md-sys-shape-corner)]"
             style={{

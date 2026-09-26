@@ -435,16 +435,18 @@ export function NcmCatalogPanel({
           }
           if (kind === 'lyrics') {
             const value = unwrap<MusicCatalogLyrics>(result.data)
-            if (value)
+            if (value) {
               useNcmCatalogStore.getState().setLyrics(track.trackId, value)
-            else setError('歌词数据格式无效')
+              setError(null)
+            } else setError('歌词数据格式无效')
           } else {
             const value = unwrap<MusicCatalogCommentPage>(result.data)
-            if (value)
+            if (value) {
               useNcmCatalogStore
                 .getState()
                 .setComments(`${track.trackId}:song`, value)
-            else setError('评论数据格式无效')
+              setError(null)
+            } else setError('评论数据格式无效')
           }
         })
         .catch(() => {

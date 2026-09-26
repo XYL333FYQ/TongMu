@@ -36,6 +36,7 @@ async function createRoom(host: Page): Promise<string> {
     result.data.roomId,
   );
   await host.goto(`/room/${result.data.roomId}`);
+  await host.getByRole("tab", { name: "一起听", exact: true }).click();
   return result.data.roomId;
 }
 
@@ -206,6 +207,7 @@ test("Phase 5B-2B NCM catalog, stable queue add, lyrics/comments, private librar
     await page.goto("/login");
     await login(page, username, "phase5b2b-pass");
     await page.goto(`/room/${roomId}`);
+  await page.getByRole("tab", { name: "一起听", exact: true }).click();
     const switchedPanel = page
       .locator(".glass-card")
       .filter({ has: page.getByRole("heading", { name: "一起听" }) });

@@ -5,6 +5,7 @@ import { ThemeProvider } from '@/components/ThemeProvider'
 import { initClientLogger } from '@/lib/clientLogger'
 import App from './App'
 import './index.css'
+import './styles/tokens.css'
 
 // 初始化浏览器控制台日志上报：拦截 console 与未捕获异常，批量发送到后端写入 log/frontend-console.log
 initClientLogger({ minLevel: 'debug' })

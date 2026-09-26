@@ -17,6 +17,7 @@ async function createRoom(host: Page): Promise<string> {
   if (!result.success || !result.data?.roomId) throw new Error('create-room failed')
   await host.evaluate((roomId) => sessionStorage.setItem('zcontrol-host-room', roomId), result.data.roomId)
   await host.goto(`/room/${result.data.roomId}`)
+  await host.getByRole("tab", { name: "一起听", exact: true }).click();
   return result.data.roomId
 }
 
@@ -109,6 +110,7 @@ test('Phase 5B-2A NCM login, explicit quality resolve, and room gateway work in 
     viewer = await viewerContext.newPage()
     await login(viewer, username, 'phase5b2a-pass')
     await viewer.goto(`/room/${roomId}`)
+  await viewer.getByRole("tab", { name: "一起听", exact: true }).click();
     const viewerPanel = viewer.locator('.glass-card').filter({ has: viewer.getByRole('heading', { name: '一起听' }) })
     await expect(viewerPanel).toBeVisible()
     await expect.poll(async () => viewerPanel.locator('audio').getAttribute('src')).toContain('/api/music/playback/')

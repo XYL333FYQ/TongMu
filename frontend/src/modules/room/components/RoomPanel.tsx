@@ -1,8 +1,7 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { Monitor, Users, ArrowRight } from 'lucide-react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Monitor, Users, Headphones, ArrowRight } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
-import { Card } from '@/components/ui/Card'
 import { Space } from '@/components/ui/Space'
 import { Title, Paragraph } from '@/components/ui/Typography'
 import { Switch } from '@/components/ui/Switch'
@@ -18,6 +17,7 @@ interface RoomPanelProps {
 
 export function RoomPanel({ onModeSelected }: RoomPanelProps) {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const { socket, connected } = useSocket()
   const {
     setMode,
@@ -28,8 +28,20 @@ export function RoomPanel({ onModeSelected }: RoomPanelProps) {
   } = useRoomStore()
   // 默认模式从 store 读取，不再从 URL 读取 mode 参数。
   // 模式切换由后端房间状态管理，URL 只保留 /room/:roomId 形式。
-  const initialMode: RoomMode = storeMode || 'watch-together'
-  const [selectedMode, setSelectedMode] = useState<RoomMode>(initialMode)
+  const initialActivity = searchParams.get('activity')
+  const [selectedActivity, setSelectedActivity] = useState<
+    'watch' | 'listen' | 'screen'
+  >(
+    initialActivity === 'listen' ||
+      initialActivity === 'screen' ||
+      initialActivity === 'watch'
+      ? initialActivity
+      : storeMode === 'screen-share'
+        ? 'screen'
+        : 'watch'
+  )
+  const selectedMode: RoomMode =
+    selectedActivity === 'screen' ? 'screen-share' : 'watch-together'
   const [creating, setCreating] = useState(false)
   const [requireApproval, setRequireApproval] = useState(false)
   const [password, setPassword] = useState('')
@@ -87,6 +99,12 @@ export function RoomPanel({ onModeSelected }: RoomPanelProps) {
           // URL 保持干净：/room/:roomId，不带任何查询参数。
           try {
             sessionStorage.setItem('zcontrol-host-room', roomId)
+            if (selectedActivity === 'listen') {
+              sessionStorage.setItem(
+                `tongmu-room-start-activity:${roomId}`,
+                'listen'
+              )
+            }
           } catch {
             // sessionStorage 不可用时忽略，仅影响刷新后身份判断
           }
@@ -102,40 +120,25 @@ export function RoomPanel({ onModeSelected }: RoomPanelProps) {
   }
 
   return (
-    <div className="flex-1 flex items-center justify-center p-6">
-      <Card className="w-full max-w-2xl">
+    <div className="tongmu-create-wrap flex-1 flex items-center justify-center p-6">
+      <section className="tongmu-create w-full">
         <div className="text-center mb-6">
           <Title level={3} className="m-0">
             创建房间
           </Title>
           <Paragraph type="secondary" className="m-0 mt-2">
-            选择一种共享方案，邀请其他人加入
+            选好想一起做的事，再邀请朋友进来
           </Paragraph>
         </div>
 
         <Space direction="vertical" className="w-full">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="tongmu-create__activities grid grid-cols-1 sm:grid-cols-3 gap-3">
             <button
-              onClick={() => setSelectedMode('screen-share')}
-              className="relative text-left p-5 rounded-2xl border-2 transition-all"
-              style={{
-                borderColor:
-                  selectedMode === 'screen-share'
-                    ? 'var(--md-sys-color-primary)'
-                    : 'var(--md-sys-color-outline-variant)',
-                backgroundColor:
-                  selectedMode === 'screen-share'
-                    ? 'var(--md-sys-color-primary-container)'
-                    : 'var(--glass-bg)',
-              }}
+              onClick={() => setSelectedActivity('screen')}
+              aria-pressed={selectedActivity === 'screen'}
+              className="tongmu-create__activity"
             >
-              <div
-                className="w-12 h-12 rounded-xl flex items-center justify-center mb-3"
-                style={{
-                  backgroundColor: 'var(--md-sys-color-primary)',
-                  color: 'var(--md-sys-color-on-primary)',
-                }}
-              >
+              <div className="tongmu-create__icon">
                 <Monitor className="h-6 w-6" />
               </div>
               <Title level={5} className="m-0">
@@ -147,26 +150,11 @@ export function RoomPanel({ onModeSelected }: RoomPanelProps) {
             </button>
 
             <button
-              onClick={() => setSelectedMode('watch-together')}
-              className="relative text-left p-5 rounded-2xl border-2 transition-all"
-              style={{
-                borderColor:
-                  selectedMode === 'watch-together'
-                    ? 'var(--md-sys-color-primary)'
-                    : 'var(--md-sys-color-outline-variant)',
-                backgroundColor:
-                  selectedMode === 'watch-together'
-                    ? 'var(--md-sys-color-primary-container)'
-                    : 'var(--glass-bg)',
-              }}
+              onClick={() => setSelectedActivity('watch')}
+              aria-pressed={selectedActivity === 'watch'}
+              className="tongmu-create__activity"
             >
-              <div
-                className="w-12 h-12 rounded-xl flex items-center justify-center mb-3"
-                style={{
-                  backgroundColor: 'var(--md-sys-color-primary)',
-                  color: 'var(--md-sys-color-on-primary)',
-                }}
-              >
+              <div className="tongmu-create__icon">
                 <Users className="h-6 w-6" />
               </div>
               <Title level={5} className="m-0">
@@ -174,6 +162,21 @@ export function RoomPanel({ onModeSelected }: RoomPanelProps) {
               </Title>
               <Paragraph type="secondary" className="m-0 mt-1 text-xs">
                 同步播放视频，支持直链、WebDAV、SMB 与 B站
+              </Paragraph>
+            </button>
+            <button
+              onClick={() => setSelectedActivity('listen')}
+              aria-pressed={selectedActivity === 'listen'}
+              className="tongmu-create__activity"
+            >
+              <div className="tongmu-create__icon tongmu-create__icon--music">
+                <Headphones className="h-6 w-6" />
+              </div>
+              <Title level={5} className="m-0">
+                一起听
+              </Title>
+              <Paragraph type="secondary" className="m-0 mt-1 text-xs">
+                创建一起看房间后，直接打开已有的一起听播放队列
               </Paragraph>
             </button>
           </div>
@@ -211,7 +214,7 @@ export function RoomPanel({ onModeSelected }: RoomPanelProps) {
             创建房间
           </Button>
         </Space>
-      </Card>
+      </section>
     </div>
   )
 }

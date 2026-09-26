@@ -36,6 +36,7 @@ async function createRoom(host: Page): Promise<string> {
     room.data.roomId,
   );
   await host.goto(`/room/${room.data.roomId}`);
+  await host.getByRole("tab", { name: "一起听", exact: true }).click();
   return room.data.roomId;
 }
 
@@ -151,6 +152,7 @@ test("Phase 5B-1 Together Listen covers fixture playback, queue identity, viewer
     viewer = await viewerContext.newPage();
     await login(viewer, username, password);
     await viewer.goto(`/room/${roomId}`);
+  await viewer.getByRole("tab", { name: "一起听", exact: true }).click();
     await expect(viewer.getByRole("heading", { name: "一起听" })).toBeVisible();
 
     viewerContext2 = await browser.newContext({
@@ -159,6 +161,7 @@ test("Phase 5B-1 Together Listen covers fixture playback, queue identity, viewer
     viewer2 = await viewerContext2.newPage();
     await login(viewer2, username2, password);
     await viewer2.goto(`/room/${roomId}`);
+  await viewer2.getByRole("tab", { name: "一起听", exact: true }).click();
     await expect(
       viewer2.getByRole("heading", { name: "一起听" }),
     ).toBeVisible();
@@ -211,6 +214,16 @@ test("Phase 5B-1 Together Listen covers fixture playback, queue identity, viewer
         viewerPanel2.locator("audio").evaluate((audio) => audio.readyState),
       )
       .toBeGreaterThan(0);
+
+    // Switching workspace tools must retain the same loaded audio element.
+    const retainedAudio = await viewerPanel.locator("audio").elementHandle();
+    expect(retainedAudio).not.toBeNull();
+    await viewer.getByRole("tab", { name: "影片列表", exact: true }).click();
+    expect(await retainedAudio!.evaluate((audio) => audio.isConnected)).toBe(true);
+    await viewer.getByRole("tab", { name: "一起听", exact: true }).click();
+    expect(await viewerPanel.locator("audio").evaluate((audio, previous) => audio === previous, retainedAudio)).toBe(true);
+    expect(await retainedAudio!.evaluate((audio) => audio.readyState)).toBeGreaterThan(0);
+    await retainedAudio!.dispose();
 
     const secondAck = await addFixture(
       host,

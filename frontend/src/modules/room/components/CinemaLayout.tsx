@@ -59,7 +59,7 @@ export function CinemaLayout({
         'p-4 lg:p-6',
         webFullscreen
           ? 'fixed inset-0 z-[100] h-screen overflow-hidden p-0'
-          : 'min-h-[calc(100vh-64px)]'
+          : 'min-h-[100dvh]'
       )}
       style={{ backgroundColor: 'transparent' }}
     >

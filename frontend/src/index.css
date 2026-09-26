@@ -111,8 +111,8 @@ body,
 
 body {
   margin: 0;
-  background-color: var(--md-sys-color-surface);
-  color: var(--md-sys-color-on-surface);
+  background-color: var(--tm-surface);
+  color: var(--tm-text-primary);
   transition:
     background-color 400ms var(--ease-out-expo),
     color 400ms var(--ease-out-expo);
@@ -1210,4 +1210,35 @@ body[data-no-hover-transform='true'] .zen-btn:hover,
 body[data-no-hover-transform='true'] .zen-tag-hover:hover,
 body[data-no-hover-transform='true'] .zen-avatar-hover:hover {
   transform: none !important;
+}
+
+/* Content surfaces stay legible over custom wallpapers; theme controls still
+   influence the tint and blur. Fullscreen player backgrounds remain untouched. */
+.glass-card {
+  --glass-bg: var(--tm-glass-card-bg);
+}
+.hall-hero {
+  background-image: radial-gradient(
+    ellipse at 100% 0%,
+    color-mix(in srgb, var(--md-sys-color-primary-container) 65%, transparent),
+    transparent 68%
+  );
+}
+.hall-select {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 14px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: 12px;
+  background: var(--md-sys-color-surface-container);
+  color: var(--md-sys-color-on-surface);
+}
+.room-workspace [role='tabpanel'][hidden] {
+  display: none;
+}
+.room-workspace [role='tab']:focus-visible,
+.hall-select:focus-visible {
+  outline: 2px solid var(--md-sys-color-primary);
+  outline-offset: 3px;
 }

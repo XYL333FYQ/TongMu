@@ -3,12 +3,18 @@ import {
   Children,
   Fragment,
   isValidElement,
-  useCallback,
   useEffect,
   useRef,
   useState,
 } from 'react'
-import { ArrowLeft, PanelRight, PanelRightClose } from 'lucide-react'
+import {
+  ArrowLeft,
+  Headphones,
+  PanelRight,
+  PanelRightClose,
+} from 'lucide-react'
+import { useLocation } from 'react-router-dom'
+import { setRoomBackHandler } from '@/lib/roomBackNavigation'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
@@ -101,7 +107,12 @@ export function RoomLayout({
   sharingActive,
   webFullscreen = false,
 }: RoomLayoutProps) {
-  const { guardNavigate, confirmModal: exitGuardModal } = useRoomExitGuard()
+  const location = useLocation()
+  const {
+    guardNavigate,
+    confirmModal: exitGuardModal,
+    needsGuard,
+  } = useRoomExitGuard()
   const { socket } = useSocket()
   // defaultBack 由 guardNavigate 统一处理：
   // 在房间内时弹出确认对话框，确认后仅导航离开——房间保持运行，
@@ -109,12 +120,47 @@ export function RoomLayout({
   // 进入/创建新房间时才真正释放旧房间（见 RoomPage 挂载逻辑）。
   const defaultBack = () => guardNavigate('/')
   const handleBack = onBack ?? defaultBack
+
+  // BrowserRouter does not route browser Back through button handlers. Restore
+  // the room history entry before asking the same exit guard for confirmation.
+  useEffect(() => {
+    if (!needsGuard) return
+    const roomUrl = `${location.pathname}${location.search}${location.hash}`
+    const roomHistoryState = window.history.state
+    const handlePopState = (event: PopStateEvent) => {
+      const target = `${window.location.pathname}${window.location.search}${window.location.hash}`
+      if (target === roomUrl) return
+      event.stopImmediatePropagation()
+      window.history.pushState(roomHistoryState, '', roomUrl)
+      guardNavigate(target)
+    }
+    return setRoomBackHandler(handlePopState)
+  }, [
+    guardNavigate,
+    location.hash,
+    location.pathname,
+    location.search,
+    needsGuard,
+  ])
   // 移动端默认收起侧栏，给视频留出更多空间；桌面端默认展开
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(() => {
     if (typeof window === 'undefined') return true
     return window.innerWidth >= 768
   })
   const toggleRightPanel = () => setIsRightPanelOpen((open) => !open)
+  const workspaceRef = useRef<HTMLDivElement>(null)
+  const [activeControlIndex, setActiveControlIndex] = useState(() => {
+    try {
+      const key = `tongmu-room-start-activity:${roomId}`
+      const intent = sessionStorage.getItem(key)
+      sessionStorage.removeItem(key)
+      return intent === 'listen'
+        ? Math.max(0, controlLabels?.indexOf('一起听') ?? 0)
+        : 0
+    } catch {
+      return 0
+    }
+  })
 
   // 检测浏览器原生全屏状态：原生全屏时右侧面板采用悬浮覆盖，非全屏时为固定侧边栏
   const [isNativeFullscreen, setIsNativeFullscreen] = useState(false)
@@ -142,9 +188,6 @@ export function RoomLayout({
 
   const isSharing =
     sharingActive ?? (roomMode === 'screen-share' && storeIsSharing)
-
-  // 播放器容器使用固定高度（calc(100vh - 220px)），不使用 aspect-video，
-  // 避免右侧面板内容撑开导致播放器高度变化。
 
   // 监听 room-mode-changed：观众端跟随房主切换无需刷新；
   // 同时清除本地加载占位（房主切换完成后）。
@@ -343,39 +386,11 @@ export function RoomLayout({
     ? controlLabels.slice(0, controlChildren.length)
     : controlChildren.map((_, i) => `卡片 ${i + 1}`)
 
-  // 移动端控制卡片横向滚动的当前索引与滚动处理
-  const mobileCardsScrollRef = useRef<HTMLDivElement>(null)
-  const [activeControlIndex, setActiveControlIndex] = useState(0)
-
-  // React Compiler 无法保留现有手动 memoization，此处依赖已手动优化。
-  /* eslint-disable react-hooks/preserve-manual-memoization */
-  const handleMobileCardsScroll = useCallback(() => {
-    const el = mobileCardsScrollRef.current
-    if (!el) return
-    const card = el.firstElementChild as HTMLElement | null
-    if (!card) return
-    const cardWidth = card.offsetWidth
-    // gap-3 = 0.75rem = 12px
-    const gap = 12
-    const index = Math.round(el.scrollLeft / (cardWidth + gap))
-    setActiveControlIndex(
-      Math.min(controlChildren.length - 1, Math.max(0, index))
-    )
-  }, [controlChildren.length])
-
-  const scrollToMobileCard = useCallback((index: number) => {
-    const el = mobileCardsScrollRef.current
-    if (!el) return
-    const card = el.children[index] as HTMLElement | undefined
-    if (card) {
-      card.scrollIntoView({
-        behavior: 'smooth',
-        inline: 'start',
-        block: 'nearest',
-      })
-    }
-  }, [])
-  /* eslint-enable react-hooks/preserve-manual-memoization */
+  // Keep every panel mounted: changing tools must not restart audio or erase input.
+  const selectedControl = Math.min(
+    activeControlIndex,
+    Math.max(0, controlChildren.length - 1)
+  )
 
   const roomContent = (
     <>
@@ -393,11 +408,30 @@ export function RoomLayout({
             color: 'var(--md-sys-color-on-surface)',
           }}
         >
-          返回
+          返回大厅
         </Button>
 
         {/* 顶部模式切换栏（玻璃拟态 + Monet 主题变量，当前模式高亮 primary 色） */}
-        <div className="flex flex-1 justify-center px-2">{modeSwitchBar}</div>
+        <div className="flex flex-1 items-center justify-center gap-2 px-2">
+          {modeSwitchBar}
+          {roomMode === 'watch-together' &&
+            controlLabels?.includes('一起听') && (
+              <button
+                type="button"
+                className="tongmu-room__listen-shortcut"
+                onClick={() => {
+                  setActiveControlIndex(controlLabels.indexOf('一起听'))
+                  workspaceRef.current?.scrollIntoView({
+                    behavior: 'smooth',
+                    block: 'start',
+                  })
+                }}
+              >
+                <Headphones className="h-4 w-4" aria-hidden="true" />
+                一起听
+              </button>
+            )}
+        </div>
 
         <div className="flex flex-shrink-0 items-center gap-2">
           <button
@@ -434,7 +468,7 @@ export function RoomLayout({
           'relative mt-4 flex min-h-0 flex-none gap-3 overflow-hidden',
           isNativeFullscreen
             ? ''
-            : 'max-h-[calc(100vh-150px)] md:max-h-[calc(100vh-220px)]'
+            : 'max-h-[calc(100dvh-var(--tm-room-stage-chrome))]'
         )}
       >
         {/* 左侧播放器：决定整个容器高度，flex-1 随侧栏开闭平滑改变宽度 */}
@@ -484,10 +518,10 @@ export function RoomLayout({
     <>
       <div
         className={cn(
-          'hide-scrollbar flex flex-col items-center overflow-y-auto px-2 py-3 md:px-4 md:py-6',
+          'tongmu-room-layout hide-scrollbar flex flex-col items-center overflow-y-auto px-2 py-3 md:px-4 md:py-6',
           webFullscreen
             ? 'fixed inset-0 z-[100] h-screen min-h-0 items-stretch p-0 overflow-hidden'
-            : 'h-[calc(100vh-64px)]'
+            : ''
         )}
       >
         {/* 网页全屏时仍然使用 Card，避免容器类型切换导致 WatchTogetherPanel 重新挂载、
@@ -499,106 +533,85 @@ export function RoomLayout({
             'relative flex flex-none flex-col overflow-hidden min-h-0 bg-transparent',
             webFullscreen
               ? 'h-full w-full !rounded-none !border-0 !bg-black !p-0 !shadow-none !backdrop-filter-none'
-              : 'w-full max-w-6xl p-3 md:p-6'
+              : 'tongmu-room__stage w-full p-3 md:p-6'
           )}
         >
           {roomContent}
         </Card>
 
         {effectiveControls && !webFullscreen && !isNativeFullscreen && (
-          <div className="w-full max-w-6xl flex-none mt-2 md:mt-4">
-            {(() => {
-              if (controlChildren.length === 1) {
-                // 共享状态下评论区单独在下方时限制高度，避免无限撑开
-                return (
-                  <div
-                    className={isSharing ? 'h-[360px] md:h-[500px]' : 'h-full'}
-                  >
-                    {controlChildren[0]}
-                  </div>
-                )
-              }
-              // 三个控制卡片固定等高 340px，内部内容各自滚动。
-              // 桌面端三列平铺；移动端改为横向滚动，避免纵向堆叠占用过多空间。
-              return (
-                <>
-                  {/* 移动端：横向滚动卡片，顶部显示 Tab 标签便于切换 */}
-                  <div className="flex flex-col gap-2 lg:hidden">
-                    {controlChildren.length > 1 && (
-                      <div className="flex items-center justify-between gap-1 px-1">
-                        <div className="flex flex-1 items-center justify-center gap-1">
-                          {mobileCardLabels.map((label, index) => (
-                            <button
-                              key={index}
-                              type="button"
-                              aria-label={`切换到${label}`}
-                              onClick={() => scrollToMobileCard(index)}
-                              className={cn(
-                                'min-w-[4rem] rounded-full px-3 py-1.5 text-xs font-medium transition-all duration-200',
-                                activeControlIndex === index
-                                  ? 'bg-[var(--md-sys-color-primary)] text-[var(--md-sys-color-on-primary)] shadow-md'
-                                  : 'text-[var(--md-sys-color-on-surface-variant)] hover:bg-[var(--md-sys-color-surface-container-highest)]'
-                              )}
-                            >
-                              {label}
-                            </button>
-                          ))}
-                        </div>
-                        <button
-                          onClick={toggleRightPanel}
-                          aria-label={
-                            isRightPanelOpen ? '收起侧栏' : '展开侧栏'
-                          }
-                          aria-expanded={isRightPanelOpen}
-                          title={isRightPanelOpen ? '收起侧栏' : '展开侧栏'}
-                          className="glass flex h-8 w-8 items-center justify-center rounded-lg border transition-all duration-200 hover:scale-105 active:scale-95"
-                          style={{
-                            borderColor: 'var(--md-sys-color-outline-variant)',
-                            color: isRightPanelOpen
-                              ? 'var(--md-sys-color-primary)'
-                              : 'var(--md-sys-color-on-surface-variant)',
-                          }}
-                        >
-                          {isRightPanelOpen ? (
-                            <PanelRightClose className="h-4 w-4" />
-                          ) : (
-                            <PanelRight className="h-4 w-4" />
-                          )}
-                        </button>
-                      </div>
-                    )}
-                    <div
-                      ref={mobileCardsScrollRef}
-                      className="flex h-[340px] snap-x snap-mandatory gap-3 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch]"
-                      onScroll={handleMobileCardsScroll}
+          <div
+            ref={workspaceRef}
+            className="tongmu-room__workspace w-full flex-none mt-2 md:mt-4"
+          >
+            <div className="glass-strong room-workspace overflow-hidden rounded-[var(--md-sys-shape-corner)]">
+              <div className="flex items-center gap-2 border-b border-[var(--glass-border)] p-3">
+                <div
+                  role="tablist"
+                  aria-label="房间功能"
+                  className="flex min-w-0 flex-1 gap-2 overflow-x-auto"
+                >
+                  {controlChildren.map((_, index) => (
+                    <button
+                      key={index}
+                      type="button"
+                      role="tab"
+                      id={`room-tool-${index}`}
+                      aria-controls={`room-panel-${index}`}
+                      aria-selected={selectedControl === index}
+                      tabIndex={selectedControl === index ? 0 : -1}
+                      onClick={() => setActiveControlIndex(index)}
+                      onKeyDown={(event) => {
+                        let next: number
+                        if (event.key === 'ArrowRight')
+                          next = (index + 1) % controlChildren.length
+                        else if (event.key === 'ArrowLeft')
+                          next =
+                            (index - 1 + controlChildren.length) %
+                            controlChildren.length
+                        else if (event.key === 'Home') next = 0
+                        else if (event.key === 'End')
+                          next = controlChildren.length - 1
+                        else return
+                        event.preventDefault()
+                        setActiveControlIndex(next)
+                        document.getElementById(`room-tool-${next}`)?.focus()
+                      }}
+                      className={cn(
+                        'shrink-0 rounded-xl px-4 py-2.5 text-sm font-medium transition-colors',
+                        selectedControl === index
+                          ? 'bg-[var(--md-sys-color-primary)] text-[var(--md-sys-color-on-primary)]'
+                          : 'hover:bg-[var(--md-sys-color-surface-container-high)]'
+                      )}
                     >
-                      {controlChildren.map((child, index) => (
-                        <div
-                          key={index}
-                          className="h-full w-[80vw] max-w-[320px] flex-shrink-0 snap-start"
-                        >
-                          {child}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  {/* 桌面端：根据卡片数量动态列数，避免少量卡片时宽度过小。
-                    1 张 → 单列占满；2 张 → 两列；3 张及以上 → 三列。 */}
-                  <div
-                    className={cn(
-                      'hidden h-[340px] gap-4 lg:grid',
-                      controlChildren.length === 1 && 'lg:grid-cols-1',
-                      controlChildren.length === 2 && 'lg:grid-cols-2',
-                      controlChildren.length >= 3 && 'lg:grid-cols-3'
-                    )}
-                  >
-                    {controlChildren.map((child, index) => (
-                      <Fragment key={index}>{child}</Fragment>
-                    ))}
-                  </div>
-                </>
-              )
-            })()}
+                      {mobileCardLabels[index] ??
+                        (isSharing ? '聊天' : `功能 ${index + 1}`)}
+                    </button>
+                  ))}
+                </div>
+                <Button
+                  size="sm"
+                  aria-label={isRightPanelOpen ? '收起侧栏' : '展开侧栏'}
+                  onClick={toggleRightPanel}
+                  className="shrink-0 md:hidden"
+                >
+                  <PanelRight className="h-4 w-4" />
+                </Button>
+              </div>
+              {controlChildren.map((child, index) => (
+                <div
+                  key={index}
+                  id={`room-panel-${index}`}
+                  role="tabpanel"
+                  aria-labelledby={`room-tool-${index}`}
+                  hidden={selectedControl !== index}
+                  tabIndex={0}
+                  className="h-[440px] min-w-0 p-2 sm:p-4 sm:h-[480px]"
+                >
+                  {child}
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>

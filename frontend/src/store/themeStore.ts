@@ -47,7 +47,7 @@ interface ThemeState {
   isDark: boolean
   /** 圆角预设 */
   radius: RadiusPreset
-  /** 玻璃拟态背景透明度，0-1 */
+  /** 玻璃背景不透明度，0-1；界面上的透明度为 1 - glassStrength */
   glassStrength: number
   /** 玻璃拟态模糊度，0-40px */
   glassBlur: number
@@ -55,6 +55,10 @@ interface ThemeState {
   reducedMotion: boolean
   /** 禁用全局 hover 位移效果（translate/scale），不影响其他动画与玻璃效果 */
   disableHoverTransform: boolean
+  /** 跟随指针的柔光，仅用于支持悬停的设备 */
+  cursorGlowEnabled: boolean
+  cursorGlowSize: number
+  cursorGlowOpacity: number
 
   /** 自定义背景图片（URL 或 Base64），null 表示未设置 */
   backgroundImage: string | null
@@ -86,7 +90,7 @@ interface ThemeState {
   setDark: (value: boolean) => void
   /** 设置圆角预设 */
   setRadius: (value: RadiusPreset) => void
-  /** 设置玻璃拟态透明度 */
+  /** 设置玻璃背景不透明度 */
   setGlassStrength: (value: number) => void
   /** 设置玻璃拟态模糊度 */
   setGlassBlur: (value: number) => void
@@ -94,6 +98,9 @@ interface ThemeState {
   setReducedMotion: (value: boolean) => void
   /** 设置禁用全局 hover 位移 */
   setDisableHoverTransform: (value: boolean) => void
+  setCursorGlowEnabled: (value: boolean) => void
+  setCursorGlowSize: (value: number) => void
+  setCursorGlowOpacity: (value: number) => void
   /** 设置自定义背景图片 */
   setBackgroundImage: (value: string | null) => void
   /** 设置背景模糊度 */
@@ -120,6 +127,9 @@ export const useThemeStore = create<ThemeState>()(
       glassBlur: 12,
       reducedMotion: false,
       disableHoverTransform: false,
+      cursorGlowEnabled: true,
+      cursorGlowSize: 640,
+      cursorGlowOpacity: 0.85,
       backgroundImage: null,
       backgroundBlur: 0,
       backgroundOpacity: 1,
@@ -168,6 +178,12 @@ export const useThemeStore = create<ThemeState>()(
         set({ backgroundImage: value }),
       setDisableHoverTransform: (value: boolean) =>
         set({ disableHoverTransform: value }),
+      setCursorGlowEnabled: (value: boolean) =>
+        set({ cursorGlowEnabled: value }),
+      setCursorGlowSize: (value: number) =>
+        set({ cursorGlowSize: Math.min(1000, Math.max(240, value)) }),
+      setCursorGlowOpacity: (value: number) =>
+        set({ cursorGlowOpacity: Math.min(1, Math.max(0, value)) }),
       setBackgroundBlur: (value: number) => set({ backgroundBlur: value }),
       setBackgroundOpacity: (value: number) =>
         set({ backgroundOpacity: value }),
@@ -188,6 +204,9 @@ export const useThemeStore = create<ThemeState>()(
         glassBlur: state.glassBlur,
         reducedMotion: state.reducedMotion,
         disableHoverTransform: state.disableHoverTransform,
+        cursorGlowEnabled: state.cursorGlowEnabled,
+        cursorGlowSize: state.cursorGlowSize,
+        cursorGlowOpacity: state.cursorGlowOpacity,
         // 自定义背景同时持久化 URL 与 base64 数据（用户上传图片在 5MB 限制内）
         backgroundImage: state.backgroundImage,
         backgroundBlur: state.backgroundBlur,

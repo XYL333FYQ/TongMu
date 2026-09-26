@@ -116,7 +116,7 @@ export default function MountManager() {
   }
 
   return (
-    <div className="glass-card p-4">
+    <div className="tongmu-space__mounts glass-card p-4">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <div

@@ -182,7 +182,7 @@ async function loginAndCreateRoom(page: Page): Promise<void> {
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByText("已连接", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "开始共享", exact: true }).click();
+  await page.getByRole("button", { name: "创建房间", exact: true }).click();
   await page.getByRole("button", { name: "创建房间", exact: true }).click();
   await expect(page).toHaveURL(/\/room\//);
 }
@@ -374,12 +374,14 @@ async function addAndPlay(
   url: string,
   engine: RegExp,
 ): Promise<void> {
+  await page.getByRole("tab", { name: "添加影片", exact: true }).click();
   const input = page.getByPlaceholder(/影片网页、MP4\/MKV/).last();
   await input.fill(url);
   await page.getByRole("button", { name: "添加", exact: true }).last().click();
   await expect(page.getByText(/Resolver: (?:direct-url|live)/).last()).toBeVisible();
   await expect(page.getByText(engine).last()).toBeVisible();
   const title = decodeURIComponent(new URL(url).pathname.split('/').pop()!);
+  await page.getByRole("tab", { name: "影片列表", exact: true }).click();
   await page.getByText(title, { exact: true }).last().locator('../..').getByRole('button', { name: '播放', exact: true }).click();
   const video = page.locator("video").first();
   try {
@@ -781,7 +783,7 @@ test("unified media panel has no horizontal overflow at a phone viewport", async
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await loginAndCreateRoom(page);
-  await page.getByRole("button", { name: "切换到添加影片" }).click();
+  await page.getByRole("tab", { name: "添加影片", exact: true }).click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
     390,
   );
@@ -818,6 +820,7 @@ test('private source token stays out of media resolve and Socket movie-list; hos
   const responsePromise = page.waitForResponse(response =>
     response.url().includes('/api/stream/media/resolve') && response.ok(),
   );
+  await page.getByRole("tab", { name: "添加影片", exact: true }).click();
   await page.getByPlaceholder(/影片网页、MP4\/MKV/).last().fill(`${FIXTURE_ORIGIN}/normal.mp4?token=private-source-secret`);
   await page.getByRole('button', { name: '添加', exact: true }).last().click();
   const response = await responsePromise;
@@ -843,6 +846,7 @@ test('private source token stays out of media resolve and Socket movie-list; hos
     const store = useRoomStore.getState(); const movie = store.movies[0];
     await store.updateMovie(store.roomId, movie.id, { mediaDescriptor: { ...movie.mediaDescriptor, expiresAt: 0 } });
   });
+  await page.getByRole("tab", { name: "影片列表", exact: true }).click();
   await page.getByText('normal.mp4', { exact: true }).last().locator('../..').getByRole('button', { name: '播放', exact: true }).click();
   await expect.poll(() => page.evaluate(async () => {
     // @ts-ignore application module

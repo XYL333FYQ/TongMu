@@ -1,24 +1,20 @@
-import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
-  LayoutDashboard,
   LayoutGrid,
   List,
   Lock,
   Unlock,
   RefreshCw,
   PlayCircle,
-  Shield,
 } from 'lucide-react'
-import { PageBackButton } from '@/components/PageBackButton'
 import { Button } from '@/components/ui/Button'
-import { Card } from '@/components/ui/Card'
-import { Title, Text } from '@/components/ui/Typography'
+import { Text } from '@/components/ui/Typography'
 import { Tag } from '@/components/ui/Tag'
 import { Spinner } from '@/components/ui/Spinner'
-import { message } from '@/components/ui/message'
 import { useAuthStore } from '@/store/authStore'
-import { apiFetch } from '@/lib/api'
+import type { RoomDirectoryView } from '@/hooks/useRoomDirectory'
+import { roomPath, type RoomListItem } from '@/lib/roomDirectory'
 import { cn } from '@/lib/utils'
 import { formatRecentTime } from '@/lib/formatTime'
 import { useHideBodyScrollbar } from '@/hooks/useHideBodyScrollbar'
@@ -40,122 +36,62 @@ const Fade = ({
   </div>
 )
 
-interface RoomItem {
-  id: number
-  roomId: string
-  name: string | null
-  status: 'active' | 'closed'
-  requireApproval: boolean
-  maxViewers: number
-  hasPassword: boolean
-  viewerCount: number
-  sharerOnline: boolean
-  mode: 'screen-share' | 'watch-together'
-  lastAccessedAt: string
-  createdAt: string
-}
-
-export default function RoomsListPage() {
+export default function RoomsListPage({
+  directory,
+}: {
+  directory: RoomDirectoryView
+}) {
   useHideBodyScrollbar()
   const navigate = useNavigate()
-  const { isAuthenticated, user } = useAuthStore()
-  const [rooms, setRooms] = useState<RoomItem[]>([])
-  const [loading, setLoading] = useState(false)
+  const [searchParams] = useSearchParams()
+  const { isAuthenticated, authResolved } = useAuthStore()
+  const { rooms, loading, error, refresh: loadData } = directory
+  const query = searchParams.get('q') ?? ''
+  const [modeFilter, setModeFilter] = useState('all')
+  const [onlineOnly, setOnlineOnly] = useState(false)
+  const [sort, setSort] = useState('recent')
   const [viewMode, setViewMode] = useState<'list' | 'tile'>(() => {
     const saved = localStorage.getItem('rooms-list-view-mode')
-    return saved === 'tile' ? 'tile' : 'list'
+    return saved === 'list' ? 'list' : 'tile'
   })
-  const isAdmin = user?.role === 'admin' || user?.role === 'root'
-
-  const authHeaders = {
-    'Content-Type': 'application/json',
-  }
-
-  const fetchRooms = async () => {
-    const res = await apiFetch('/api/rooms', {
-      headers: authHeaders,
-    })
-    const data = (await res.json()) as {
-      success: boolean
-      rooms?: RoomItem[]
-      message?: string
-    }
-    if (data.success && data.rooms) {
-      setRooms(data.rooms)
-    } else {
-      message.error(data.message ?? '获取房间列表失败')
-    }
-  }
-
-  const loadData = async () => {
-    setLoading(true)
-    try {
-      await fetchRooms()
-    } catch (err) {
-      console.error('[RoomsListPage] load data error:', err)
-      message.error('加载数据失败')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    if (!isAuthenticated) return
-    let cancelled = false
-    const load = async () => {
-      setLoading(true)
-      try {
-        await fetchRooms()
-      } catch (err) {
-        if (!cancelled) {
-          console.error('[RoomsListPage] load data error:', err)
-          message.error('加载数据失败')
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false)
-        }
-      }
-    }
-    void load()
-    return () => {
-      cancelled = true
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated])
 
   /** 创建时间：<24h 显示相对时间，≥24h 显示准确时间（公共 formatRecentTime） */
   const formatDate = formatRecentTime
 
-  const getModeLabel = (mode: RoomItem['mode']) => {
+  const getModeLabel = (mode: RoomListItem['mode']) => {
     if (mode === 'watch-together') return '一起看'
     return '屏幕共享'
   }
 
-  return (
-    <div className="flex-1 p-4 sm:p-6">
-      <Card className="relative mx-auto w-full max-w-6xl">
-        <PageBackButton to="/" />
+  const visibleRooms = rooms
+    .filter(
+      (room) =>
+        (!onlineOnly || room.sharerOnline) &&
+        (modeFilter === 'all' || room.mode === modeFilter) &&
+        `${room.name ?? ''} ${room.roomId}`
+          .toLowerCase()
+          .includes(query.trim().toLowerCase())
+    )
+    .sort((a, b) => {
+      if (sort === 'viewers')
+        return b.viewerCount - a.viewerCount || a.roomId.localeCompare(b.roomId)
+      const time = (value: string) => Date.parse(value) || 0
+      return sort === 'newest'
+        ? time(b.createdAt) - time(a.createdAt)
+        : time(b.lastAccessedAt) - time(a.lastAccessedAt)
+    })
 
-        <div className="mb-6 pt-8 text-center">
-          <Fade delay={80} className="inline-block">
-            <div
-              className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-[var(--md-sys-shape-corner)]"
-              style={{
-                backgroundColor: 'var(--md-sys-color-primary-container)',
-                color: 'var(--md-sys-color-on-primary-container)',
-              }}
-            >
-              <LayoutDashboard className="h-6 w-6" />
-            </div>
-          </Fade>
-          <Fade delay={120}>
-            <Title level={3} className="m-0">
-              房间列表
-            </Title>
-            <Text type="secondary">浏览并加入当前可用的房间</Text>
-          </Fade>
-        </div>
+  return (
+    <section
+      className="tongmu-rooms-page"
+      aria-labelledby="hall-discover-title"
+    >
+      <div className="tongmu-rooms-page__content">
+        <header className="tongmu-hall__directory-head">
+          <p className="tongmu-home__section-kicker">TongMu 大厅</p>
+          <h1 id="hall-discover-title">发现房间</h1>
+          <p>浏览正在进行的房间，找到想一起看的伙伴。</p>
+        </header>
 
         <Fade delay={160}>
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -172,7 +108,10 @@ export default function RoomsListPage() {
               >
                 {rooms.length}
               </span>
-              <span>个房间</span>
+              <span>
+                个房间 · {rooms.filter((room) => room.sharerOnline).length}{' '}
+                个房主在线
+              </span>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <div
@@ -226,21 +165,11 @@ export default function RoomsListPage() {
                   <span className="hidden sm:inline">平铺</span>
                 </button>
               </div>
-              {isAdmin && (
-                <Button
-                  variant="primary"
-                  size="sm"
-                  icon={<Shield className="h-4 w-4" />}
-                  onClick={() => navigate('/admin')}
-                >
-                  管理后台
-                </Button>
-              )}
               <Button
                 variant="secondary"
                 size="sm"
                 icon={<RefreshCw className="h-4 w-4" />}
-                onClick={loadData}
+                onClick={() => void loadData()}
                 disabled={loading}
               >
                 刷新
@@ -249,7 +178,63 @@ export default function RoomsListPage() {
           </div>
         </Fade>
 
-        {loading ? (
+        <div className="tongmu-directory-filters">
+          <select
+            aria-label="房间类型"
+            className="hall-select"
+            value={modeFilter}
+            onChange={(event) => setModeFilter(event.target.value)}
+          >
+            <option value="all">全部房间</option>
+            <option value="watch-together">一起看</option>
+            <option value="screen-share">屏幕共享</option>
+          </select>
+          <details className="tongmu-directory-filters__more">
+            <summary>
+              更多筛选{onlineOnly || sort !== 'recent' ? ' · 已设置' : ''}
+            </summary>
+            <div className="tongmu-directory-filters__advanced">
+              <select
+                aria-label="房间排序"
+                className="hall-select"
+                value={sort}
+                onChange={(event) => setSort(event.target.value)}
+              >
+                <option value="recent">最近活跃</option>
+                <option value="newest">最新创建</option>
+                <option value="viewers">观众最多</option>
+              </select>
+              <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-[var(--md-sys-color-on-surface-variant)]">
+                <input
+                  type="checkbox"
+                  checked={onlineOnly}
+                  onChange={(event) => setOnlineOnly(event.target.checked)}
+                  className="h-4 w-4 accent-[var(--md-sys-color-primary)]"
+                />
+                仅看房主在线
+              </label>
+            </div>
+          </details>
+        </div>
+        <div className="tongmu-directory-results text-xs text-[var(--md-sys-color-on-surface-variant)]">
+          {!loading && !error && (
+            <span role="status">
+              显示 {visibleRooms.length} / {rooms.length} 个房间
+            </span>
+          )}
+        </div>
+        {authResolved && !isAuthenticated ? (
+          <div role="status" className="py-10 text-center">
+            连接不可用，请刷新页面或检查服务器地址。
+          </div>
+        ) : error ? (
+          <div role="alert" className="py-10 text-center">
+            <p>{error}</p>
+            <Button className="mt-3" onClick={() => void loadData()}>
+              重试
+            </Button>
+          </div>
+        ) : loading ? (
           <Fade delay={200}>
             <div className="py-12">
               <Spinner tip="加载中..." size={32} />
@@ -263,37 +248,58 @@ export default function RoomsListPage() {
                 : 'grid gap-3'
             }
           >
-            {rooms.length === 0 ? (
+            {visibleRooms.length === 0 ? (
               <Fade delay={200} className="col-span-full">
                 <div className="col-span-full py-12 text-center">
-                  <Text type="secondary">暂无可用房间</Text>
+                  <Text type="secondary">
+                    {rooms.length
+                      ? '没有匹配的房间，试试调整搜索或筛选条件。'
+                      : '暂时还没有房间，邀请朋友开启第一场放映吧。'}
+                  </Text>
                 </div>
               </Fade>
             ) : (
-              rooms.map((room, idx) => (
+              visibleRooms.map((room, idx) => (
                 <div
                   key={room.id}
                   className={cn(
-                    'zen-stagger-fade-up glass-card flex flex-col gap-3 p-4 transition-colors',
+                    'room-discovery-card zen-stagger-fade-up glass-card flex min-w-0 flex-col gap-4 p-4 transition-colors',
                     viewMode !== 'tile' &&
                       'sm:flex-row sm:items-center sm:justify-between'
                   )}
                   style={
                     {
-                      '--stagger-delay': `${200 + idx * 45}ms`,
+                      '--stagger-delay': `${Math.min(200 + idx * 30, 500)}ms`,
                     } as React.CSSProperties
                   }
                 >
                   <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="truncate font-medium text-[var(--md-sys-color-on-surface)]">
+                    <div className="room-discovery-card__primary">
+                      <strong className="room-discovery-card__name">
                         {room.name || room.roomId}
+                      </strong>
+                      <span className="room-discovery-card__mode">
+                        {getModeLabel(room.mode)}
                       </span>
-                      <Tag color="success">进行中</Tag>
+                    </div>
+                    <div className="room-discovery-card__meta">
+                      <Tag
+                        color={
+                          room.status === 'active' && room.sharerOnline
+                            ? 'success'
+                            : 'default'
+                        }
+                      >
+                        {room.status !== 'active'
+                          ? '已关闭'
+                          : room.sharerOnline
+                            ? '房主在线'
+                            : '房主离线'}
+                      </Tag>
                       {room.requireApproval ? (
                         <Tag color="warning">需确认</Tag>
                       ) : (
-                        <Tag color="cyan">直接加入</Tag>
+                        <Tag color="default">直接加入</Tag>
                       )}
                       {room.hasPassword ? (
                         <Tag color="purple">
@@ -306,26 +312,21 @@ export default function RoomsListPage() {
                           无密码
                         </Tag>
                       )}
-                      <Tag color="default">{getModeLabel(room.mode)}</Tag>
                     </div>
-                    <Text
-                      type="secondary"
-                      className={
-                        viewMode === 'tile'
-                          ? 'mt-2 text-xs leading-relaxed'
-                          : 'text-xs'
-                      }
-                    >
-                      房间 ID: {room.roomId}
-                      {viewMode === 'tile' ? <br /> : ' · '}观众{' '}
-                      {room.viewerCount} / {room.maxViewers}
-                      {viewMode === 'tile' ? <br /> : ' · '}分享端
-                      {room.sharerOnline ? '在线' : '离线'}
-                      {viewMode === 'tile' ? <br /> : ' · '}创建于{' '}
-                      {formatDate(room.createdAt)}
-                      {viewMode === 'tile' ? <br /> : ' · '}最后访问{' '}
-                      {formatDate(room.lastAccessedAt)}
-                    </Text>
+                    <dl className="room-discovery-card__details">
+                      <dt>人数</dt>
+                      <dd className="room-discovery-card__count">
+                        {room.viewerCount} / {room.maxViewers}
+                      </dd>
+                      <dt>房间号</dt>
+                      <dd className="truncate text-right font-mono">
+                        {room.roomId}
+                      </dd>
+                      <dt>最近活跃</dt>
+                      <dd className="truncate text-right">
+                        {formatDate(room.lastAccessedAt)}
+                      </dd>
+                    </dl>
                   </div>
                   <Button
                     variant="primary"
@@ -333,7 +334,7 @@ export default function RoomsListPage() {
                     className={viewMode === 'tile' ? 'mt-auto w-full' : ''}
                     icon={<PlayCircle className="h-4 w-4" />}
                     onClick={() =>
-                      navigate(`/room/${room.roomId}`, {
+                      navigate(roomPath(room.roomId) ?? '/', {
                         state: {
                           fromList: true,
                           hasPassword: room.hasPassword,
@@ -350,7 +351,7 @@ export default function RoomsListPage() {
             )}
           </div>
         )}
-      </Card>
-    </div>
+      </div>
+    </section>
   )
 }

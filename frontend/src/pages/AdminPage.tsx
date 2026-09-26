@@ -15,7 +15,6 @@ import {
   UserCheck,
   Upload,
 } from 'lucide-react'
-import { PageBackButton } from '@/components/PageBackButton'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { Space } from '@/components/ui/Space'
@@ -837,10 +836,8 @@ export default function AdminPage() {
 
   return (
     <div className="flex-1 p-4 sm:p-6">
-      <Card className="relative mx-auto w-full max-w-6xl">
-        <PageBackButton to="/" />
-
-        <div className="mb-6 pt-8 text-center">
+      <Card className="tongmu-admin-page__content relative mx-auto w-full">
+        <div className="mb-6 text-center">
           <div
             className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-[var(--md-sys-shape-corner)]"
             style={{
