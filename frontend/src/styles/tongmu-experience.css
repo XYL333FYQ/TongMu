@@ -1139,6 +1139,180 @@ body[data-no-hover-transform='true']
 .tongmu-room__workspace {
   max-width: 1152px;
 }
+.tongmu-admin-page {
+  color: var(--tm-text-primary);
+}
+.tongmu-shell--custom-background .tongmu-admin-page {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--tm-canvas) 70%, transparent),
+    color-mix(in srgb, var(--tm-canvas) 56%, transparent)
+  );
+}
+.tongmu-admin-page__content {
+  display: grid;
+  gap: 18px;
+  padding-bottom: 48px;
+}
+.tongmu-admin-page__intro {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 0 16px;
+  border-bottom: 1px solid var(--tm-border);
+}
+.tongmu-admin-page__intro h1 {
+  margin: 0 0 4px;
+  font-size: clamp(24px, 2vw, 30px);
+  font-weight: 650;
+}
+.tongmu-admin-page__intro p {
+  margin: 0;
+  color: var(--tm-text-secondary);
+  font-size: 13px;
+}
+.tongmu-admin-page__role {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--tm-brand);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.tongmu-admin-page__tabs,
+.tongmu-admin-page__actions,
+.tongmu-admin-page__room-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.tongmu-admin-page__tabs {
+  gap: 4px;
+  border-bottom: 1px solid var(--tm-border);
+}
+.tongmu-admin-page__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 0 16px;
+  border-bottom: 2px solid transparent;
+  color: var(--tm-text-secondary);
+  font-size: 14px;
+  font-weight: 600;
+  transition:
+    color 180ms ease,
+    border-color 180ms ease;
+}
+.tongmu-admin-page__tab:hover,
+.tongmu-admin-page__tab[aria-selected='true'] {
+  color: var(--tm-brand);
+}
+.tongmu-admin-page__tab[aria-selected='true'] {
+  border-bottom-color: var(--tm-brand);
+}
+.tongmu-admin-page__tab:focus-visible,
+.tongmu-admin-page__view-option:focus-visible {
+  outline: 2px solid var(--tm-brand);
+  outline-offset: 2px;
+}
+.tongmu-admin-page__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  min-height: 34px;
+}
+.tongmu-admin-page__actions {
+  justify-content: flex-end;
+}
+.tongmu-admin-page__view-toggle {
+  display: inline-flex;
+  flex-shrink: 0;
+  padding: 2px;
+  border: 1px solid var(--tm-border);
+  border-radius: var(--tm-radius);
+}
+.tongmu-admin-page__view-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: calc(var(--tm-radius) - 2px);
+  color: var(--tm-text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+}
+.tongmu-admin-page__view-option[aria-pressed='true'] {
+  background: var(--tm-soft);
+  color: var(--tm-brand);
+}
+.tongmu-admin-page__section,
+.tongmu-admin-page__item,
+.tongmu-admin-page__select-all {
+  border: 1px solid color-mix(in srgb, var(--tm-border) 70%, transparent);
+  border-radius: var(--tm-radius);
+  background: var(--tm-glass-card-bg);
+  backdrop-filter: blur(var(--tm-glass-blur));
+}
+.tongmu-admin-page__section {
+  padding: 18px 20px;
+}
+.tongmu-admin-page__item {
+  min-width: 0;
+}
+.tongmu-admin-page__item--selected {
+  border-color: var(--tm-brand);
+  background: color-mix(in srgb, var(--tm-brand) 10%, var(--tm-glass-card-bg));
+}
+.tongmu-admin-page__select-all {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+}
+.tongmu-admin-page__settings {
+  max-width: 900px;
+  padding: 4px 0 24px;
+}
+.tongmu-admin-page__settings h5 {
+  color: var(--tm-text-primary);
+}
+.tongmu-admin-page__room-actions {
+  flex-shrink: 0;
+}
+@media (max-width: 639px) {
+  .tongmu-admin-page__content {
+    gap: 14px;
+  }
+  .tongmu-admin-page__intro {
+    align-items: flex-start;
+  }
+  .tongmu-admin-page__tabs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .tongmu-admin-page__tab {
+    justify-content: center;
+    gap: 5px;
+    padding-inline: 4px;
+    font-size: 12px;
+  }
+  .tongmu-admin-page__actions {
+    justify-content: flex-start;
+  }
+  .tongmu-admin-page__section {
+    padding: 16px;
+  }
+  .tongmu-admin-page__room-actions,
+  .tongmu-admin-page__room-actions > button {
+    width: 100%;
+  }
+}
 .tongmu-create__activity {
   min-height: 178px;
   padding: 22px;

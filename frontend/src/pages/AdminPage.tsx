@@ -16,7 +16,6 @@ import {
   Upload,
 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
-import { Card } from '@/components/ui/Card'
 import { Space } from '@/components/ui/Space'
 import { Title, Text } from '@/components/ui/Typography'
 import { Tag } from '@/components/ui/Tag'
@@ -28,6 +27,7 @@ import { Input } from '@/components/ui/Input'
 import { InputNumber } from '@/components/ui/InputNumber'
 import { Select } from '@/components/ui/Select'
 import { AniSubsGithubBrowser } from '@/modules/admin/components/AniSubsGithubBrowser'
+import { canCloseAdminRoom } from '@/modules/admin/adminPermissions'
 import { message } from '@/components/ui/message'
 import { useHideBodyScrollbar } from '@/hooks/useHideBodyScrollbar'
 import { formatRecentTime } from '@/lib/formatTime'
@@ -55,6 +55,7 @@ interface AdminRoom {
   sharerOnline: boolean
   createdAt: string
   lastAccessedAt: string
+  ownerUserId: number | null
 }
 
 interface UpdateInfo {
@@ -128,7 +129,8 @@ interface AdminSettings {
 export default function AdminPage() {
   useHideBodyScrollbar()
   const navigate = useNavigate()
-  const { isAuthenticated, user } = useAuthStore()
+  const { isAuthenticated, authResolved, user } = useAuthStore()
+  const isRoot = user?.role === 'root'
   const { invalidate: invalidateSystemSettings } = useSystemSettingsStore()
   const [activeTab, setActiveTab] = useState<'users' | 'rooms' | 'settings'>(
     'users'
@@ -582,11 +584,11 @@ export default function AdminPage() {
   }
 
   useEffect(() => {
-    if (!isAuthenticated) return
+    if (!isAuthenticated || !authResolved) return
     /* eslint-disable react-hooks/set-state-in-effect -- tab 切换时加载对应数据 */
     if (activeTab === 'settings') {
       void loadSettings()
-      void checkUpdate()
+      if (isRoot) void checkUpdate()
     } else if (activeTab === 'users') {
       void loadData()
       void loadSettings()
@@ -595,7 +597,7 @@ export default function AdminPage() {
     }
     /* eslint-enable react-hooks/set-state-in-effect */
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, isAuthenticated])
+  }, [activeTab, isAuthenticated, authResolved, isRoot])
 
   const handleChangeRole = async (
     targetUser: AdminUser,
@@ -834,115 +836,80 @@ export default function AdminPage() {
   /** 房间创建时间：<24h 相对时间，≥24h 精确时间 */
   const formatRoomCreatedAt = formatRecentTime
 
+  if (!authResolved) return null
+
   return (
-    <div className="flex-1 p-4 sm:p-6">
-      <Card className="tongmu-admin-page__content relative mx-auto w-full">
-        <div className="mb-6 text-center">
-          <div
-            className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-[var(--md-sys-shape-corner)]"
-            style={{
-              backgroundColor: 'var(--md-sys-color-primary-container)',
-              color: 'var(--md-sys-color-on-primary-container)',
-            }}
-          >
-            <Shield className="h-6 w-6" />
+    <div className="tongmu-admin-page flex-1 p-4 sm:p-6">
+      <div className="tongmu-admin-page__content relative mx-auto w-full">
+        <div className="tongmu-admin-page__intro">
+          <div>
+            <h1>管理后台</h1>
+            <p>管理用户、房间和系统配置</p>
           </div>
-          <Title level={3} className="m-0">
-            权限管理
-          </Title>
-          <Text type="secondary">管理用户角色与房间状态</Text>
+          <span className="tongmu-admin-page__role">
+            <Shield className="h-4 w-4" />
+            {isRoot ? '超级管理员' : '管理员'}
+          </span>
         </div>
 
-        <div className="mb-6 flex flex-wrap items-center justify-center gap-2">
+        <div
+          className="tongmu-admin-page__tabs"
+          role="tablist"
+          aria-label="管理后台栏目"
+        >
           <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'users'}
             onClick={() => setActiveTab('users')}
-            className="relative flex items-center gap-2 rounded-[var(--md-sys-shape-corner)] px-3 py-2 text-sm font-medium transition-all sm:px-4"
-            style={{
-              backgroundColor:
-                activeTab === 'users'
-                  ? 'var(--md-sys-color-primary-container)'
-                  : 'var(--glass-bg)',
-              color:
-                activeTab === 'users'
-                  ? 'var(--md-sys-color-on-primary-container)'
-                  : 'var(--md-sys-color-on-surface)',
-              border: '1px solid var(--md-sys-color-outline)',
-            }}
+            className="tongmu-admin-page__tab"
           >
             <Users className="h-4 w-4" />
-            <span className="hidden sm:inline">用户管理</span>
+            <span>用户管理</span>
           </button>
           <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'rooms'}
             onClick={() => setActiveTab('rooms')}
-            className="relative flex items-center gap-2 rounded-[var(--md-sys-shape-corner)] px-3 py-2 text-sm font-medium transition-all sm:px-4"
-            style={{
-              backgroundColor:
-                activeTab === 'rooms'
-                  ? 'var(--md-sys-color-primary-container)'
-                  : 'var(--glass-bg)',
-              color:
-                activeTab === 'rooms'
-                  ? 'var(--md-sys-color-on-primary-container)'
-                  : 'var(--md-sys-color-on-surface)',
-              border: '1px solid var(--md-sys-color-outline)',
-            }}
+            className="tongmu-admin-page__tab"
           >
             <LayoutDashboard className="h-4 w-4" />
-            <span className="hidden sm:inline">房间管理</span>
+            <span>房间管理</span>
           </button>
           <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'settings'}
             onClick={() => setActiveTab('settings')}
-            className="relative flex items-center gap-2 rounded-[var(--md-sys-shape-corner)] px-3 py-2 text-sm font-medium transition-all sm:px-4"
-            style={{
-              backgroundColor:
-                activeTab === 'settings'
-                  ? 'var(--md-sys-color-primary-container)'
-                  : 'var(--glass-bg)',
-              color:
-                activeTab === 'settings'
-                  ? 'var(--md-sys-color-on-primary-container)'
-                  : 'var(--md-sys-color-on-surface)',
-              border: '1px solid var(--md-sys-color-outline)',
-            }}
+            className="tongmu-admin-page__tab"
           >
             <Settings className="h-4 w-4" />
-            <span className="hidden sm:inline">基础设置</span>
+            <span>基础设置</span>
           </button>
         </div>
 
-        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="tongmu-admin-page__toolbar">
           <Text type="secondary" className="shrink-0">
             {activeTab === 'users'
               ? `共 ${users.length} 位用户`
               : activeTab === 'rooms'
                 ? `共 ${rooms.length} 个房间`
-                : ''}
+                : '调整后请在页面底部保存'}
           </Text>
           {activeTab !== 'settings' && (
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="tongmu-admin-page__actions">
               {activeTab === 'rooms' && (
                 <>
-                  <div
-                    className="inline-flex shrink-0 rounded-[var(--md-sys-shape-corner)] border p-0.5"
-                    style={{ borderColor: 'var(--md-sys-color-outline)' }}
-                  >
+                  <div className="tongmu-admin-page__view-toggle">
                     <button
                       type="button"
                       onClick={() => {
                         setRoomViewMode('list')
                         localStorage.setItem('admin-rooms-view-mode', 'list')
                       }}
-                      className="flex items-center gap-1.5 rounded-[calc(var(--md-sys-shape-corner)-2px)] px-2.5 py-1.5 text-sm font-medium transition-all"
-                      style={{
-                        backgroundColor:
-                          roomViewMode === 'list'
-                            ? 'var(--md-sys-color-primary-container)'
-                            : 'transparent',
-                        color:
-                          roomViewMode === 'list'
-                            ? 'var(--md-sys-color-on-primary-container)'
-                            : 'var(--md-sys-color-on-surface)',
-                      }}
+                      className="tongmu-admin-page__view-option"
+                      aria-pressed={roomViewMode === 'list'}
                       aria-label="列表视图"
                       title="列表视图"
                     >
@@ -955,17 +922,8 @@ export default function AdminPage() {
                         setRoomViewMode('tile')
                         localStorage.setItem('admin-rooms-view-mode', 'tile')
                       }}
-                      className="flex items-center gap-1.5 rounded-[calc(var(--md-sys-shape-corner)-2px)] px-2.5 py-1.5 text-sm font-medium transition-all"
-                      style={{
-                        backgroundColor:
-                          roomViewMode === 'tile'
-                            ? 'var(--md-sys-color-primary-container)'
-                            : 'transparent',
-                        color:
-                          roomViewMode === 'tile'
-                            ? 'var(--md-sys-color-on-primary-container)'
-                            : 'var(--md-sys-color-on-surface)',
-                      }}
+                      className="tongmu-admin-page__view-option"
+                      aria-pressed={roomViewMode === 'tile'}
                       aria-label="平铺视图"
                       title="平铺视图"
                     >
@@ -973,7 +931,7 @@ export default function AdminPage() {
                       <span className="hidden sm:inline">平铺</span>
                     </button>
                   </div>
-                  {selectedRoomIds.size > 0 && (
+                  {isRoot && selectedRoomIds.size > 0 && (
                     <Button
                       variant="danger"
                       size="sm"
@@ -990,29 +948,31 @@ export default function AdminPage() {
                       </span>
                     </Button>
                   )}
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    icon={<Trash2 className="h-4 w-4" />}
-                    onClick={() => setDeleteAllConfirm(true)}
-                    disabled={deleteAllLoading}
-                    title="删除所有房间"
-                  >
-                    <span className="sm:hidden">全部</span>
-                    <span className="hidden sm:inline">删除所有房间</span>
-                  </Button>
+                  {isRoot && (
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      icon={<Trash2 className="h-4 w-4" />}
+                      onClick={() => setDeleteAllConfirm(true)}
+                      disabled={deleteAllLoading}
+                      title="删除所有房间"
+                    >
+                      删除所有房间
+                    </Button>
+                  )}
                   <Button
                     variant="danger"
                     size="sm"
                     icon={<Trash2 className="h-4 w-4" />}
                     onClick={() => setCleanupConfirm(true)}
                     disabled={cleanupLoading}
-                    title="一键移除无人使用的房间"
+                    title={
+                      isRoot
+                        ? '移除无人使用的房间'
+                        : '仅清理自己创建且无人使用的房间'
+                    }
                   >
-                    <span className="sm:hidden">清理</span>
-                    <span className="hidden sm:inline">
-                      一键移除无人使用的房间
-                    </span>
+                    {isRoot ? '清理闲置房间' : '清理我的闲置房间'}
                   </Button>
                 </>
               )}
@@ -1037,7 +997,7 @@ export default function AdminPage() {
           </div>
         ) : activeTab === 'users' ? (
           <div className="grid gap-3">
-            <div className="glass-card p-4">
+            <section className="tongmu-admin-page__section">
               <Title level={5} className="mb-3">
                 用户注册设置
               </Title>
@@ -1073,7 +1033,7 @@ export default function AdminPage() {
                   保存
                 </Button>
               </div>
-            </div>
+            </section>
             {users.length === 0 ? (
               <div className="py-12 text-center">
                 <Text type="secondary">暂无用户</Text>
@@ -1105,13 +1065,11 @@ export default function AdminPage() {
                 return (
                   <div
                     key={u.id}
-                    className={cn(
-                      'glass-card flex flex-col gap-3 p-4 transition-colors sm:flex-row sm:items-center sm:justify-between'
-                    )}
+                    className="tongmu-admin-page__item flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="truncate font-medium text-[var(--md-sys-color-on-surface)]">
+                        <span className="truncate font-medium text-[var(--tm-text-primary)]">
                           {u.username}
                         </span>
                         <Tag color={roleColorMap[u.role]}>
@@ -1130,53 +1088,49 @@ export default function AdminPage() {
                         创建于 {formatDate(u.createdAt)}
                       </Text>
                     </div>
-                    <Space className="shrink-0">
-                      {u.status === 'pending' && (
-                        <Button
-                          variant="primary"
-                          size="sm"
-                          icon={<UserCheck className="h-4 w-4" />}
-                          onClick={() => setUserApprove(u)}
-                          disabled={isRootUser}
-                        >
-                          审核
-                        </Button>
-                      )}
-                      {isRootUser ? (
-                        <div
-                          className="flex w-32 items-center justify-center rounded-[var(--md-sys-shape-corner)] border px-3 py-2 text-sm"
-                          style={{
-                            borderColor: 'var(--md-sys-color-outline)',
-                            backgroundColor: 'var(--glass-bg)',
-                            color: 'var(--md-sys-color-on-surface-variant)',
-                          }}
-                        >
-                          超级管理员
-                        </div>
-                      ) : (
-                        <Select
-                          className="w-32"
-                          value={u.role}
-                          disabled={isSelf(u)}
-                          options={[
-                            { label: '管理员', value: 'admin' },
-                            { label: '普通用户', value: 'user' },
-                          ]}
-                          onChange={(value) =>
-                            handleChangeRole(u, value as AdminUser['role'])
-                          }
-                        />
-                      )}
-                      <Button
-                        variant="danger"
-                        size="sm"
-                        icon={<Trash2 className="h-4 w-4" />}
-                        onClick={() => setUserDelete(u)}
-                        disabled={isRootUser || isSelf(u)}
-                      >
-                        删除
-                      </Button>
-                    </Space>
+                    {isRoot && (
+                      <Space className="shrink-0 flex-wrap">
+                        {u.status === 'pending' && (
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            icon={<UserCheck className="h-4 w-4" />}
+                            onClick={() => setUserApprove(u)}
+                            disabled={isRootUser}
+                          >
+                            审核
+                          </Button>
+                        )}
+                        {isRootUser ? (
+                          <div className="flex w-32 items-center justify-center rounded-[var(--tm-radius)] border border-[var(--tm-border)] px-3 py-2 text-sm text-[var(--tm-text-secondary)]">
+                            超级管理员
+                          </div>
+                        ) : (
+                          <Select
+                            className="w-32"
+                            value={u.role}
+                            disabled={isSelf(u)}
+                            options={[
+                              { label: '管理员', value: 'admin' },
+                              { label: '普通用户', value: 'user' },
+                            ]}
+                            onChange={(value) =>
+                              handleChangeRole(u, value as AdminUser['role'])
+                            }
+                          />
+                        )}
+                        {!isRootUser && !isSelf(u) && (
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            icon={<Trash2 className="h-4 w-4" />}
+                            onClick={() => setUserDelete(u)}
+                          >
+                            删除
+                          </Button>
+                        )}
+                      </Space>
+                    )}
                   </div>
                 )
               })
@@ -1196,79 +1150,65 @@ export default function AdminPage() {
               </div>
             ) : (
               <>
-                <div
-                  className={
-                    roomViewMode === 'tile'
-                      ? 'col-span-full flex items-center gap-3 rounded-[var(--md-sys-shape-corner)] border px-3 py-2 sm:px-4'
-                      : 'flex items-center gap-3 rounded-[var(--md-sys-shape-corner)] border px-3 py-2 sm:px-4'
-                  }
-                  style={{
-                    borderColor: 'var(--md-sys-color-outline)',
-                    backgroundColor: 'var(--glass-bg)',
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 shrink-0 cursor-pointer accent-[var(--md-sys-color-primary)]"
-                    checked={
-                      rooms.length > 0 &&
-                      rooms.every((r) => selectedRoomIds.has(r.roomId))
-                    }
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                        setSelectedRoomIds(new Set(rooms.map((r) => r.roomId)))
-                      } else {
-                        setSelectedRoomIds(new Set())
+                {isRoot && (
+                  <div className="tongmu-admin-page__select-all col-span-full">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 shrink-0 cursor-pointer accent-[var(--md-sys-color-primary)]"
+                      checked={
+                        rooms.length > 0 &&
+                        rooms.every((r) => selectedRoomIds.has(r.roomId))
                       }
-                    }}
-                  />
-                  <Text type="secondary" className="text-sm">
-                    全选 ({selectedRoomIds.size} / {rooms.length})
-                  </Text>
-                </div>
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedRoomIds(
+                            new Set(rooms.map((r) => r.roomId))
+                          )
+                        } else {
+                          setSelectedRoomIds(new Set())
+                        }
+                      }}
+                    />
+                    <Text type="secondary" className="text-sm">
+                      全选 ({selectedRoomIds.size} / {rooms.length})
+                    </Text>
+                  </div>
+                )}
                 {rooms.map((room) => (
                   <div
                     key={room.id}
                     className={cn(
                       roomViewMode === 'tile'
-                        ? 'flex flex-col gap-3 rounded-[var(--md-sys-shape-corner)] border p-4 transition-colors cursor-pointer'
-                        : 'flex flex-col gap-3 rounded-[var(--md-sys-shape-corner)] border p-4 transition-colors sm:flex-row sm:items-center sm:justify-between cursor-pointer',
-                      selectedRoomIds.has(room.roomId)
-                        ? 'border-[var(--md-sys-color-primary)] bg-[var(--md-sys-color-primary-container)]'
-                        : 'glass border-[var(--md-sys-color-outline)]'
+                        ? 'tongmu-admin-page__item flex flex-col gap-3 p-4'
+                        : 'tongmu-admin-page__item flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between',
+                      isRoot && selectedRoomIds.has(room.roomId)
+                        ? 'tongmu-admin-page__item--selected'
+                        : ''
                     )}
-                    onClick={() => {
-                      if (room.status === 'active') {
-                        navigate(`/room/${room.roomId}?role=host`)
-                      } else {
-                        message.warning('房间已关闭，无法进入', {
-                          duration: 5000,
-                        })
-                      }
-                    }}
                   >
                     <div className="flex min-w-0 flex-1 items-start gap-3">
-                      <input
-                        type="checkbox"
-                        className="mt-1 h-4 w-4 shrink-0 cursor-pointer accent-[var(--md-sys-color-primary)]"
-                        checked={selectedRoomIds.has(room.roomId)}
-                        onClick={(e) => e.stopPropagation()}
-                        onChange={(e) => {
-                          setSelectedRoomIds((prev) => {
-                            const next = new Set(prev)
-                            if (e.target.checked) {
-                              next.add(room.roomId)
-                            } else {
-                              next.delete(room.roomId)
-                            }
-                            return next
-                          })
-                        }}
-                      />
+                      {isRoot && (
+                        <input
+                          type="checkbox"
+                          className="mt-1 h-4 w-4 shrink-0 cursor-pointer accent-[var(--md-sys-color-primary)]"
+                          checked={selectedRoomIds.has(room.roomId)}
+                          onChange={(e) => {
+                            setSelectedRoomIds((prev) => {
+                              const next = new Set(prev)
+                              if (e.target.checked) {
+                                next.add(room.roomId)
+                              } else {
+                                next.delete(room.roomId)
+                              }
+                              return next
+                            })
+                          }}
+                        />
+                      )}
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <span
-                            className="truncate font-medium text-[var(--md-sys-color-on-surface)]"
+                            className="truncate font-medium text-[var(--tm-text-primary)]"
                             title={room.name || room.roomId}
                           >
                             {room.name || room.roomId}
@@ -1319,30 +1259,50 @@ export default function AdminPage() {
                         </Text>
                       </div>
                     </div>
-                    <Button
-                      variant="danger"
-                      size="sm"
-                      className={
-                        roomViewMode === 'tile'
-                          ? 'mt-auto w-full'
-                          : 'w-full sm:w-auto'
-                      }
-                      icon={<Power className="h-4 w-4" />}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setRoomClose(room)
-                      }}
-                      disabled={room.status !== 'active'}
-                    >
-                      关闭房间
-                    </Button>
+                    <div className="tongmu-admin-page__room-actions">
+                      {room.status === 'active' && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() =>
+                            navigate(`/room/${room.roomId}?role=host`)
+                          }
+                        >
+                          进入房间
+                        </Button>
+                      )}
+                      {room.status === 'active' &&
+                        (canCloseAdminRoom(
+                          user?.role,
+                          user?.id,
+                          room.ownerUserId
+                        ) ? (
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            className={
+                              roomViewMode === 'tile'
+                                ? 'mt-auto w-full'
+                                : 'w-full sm:w-auto'
+                            }
+                            icon={<Power className="h-4 w-4" />}
+                            onClick={() => setRoomClose(room)}
+                          >
+                            关闭房间
+                          </Button>
+                        ) : (
+                          <Text type="secondary" className="text-xs">
+                            仅创建者可关闭
+                          </Text>
+                        ))}
+                    </div>
                   </div>
                 ))}
               </>
             )}
           </div>
         ) : (
-          <div className="glass-card p-4">
+          <div className="tongmu-admin-page__settings">
             {settingsLoading ? (
               <div className="py-12">
                 <Spinner tip="加载中..." size={32} />
@@ -1534,297 +1494,309 @@ export default function AdminPage() {
                   </p>
                 </div>
 
-                <Title level={5} className="mb-4 mt-6">
-                  版本更新
-                </Title>
-                <div className="glass-card mb-6 p-4">
-                  <div className="flex items-center justify-between pb-3 mb-3 border-b border-[var(--md-sys-color-outline-variant)]">
-                    <div className="flex-1 min-w-0 pr-3">
-                      <Text className="text-sm font-medium">
-                        接收预发布版本更新
-                      </Text>
-                      <Text type="secondary" className="block text-xs mt-0.5">
-                        开启后可更新到预发布版本，关闭则仅在正式版之间更新
-                      </Text>
-                    </div>
-                    <Switch
-                      checked={includePrerelease}
-                      onChange={(e) => {
-                        setIncludePrerelease(e.target.checked)
-                        localStorage.setItem(
-                          'update-include-prerelease',
-                          String(e.target.checked)
-                        )
-                      }}
-                    />
-                  </div>
-                  {/* CDN 加速配置 */}
-                  <div className="pb-3 mb-3 border-b border-[var(--md-sys-color-outline-variant)]">
-                    <div className="flex items-center justify-between pb-3">
-                      <div className="flex-1 min-w-0 pr-3">
-                        <Text className="text-sm font-medium">
-                          更新 CDN 加速
-                        </Text>
-                        <Text type="secondary" className="block text-xs mt-0.5">
-                          开启后，更新检测和 Release 下载将走 CDN 代理加速
-                        </Text>
-                      </div>
-                      <Switch
-                        checked={settings.cdnAccelerate}
-                        onChange={(e) =>
-                          setSettings((prev) => ({
-                            ...prev,
-                            cdnAccelerate: e.target.checked,
-                          }))
-                        }
-                      />
-                    </div>
-                    {settings.cdnAccelerate && (
-                      <div className="space-y-3">
-                        <div>
-                          <Text className="mb-1.5 block text-[10px] uppercase tracking-wide text-[var(--md-sys-color-on-surface-variant)]">
-                            CDN 代理地址
+                {isRoot && (
+                  <>
+                    <Title level={5} className="mb-4 mt-6">
+                      版本更新
+                    </Title>
+                    <div className="tongmu-admin-page__section mb-6">
+                      <div className="flex items-center justify-between pb-3 mb-3 border-b border-[var(--md-sys-color-outline-variant)]">
+                        <div className="flex-1 min-w-0 pr-3">
+                          <Text className="text-sm font-medium">
+                            接收预发布版本更新
                           </Text>
-                          <Input
-                            value={settings.cdnProxyUrl}
+                          <Text
+                            type="secondary"
+                            className="block text-xs mt-0.5"
+                          >
+                            开启后可更新到预发布版本，关闭则仅在正式版之间更新
+                          </Text>
+                        </div>
+                        <Switch
+                          checked={includePrerelease}
+                          onChange={(e) => {
+                            setIncludePrerelease(e.target.checked)
+                            localStorage.setItem(
+                              'update-include-prerelease',
+                              String(e.target.checked)
+                            )
+                          }}
+                        />
+                      </div>
+                      {/* CDN 加速配置 */}
+                      <div className="pb-3 mb-3 border-b border-[var(--md-sys-color-outline-variant)]">
+                        <div className="flex items-center justify-between pb-3">
+                          <div className="flex-1 min-w-0 pr-3">
+                            <Text className="text-sm font-medium">
+                              更新 CDN 加速
+                            </Text>
+                            <Text
+                              type="secondary"
+                              className="block text-xs mt-0.5"
+                            >
+                              开启后，更新检测和 Release 下载将走 CDN 代理加速
+                            </Text>
+                          </div>
+                          <Switch
+                            checked={settings.cdnAccelerate}
                             onChange={(e) =>
                               setSettings((prev) => ({
                                 ...prev,
-                                cdnProxyUrl: e.target.value.trim(),
+                                cdnAccelerate: e.target.checked,
                               }))
                             }
-                            placeholder="https://gh-proxy.com"
                           />
-                          <Text
-                            type="secondary"
-                            className="block text-xs mt-1.5"
-                          >
-                            使用 GitHub 代理前缀方式加速，默认
-                            https://gh-proxy.com，可替换为自建代理。
-                          </Text>
                         </div>
+                        {settings.cdnAccelerate && (
+                          <div className="space-y-3">
+                            <div>
+                              <Text className="mb-1.5 block text-[10px] uppercase tracking-wide text-[var(--md-sys-color-on-surface-variant)]">
+                                CDN 代理地址
+                              </Text>
+                              <Input
+                                value={settings.cdnProxyUrl}
+                                onChange={(e) =>
+                                  setSettings((prev) => ({
+                                    ...prev,
+                                    cdnProxyUrl: e.target.value.trim(),
+                                  }))
+                                }
+                                placeholder="https://gh-proxy.com"
+                              />
+                              <Text
+                                type="secondary"
+                                className="block text-xs mt-1.5"
+                              >
+                                使用 GitHub 代理前缀方式加速，默认
+                                https://gh-proxy.com，可替换为自建代理。
+                              </Text>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                  {/* 更新进度条：下载/上传/解压/启动各阶段实时显示 */}
-                  {updateProgress && (
-                    <div className="mb-3 rounded-[var(--md-sys-radius-small)] bg-[var(--md-sys-color-surface-container-high)] p-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <Text className="text-xs font-medium text-[var(--md-sys-color-on-surface-variant)]">
-                          {updateProgress.stage === 'downloading' &&
-                            (updateProgress.message || '正在下载更新包…')}
-                          {updateProgress.stage === 'extracting' &&
-                            '正在解压更新包…'}
-                          {updateProgress.stage === 'starting' &&
-                            '正在启动更新脚本…'}
-                          {updateProgress.stage === 'done' &&
-                            (updateProgress.message || '更新已触发')}
-                          {updateProgress.stage === 'error' &&
-                            (updateProgress.message || '更新失败')}
-                        </Text>
-                        {updateProgress.stage === 'downloading' &&
-                          updateProgress.total > 0 && (
-                            <Text className="shrink-0 text-[10px] font-mono text-[var(--md-sys-color-on-surface-variant)]">
-                              {formatBytes(updateProgress.received)} /{' '}
-                              {formatBytes(updateProgress.total)}
+                      {/* 更新进度条：下载/上传/解压/启动各阶段实时显示 */}
+                      {updateProgress && (
+                        <div className="mb-3 rounded-[var(--md-sys-radius-small)] bg-[var(--md-sys-color-surface-container-high)] p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <Text className="text-xs font-medium text-[var(--md-sys-color-on-surface-variant)]">
+                              {updateProgress.stage === 'downloading' &&
+                                (updateProgress.message || '正在下载更新包…')}
+                              {updateProgress.stage === 'extracting' &&
+                                '正在解压更新包…'}
+                              {updateProgress.stage === 'starting' &&
+                                '正在启动更新脚本…'}
+                              {updateProgress.stage === 'done' &&
+                                (updateProgress.message || '更新已触发')}
+                              {updateProgress.stage === 'error' &&
+                                (updateProgress.message || '更新失败')}
+                            </Text>
+                            {updateProgress.stage === 'downloading' &&
+                              updateProgress.total > 0 && (
+                                <Text className="shrink-0 text-[10px] font-mono text-[var(--md-sys-color-on-surface-variant)]">
+                                  {formatBytes(updateProgress.received)} /{' '}
+                                  {formatBytes(updateProgress.total)}
+                                </Text>
+                              )}
+                          </div>
+                          {/* 进度条 */}
+                          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--md-sys-color-surface-container-lowest)]">
+                            {updateProgress.stage === 'downloading' ? (
+                              updateProgress.total > 0 ? (
+                                <div
+                                  className="h-full rounded-full bg-[var(--md-sys-color-primary)] transition-all duration-150"
+                                  style={{
+                                    width: `${Math.min(
+                                      100,
+                                      (updateProgress.received /
+                                        updateProgress.total) *
+                                        100
+                                    )}%`,
+                                  }}
+                                />
+                              ) : (
+                                // 总大小未知时显示不确定进度动画
+                                <div className="zen-indeterminate-bar h-full w-1/3 rounded-full bg-[var(--md-sys-color-primary)]" />
+                              )
+                            ) : (
+                              <div
+                                className={cn(
+                                  'h-full rounded-full transition-all duration-300',
+                                  updateProgress.stage === 'done' &&
+                                    'w-full bg-[var(--md-sys-color-primary)]',
+                                  updateProgress.stage === 'error' &&
+                                    'w-full bg-[var(--md-sys-color-error)]',
+                                  (updateProgress.stage === 'extracting' ||
+                                    updateProgress.stage === 'starting') &&
+                                    'w-1/2 bg-[var(--md-sys-color-primary)] zen-indeterminate-bar'
+                                )}
+                              />
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      {updateLoading ? (
+                        <div className="py-4">
+                          <Spinner tip="检查更新中..." size={24} />
+                        </div>
+                      ) : updateInfo ? (
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <Text className="text-sm">
+                              当前版本：
+                              <span className="font-mono text-[var(--md-sys-color-on-surface-variant)]">
+                                {updateInfo.currentVersion}
+                              </span>
+                            </Text>
+                            <Text className="text-sm">
+                              远程版本：
+                              <span className="font-mono text-[var(--md-sys-color-on-surface-variant)]">
+                                {updateInfo.remoteVersion}
+                              </span>
+                            </Text>
+                          </div>
+                          {updateInfo.isPrerelease && (
+                            <div className="inline-flex rounded-full bg-[var(--md-sys-color-tertiary-container)] px-2 py-0.5">
+                              <span className="text-[10px] font-medium uppercase tracking-wide text-[var(--md-sys-color-on-tertiary-container)]">
+                                预发布版本
+                              </span>
+                            </div>
+                          )}
+                          {updateInfo.publishedAt && (
+                            <Text type="secondary" className="text-xs">
+                              发布时间：
+                              {new Date(updateInfo.publishedAt).toLocaleString(
+                                'zh-CN'
+                              )}
                             </Text>
                           )}
-                      </div>
-                      {/* 进度条 */}
-                      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--md-sys-color-surface-container-lowest)]">
-                        {updateProgress.stage === 'downloading' ? (
-                          updateProgress.total > 0 ? (
-                            <div
-                              className="h-full rounded-full bg-[var(--md-sys-color-primary)] transition-all duration-150"
-                              style={{
-                                width: `${Math.min(
-                                  100,
-                                  (updateProgress.received /
-                                    updateProgress.total) *
-                                    100
-                                )}%`,
-                              }}
-                            />
-                          ) : (
-                            // 总大小未知时显示不确定进度动画
-                            <div className="zen-indeterminate-bar h-full w-1/3 rounded-full bg-[var(--md-sys-color-primary)]" />
-                          )
-                        ) : (
-                          <div
-                            className={cn(
-                              'h-full rounded-full transition-all duration-300',
-                              updateProgress.stage === 'done' &&
-                                'w-full bg-[var(--md-sys-color-primary)]',
-                              updateProgress.stage === 'error' &&
-                                'w-full bg-[var(--md-sys-color-error)]',
-                              (updateProgress.stage === 'extracting' ||
-                                updateProgress.stage === 'starting') &&
-                                'w-1/2 bg-[var(--md-sys-color-primary)] zen-indeterminate-bar'
-                            )}
-                          />
-                        )}
-                      </div>
-                    </div>
-                  )}
-                  {updateLoading ? (
-                    <div className="py-4">
-                      <Spinner tip="检查更新中..." size={24} />
-                    </div>
-                  ) : updateInfo ? (
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <Text className="text-sm">
-                          当前版本：
-                          <span className="font-mono text-[var(--md-sys-color-on-surface-variant)]">
-                            {updateInfo.currentVersion}
-                          </span>
-                        </Text>
-                        <Text className="text-sm">
-                          远程版本：
-                          <span className="font-mono text-[var(--md-sys-color-on-surface-variant)]">
-                            {updateInfo.remoteVersion}
-                          </span>
-                        </Text>
-                      </div>
-                      {updateInfo.isPrerelease && (
-                        <div className="inline-flex rounded-full bg-[var(--md-sys-color-tertiary-container)] px-2 py-0.5">
-                          <span className="text-[10px] font-medium uppercase tracking-wide text-[var(--md-sys-color-on-tertiary-container)]">
-                            预发布版本
-                          </span>
-                        </div>
-                      )}
-                      {updateInfo.publishedAt && (
-                        <Text type="secondary" className="text-xs">
-                          发布时间：
-                          {new Date(updateInfo.publishedAt).toLocaleString(
-                            'zh-CN'
+                          {updateInfo.assetSize > 0 && (
+                            <Text type="secondary" className="text-xs">
+                              构建产物：{updateInfo.assetName} (
+                              {(updateInfo.assetSize / (1024 * 1024)).toFixed(
+                                1
+                              )}
+                              MB)
+                            </Text>
                           )}
-                        </Text>
-                      )}
-                      {updateInfo.assetSize > 0 && (
-                        <Text type="secondary" className="text-xs">
-                          构建产物：{updateInfo.assetName} (
-                          {(updateInfo.assetSize / (1024 * 1024)).toFixed(1)}
-                          MB)
-                        </Text>
-                      )}
-                      {updateInfo.releaseNotes && (
-                        <div className="max-h-32 overflow-y-auto rounded-[var(--md-sys-radius-small)] bg-[var(--md-sys-color-surface-container-high)] p-2">
-                          <Text className="whitespace-pre-wrap text-xs leading-relaxed">
-                            {updateInfo.releaseNotes
-                              .split('\n')
-                              .slice(0, 10)
-                              .join('\n')}
-                          </Text>
+                          {updateInfo.releaseNotes && (
+                            <div className="max-h-32 overflow-y-auto rounded-[var(--md-sys-radius-small)] bg-[var(--md-sys-color-surface-container-high)] p-2">
+                              <Text className="whitespace-pre-wrap text-xs leading-relaxed">
+                                {updateInfo.releaseNotes
+                                  .split('\n')
+                                  .slice(0, 10)
+                                  .join('\n')}
+                              </Text>
+                            </div>
+                          )}
+                          <div className="flex flex-wrap items-center gap-2 pt-1">
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              icon={<Download className="h-4 w-4" />}
+                              onClick={handleApplyUpdate}
+                              loading={applyLoading}
+                              disabled={applyLoading || !updateInfo.hasUpdate}
+                            >
+                              {updateInfo.hasUpdate ? '一键更新' : '已是最新'}
+                            </Button>
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={checkUpdate}
+                              disabled={updateLoading}
+                            >
+                              重新检测
+                            </Button>
+                            {updateInfo.releaseUrl && (
+                              <a
+                                href={updateInfo.releaseUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-xs text-[var(--md-sys-color-primary)] hover:underline"
+                              >
+                                查看发布
+                              </a>
+                            )}
+                          </div>
+                          {/* 分割线 */}
+                          <div className="my-2 border-t border-[var(--md-sys-color-outline-variant)]" />
+                          {/* 手动导入压缩包 */}
+                          <div className="space-y-2">
+                            <Text className="text-xs font-medium text-[var(--md-sys-color-on-surface-variant)]">
+                              手动导入更新包
+                            </Text>
+                            <div className="flex items-center gap-2">
+                              <input
+                                ref={fileInputRef}
+                                type="file"
+                                accept=".zip,.tar.gz"
+                                onChange={handleFileUpload}
+                                className="hidden"
+                              />
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                icon={<Upload className="h-4 w-4" />}
+                                onClick={() => fileInputRef.current?.click()}
+                                loading={uploadLoading}
+                                disabled={uploadLoading}
+                              >
+                                选择压缩包
+                              </Button>
+                              <Text type="secondary" className="text-xs">
+                                支持 .zip / .tar.gz 格式
+                              </Text>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between py-2">
+                            <Text type="secondary" className="text-sm">
+                              未获取版本信息
+                            </Text>
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={checkUpdate}
+                              disabled={updateLoading}
+                            >
+                              检查更新
+                            </Button>
+                          </div>
+                          <div className="my-2 border-t border-[var(--md-sys-color-outline-variant)]" />
+                          <div className="space-y-2">
+                            <Text className="text-xs font-medium text-[var(--md-sys-color-on-surface-variant)]">
+                              手动导入更新包
+                            </Text>
+                            <div className="flex items-center gap-2">
+                              <input
+                                ref={fileInputRef}
+                                type="file"
+                                accept=".zip,.tar.gz"
+                                onChange={handleFileUpload}
+                                className="hidden"
+                              />
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                icon={<Upload className="h-4 w-4" />}
+                                onClick={() => fileInputRef.current?.click()}
+                                loading={uploadLoading}
+                                disabled={uploadLoading}
+                              >
+                                选择压缩包
+                              </Button>
+                              <Text type="secondary" className="text-xs">
+                                支持 .zip / .tar.gz 格式
+                              </Text>
+                            </div>
+                          </div>
                         </div>
                       )}
-                      <div className="flex flex-wrap items-center gap-2 pt-1">
-                        <Button
-                          variant="primary"
-                          size="sm"
-                          icon={<Download className="h-4 w-4" />}
-                          onClick={handleApplyUpdate}
-                          loading={applyLoading}
-                          disabled={applyLoading || !updateInfo.hasUpdate}
-                        >
-                          {updateInfo.hasUpdate ? '一键更新' : '已是最新'}
-                        </Button>
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={checkUpdate}
-                          disabled={updateLoading}
-                        >
-                          重新检测
-                        </Button>
-                        {updateInfo.releaseUrl && (
-                          <a
-                            href={updateInfo.releaseUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-xs text-[var(--md-sys-color-primary)] hover:underline"
-                          >
-                            查看发布
-                          </a>
-                        )}
-                      </div>
-                      {/* 分割线 */}
-                      <div className="my-2 border-t border-[var(--md-sys-color-outline-variant)]" />
-                      {/* 手动导入压缩包 */}
-                      <div className="space-y-2">
-                        <Text className="text-xs font-medium text-[var(--md-sys-color-on-surface-variant)]">
-                          手动导入更新包
-                        </Text>
-                        <div className="flex items-center gap-2">
-                          <input
-                            ref={fileInputRef}
-                            type="file"
-                            accept=".zip,.tar.gz"
-                            onChange={handleFileUpload}
-                            className="hidden"
-                          />
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            icon={<Upload className="h-4 w-4" />}
-                            onClick={() => fileInputRef.current?.click()}
-                            loading={uploadLoading}
-                            disabled={uploadLoading}
-                          >
-                            选择压缩包
-                          </Button>
-                          <Text type="secondary" className="text-xs">
-                            支持 .zip / .tar.gz 格式
-                          </Text>
-                        </div>
-                      </div>
                     </div>
-                  ) : (
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between py-2">
-                        <Text type="secondary" className="text-sm">
-                          未获取版本信息
-                        </Text>
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={checkUpdate}
-                          disabled={updateLoading}
-                        >
-                          检查更新
-                        </Button>
-                      </div>
-                      <div className="my-2 border-t border-[var(--md-sys-color-outline-variant)]" />
-                      <div className="space-y-2">
-                        <Text className="text-xs font-medium text-[var(--md-sys-color-on-surface-variant)]">
-                          手动导入更新包
-                        </Text>
-                        <div className="flex items-center gap-2">
-                          <input
-                            ref={fileInputRef}
-                            type="file"
-                            accept=".zip,.tar.gz"
-                            onChange={handleFileUpload}
-                            className="hidden"
-                          />
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            icon={<Upload className="h-4 w-4" />}
-                            onClick={() => fileInputRef.current?.click()}
-                            loading={uploadLoading}
-                            disabled={uploadLoading}
-                          >
-                            选择压缩包
-                          </Button>
-                          <Text type="secondary" className="text-xs">
-                            支持 .zip / .tar.gz 格式
-                          </Text>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
+                  </>
+                )}
 
                 <Button
                   variant="primary"
@@ -1839,7 +1811,7 @@ export default function AdminPage() {
             )}
           </div>
         )}
-      </Card>
+      </div>
 
       <ConfirmModal
         open={!!userDelete}
@@ -1892,7 +1864,8 @@ export default function AdminPage() {
         cancelText="取消"
         confirmLoading={cleanupLoading}
       >
-        确定要移除所有当前无人使用的房间吗？此操作不可撤销。
+        确定要移除{isRoot ? '所有' : '你创建的'}
+        当前无人使用的房间吗？此操作不可撤销。
       </ConfirmModal>
 
       <ConfirmModal
