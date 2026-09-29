@@ -15,8 +15,9 @@
  * return <>{confirmModal}{children}</>
  * ```
  */
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
+import { setRoomBackHandler } from '@/lib/roomBackNavigation'
 import { useRoomStore } from '@/store/roomStore'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
@@ -53,6 +54,28 @@ export function useRoomExitGuard() {
     },
     [needsGuard, navigate]
   )
+
+  // Browser Back bypasses button handlers. Restore the room URL until the
+  // same leave confirmation used by explicit navigation has been answered.
+  useEffect(() => {
+    if (!needsGuard) return
+    const roomUrl = `${location.pathname}${location.search}${location.hash}`
+    const roomHistoryState = window.history.state
+    const handlePopState = (event: PopStateEvent) => {
+      const target = `${window.location.pathname}${window.location.search}${window.location.hash}`
+      if (target === roomUrl) return
+      event.stopImmediatePropagation()
+      window.history.pushState(roomHistoryState, '', roomUrl)
+      guardNavigate(target)
+    }
+    return setRoomBackHandler(handlePopState)
+  }, [
+    guardNavigate,
+    location.hash,
+    location.pathname,
+    location.search,
+    needsGuard,
+  ])
 
   /**
    * 确认离开：仅导航到目标路径，**不销毁房间状态**。

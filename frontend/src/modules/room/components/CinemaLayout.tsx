@@ -1,5 +1,7 @@
 import { type ReactNode } from 'react'
-import { Card } from '@/components/ui/Card'
+import { ArrowLeft } from 'lucide-react'
+import { Button } from '@/components/ui/Button'
+import { useRoomExitGuard } from '@/hooks/useRoomExitGuard'
 import { cn } from '@/lib/utils'
 
 interface CinemaLayoutProps {
@@ -33,48 +35,51 @@ export function CinemaLayout({
   chatPanel,
   webFullscreen = false,
 }: CinemaLayoutProps) {
-  // 底部卡片容器统一样式
-  const cardContainerClass = 'glass-card rounded-2xl p-4'
-
-  // 底部内容：screen-share 模式下渲染 statsPanel + roomInfoPanel；
-  // watch-together 模式渲染三列网格（roomInfo / movieList / moviePush）
-  const bottomContent = statsPanel ? (
-    <div className="flex flex-col gap-4">
-      {roomInfoPanel && (
-        <div className={cardContainerClass}>{roomInfoPanel}</div>
-      )}
-      <div className={cardContainerClass}>{statsPanel}</div>
-    </div>
-  ) : (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-      <div className={cardContainerClass}>{roomInfoPanel}</div>
-      <div className={cardContainerClass}>{movieListPanel}</div>
-      <div className={cardContainerClass}>{moviePushPanel}</div>
-    </div>
-  )
+  const { guardNavigate, confirmModal } = useRoomExitGuard()
+  // Only render supplied panels. OBS viewers have room info but no movie tools.
+  const bottomPanels = statsPanel
+    ? [roomInfoPanel, statsPanel]
+    : [roomInfoPanel, movieListPanel, moviePushPanel]
+  const visiblePanels = bottomPanels.filter((panel) => panel != null)
 
   return (
     <div
       className={cn(
-        'p-4 lg:p-6',
+        'tongmu-room-layout p-3 lg:p-6',
         webFullscreen
           ? 'fixed inset-0 z-[100] h-screen overflow-hidden p-0'
           : 'min-h-[100dvh]'
       )}
       style={{ backgroundColor: 'transparent' }}
     >
-      <Card
-        disableAnimation={webFullscreen}
+      <div
         className={cn(
-          'relative mx-auto flex w-full flex-col overflow-hidden bg-transparent',
+          'tongmu-room__stage relative mx-auto flex w-full flex-col bg-transparent',
           webFullscreen
-            ? 'h-full w-full max-w-none !rounded-none !border-0 !bg-black !p-0 !shadow-none !backdrop-filter-none'
-            : 'max-w-[1600px]'
+            ? 'h-full w-full max-w-none overflow-hidden bg-black'
+            : 'max-w-[1152px]'
         )}
       >
+        <div className={cn('mb-3', webFullscreen && 'hidden')}>
+          <Button
+            variant="ghost"
+            size="sm"
+            disableAnimation
+            icon={<ArrowLeft className="h-4 w-4" />}
+            onClick={() => guardNavigate('/')}
+            className="min-h-11 border px-3"
+            style={{
+              backgroundColor: 'var(--tm-glass-card-bg)',
+              color: 'var(--tm-text-primary)',
+              borderColor: 'var(--tm-border)',
+            }}
+          >
+            返回大厅
+          </Button>
+        </div>
         <div
           className={cn(
-            'gap-4 p-4 lg:flex-row',
+            'gap-4 lg:flex-row',
             webFullscreen ? 'flex h-full flex-col p-0' : 'flex flex-col'
           )}
         >
@@ -100,17 +105,35 @@ export function CinemaLayout({
             </div>
 
             {/* 底部信息/控制/添加区（或投屏状态面板）—— 网页全屏时隐藏 */}
-            {!webFullscreen && bottomContent}
+            {visiblePanels.length > 0 && (
+              <div
+                className={cn(
+                  'grid gap-3',
+                  visiblePanels.length > 1 && 'lg:grid-cols-2',
+                  webFullscreen && 'hidden'
+                )}
+              >
+                {visiblePanels.map((panel, index) => (
+                  <div key={index} className="min-w-0">
+                    {panel}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* 右侧聊天区 —— 网页全屏时隐藏 */}
-          {!webFullscreen && (
-            <div className="glass-card w-full flex-shrink-0 rounded-2xl lg:w-[340px]">
-              <div className="p-4">{chatPanel}</div>
-            </div>
-          )}
+          <div
+            className={cn(
+              'min-h-[320px] w-full flex-shrink-0 lg:min-h-0 lg:w-[320px]',
+              webFullscreen && 'hidden'
+            )}
+          >
+            {chatPanel}
+          </div>
         </div>
-      </Card>
+      </div>
+      {confirmModal}
     </div>
   )
 }

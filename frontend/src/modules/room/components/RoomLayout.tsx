@@ -13,8 +13,6 @@ import {
   PanelRight,
   PanelRightClose,
 } from 'lucide-react'
-import { useLocation } from 'react-router-dom'
-import { setRoomBackHandler } from '@/lib/roomBackNavigation'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
@@ -107,12 +105,7 @@ export function RoomLayout({
   sharingActive,
   webFullscreen = false,
 }: RoomLayoutProps) {
-  const location = useLocation()
-  const {
-    guardNavigate,
-    confirmModal: exitGuardModal,
-    needsGuard,
-  } = useRoomExitGuard()
+  const { guardNavigate, confirmModal: exitGuardModal } = useRoomExitGuard()
   const { socket } = useSocket()
   // defaultBack 由 guardNavigate 统一处理：
   // 在房间内时弹出确认对话框，确认后仅导航离开——房间保持运行，
@@ -121,32 +114,20 @@ export function RoomLayout({
   const defaultBack = () => guardNavigate('/')
   const handleBack = onBack ?? defaultBack
 
-  // BrowserRouter does not route browser Back through button handlers. Restore
-  // the room history entry before asking the same exit guard for confirmation.
-  useEffect(() => {
-    if (!needsGuard) return
-    const roomUrl = `${location.pathname}${location.search}${location.hash}`
-    const roomHistoryState = window.history.state
-    const handlePopState = (event: PopStateEvent) => {
-      const target = `${window.location.pathname}${window.location.search}${window.location.hash}`
-      if (target === roomUrl) return
-      event.stopImmediatePropagation()
-      window.history.pushState(roomHistoryState, '', roomUrl)
-      guardNavigate(target)
-    }
-    return setRoomBackHandler(handlePopState)
-  }, [
-    guardNavigate,
-    location.hash,
-    location.pathname,
-    location.search,
-    needsGuard,
-  ])
   // 移动端默认收起侧栏，给视频留出更多空间；桌面端默认展开
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(() => {
     if (typeof window === 'undefined') return true
     return window.innerWidth >= 768
   })
+  useEffect(() => {
+    const desktop = window.matchMedia('(min-width: 768px)')
+    const handleViewportChange = (event: MediaQueryListEvent) => {
+      // A desktop chat rail must not become an open drawer over the video.
+      setIsRightPanelOpen(event.matches)
+    }
+    desktop.addEventListener('change', handleViewportChange)
+    return () => desktop.removeEventListener('change', handleViewportChange)
+  }, [])
   const toggleRightPanel = () => setIsRightPanelOpen((open) => !open)
   const workspaceRef = useRef<HTMLDivElement>(null)
   const [activeControlIndex, setActiveControlIndex] = useState(() => {
@@ -274,32 +255,22 @@ export function RoomLayout({
     )
   }
 
-  // 共享状态下：侧栏显示「共享情况」面板，评论区（rightPanel）移动到下方 controls 区域
-  const effectiveRightPanel = isSharing ? (
-    <SharingStatusPanel
-      pc={peerConnection}
-      mode={sharingRole}
-      sharingMode={sharingMode}
-      p2pEnabled={p2pEnabled}
-      p2pPC={p2pPC}
-      p2pStatus={p2pStatus}
-      fallbackNotice={p2pFallbackNotice}
-      onToggleP2P={onToggleP2P ?? (() => {})}
-    />
-  ) : (
-    rightPanel
-  )
-
-  // 共享状态下：将评论区（rightPanel）追加到下方 controls 区域与原 controls 合并渲染
+  // Keep chat in one DOM position while sharing starts/stops. Its draft,
+  // history and socket listeners belong to the room, not the tool selection.
   const effectiveControls = isSharing ? (
-    controls ? (
-      <>
-        {controls}
-        {rightPanel}
-      </>
-    ) : (
-      rightPanel
-    )
+    <>
+      {controls}
+      <SharingStatusPanel
+        pc={peerConnection}
+        mode={sharingRole}
+        sharingMode={sharingMode}
+        p2pEnabled={p2pEnabled}
+        p2pPC={p2pPC}
+        p2pStatus={p2pStatus}
+        fallbackNotice={p2pFallbackNotice}
+        onToggleP2P={onToggleP2P ?? (() => {})}
+      />
+    </>
   ) : (
     controls
   )
@@ -362,7 +333,7 @@ export function RoomLayout({
       }}
     >
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        {effectiveRightPanel}
+        {rightPanel}
       </div>
     </div>
   )
@@ -383,7 +354,7 @@ export function RoomLayout({
 
   // 移动端控制卡片的标签：调用方未提供时按索引生成默认文本
   const mobileCardLabels = controlLabels?.length
-    ? controlLabels.slice(0, controlChildren.length)
+    ? [...controlLabels, ...(isSharing ? ['共享状态'] : [])]
     : controlChildren.map((_, i) => `卡片 ${i + 1}`)
 
   // Keep every panel mounted: changing tools must not restart audio or erase input.
@@ -395,7 +366,7 @@ export function RoomLayout({
   const roomContent = (
     <>
       {/* 顶部工具栏：返回、模式切换、右侧操作在同一行，避免 absolute 重叠 */}
-      <div className="z-30 flex flex-none items-center justify-between gap-2 px-2 pt-3 pb-2 md:px-4 md:pt-4">
+      <div className="z-30 grid flex-none grid-cols-[1fr_auto] items-center gap-2 px-2 pt-2 pb-2 md:flex md:justify-between md:px-4 md:pt-4">
         <Button
           variant="ghost"
           size="sm"
@@ -412,7 +383,7 @@ export function RoomLayout({
         </Button>
 
         {/* 顶部模式切换栏（玻璃拟态 + Monet 主题变量，当前模式高亮 primary 色） */}
-        <div className="flex flex-1 items-center justify-center gap-2 px-2">
+        <div className="col-span-2 row-start-2 flex min-w-0 items-center justify-center gap-2 px-2 md:col-auto md:row-auto md:flex-1">
           {modeSwitchBar}
           {roomMode === 'watch-together' &&
             controlLabels?.includes('一起听') && (
@@ -433,13 +404,13 @@ export function RoomLayout({
             )}
         </div>
 
-        <div className="flex flex-shrink-0 items-center gap-2">
+        <div className="col-start-2 row-start-1 flex flex-shrink-0 items-center gap-2 md:col-auto md:row-auto">
           <button
             onClick={toggleRightPanel}
             aria-label={isRightPanelOpen ? '收起侧栏' : '展开侧栏'}
             aria-expanded={isRightPanelOpen}
             title={isRightPanelOpen ? '收起侧栏' : '展开侧栏'}
-            className="glass hidden h-9 w-9 items-center justify-center rounded-lg border transition-all duration-200 hover:scale-105 active:scale-95 md:flex"
+            className="glass flex h-11 w-11 items-center justify-center rounded-lg border transition-colors"
             style={{
               borderColor: 'var(--md-sys-color-outline-variant)',
               color: isRightPanelOpen
@@ -497,11 +468,15 @@ export function RoomLayout({
           />
         )}
         {/* 右侧面板：移动端为全宽抽屉覆盖在视频上方，桌面端为固定宽度侧边栏 */}
-        {!isNativeFullscreen && !webFullscreen && (
+        {!isNativeFullscreen && (
           <div
+            aria-hidden={!isRightPanelOpen || webFullscreen}
             className={cn(
               'pointer-events-none fixed inset-y-0 right-0 z-[9999] w-full overflow-hidden transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] md:absolute md:top-0 md:h-full md:w-[320px]',
-              isRightPanelOpen ? 'translate-x-0' : 'translate-x-full'
+              (!isRightPanelOpen || webFullscreen) && 'invisible',
+              isRightPanelOpen && !webFullscreen
+                ? 'translate-x-0'
+                : 'translate-x-full'
             )}
             style={{ willChange: 'transform' }}
           >
@@ -544,8 +519,8 @@ export function RoomLayout({
             ref={workspaceRef}
             className="tongmu-room__workspace w-full flex-none mt-2 md:mt-4"
           >
-            <div className="glass-strong room-workspace overflow-hidden rounded-[var(--md-sys-shape-corner)]">
-              <div className="flex items-center gap-2 border-b border-[var(--glass-border)] p-3">
+            <div className="room-workspace overflow-hidden">
+              <div className="flex items-center gap-2 rounded-t-[var(--tm-radius)] border-b border-[var(--tm-border)] bg-[var(--tm-glass-card-bg)] p-2 backdrop-blur-[var(--tm-glass-blur)] sm:p-3">
                 <div
                   role="tablist"
                   aria-label="房间功能"
@@ -578,10 +553,10 @@ export function RoomLayout({
                         document.getElementById(`room-tool-${next}`)?.focus()
                       }}
                       className={cn(
-                        'shrink-0 rounded-xl px-4 py-2.5 text-sm font-medium transition-colors',
+                        'shrink-0 min-h-11 rounded-xl px-4 py-2.5 text-sm font-medium transition-colors',
                         selectedControl === index
-                          ? 'bg-[var(--md-sys-color-primary)] text-[var(--md-sys-color-on-primary)]'
-                          : 'hover:bg-[var(--md-sys-color-surface-container-high)]'
+                          ? 'bg-[var(--tm-brand)] text-[var(--md-sys-color-on-primary)]'
+                          : 'text-[var(--tm-text-secondary)] hover:bg-[var(--tm-soft)] hover:text-[var(--tm-text-primary)]'
                       )}
                     >
                       {mobileCardLabels[index] ??
@@ -589,14 +564,6 @@ export function RoomLayout({
                     </button>
                   ))}
                 </div>
-                <Button
-                  size="sm"
-                  aria-label={isRightPanelOpen ? '收起侧栏' : '展开侧栏'}
-                  onClick={toggleRightPanel}
-                  className="shrink-0 md:hidden"
-                >
-                  <PanelRight className="h-4 w-4" />
-                </Button>
               </div>
               {controlChildren.map((child, index) => (
                 <div
@@ -606,7 +573,7 @@ export function RoomLayout({
                   aria-labelledby={`room-tool-${index}`}
                   hidden={selectedControl !== index}
                   tabIndex={0}
-                  className="h-[440px] min-w-0 p-2 sm:p-4 sm:h-[480px]"
+                  className="min-h-[180px] max-h-[min(68dvh,520px)] min-w-0 overflow-y-auto p-2 sm:p-4"
                 >
                   {child}
                 </div>
