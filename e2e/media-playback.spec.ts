@@ -981,6 +981,26 @@ test('host phone shortcut opens add panel without remounting the playing video',
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
 });
 
+test('host can seek with keyboard on the playback slider', async ({ page }) => {
+  await loginAndCreateRoom(page);
+  await addAndPlay(page, `${FIXTURE_ORIGIN}/normal.mp4`, /Engine: direct/);
+  const video = page.locator('video').first();
+  await video.evaluate((element: HTMLVideoElement) => { element.pause(); element.currentTime = 0; });
+  await video.hover();
+  const slider = page.getByRole('slider', { name: '播放进度', exact: true });
+  await expect.poll(async () => Number(await slider.getAttribute('aria-valuemax'))).toBeGreaterThan(0);
+  await slider.focus();
+  await slider.press('ArrowRight');
+  await expect.poll(() => video.evaluate((element: HTMLVideoElement) => element.currentTime)).toBeGreaterThan(0);
+  await slider.press('Home');
+  await expect.poll(() => video.evaluate((element: HTMLVideoElement) => element.currentTime)).toBeLessThan(0.2);
+  await slider.press('End');
+  await expect.poll(async () => {
+    const { currentTime, duration } = await video.evaluate((element: HTMLVideoElement) => ({ currentTime: element.currentTime, duration: element.duration }));
+    return duration - currentTime;
+  }).toBeLessThan(0.2);
+});
+
 for (const [asset, engine] of [['/hls/master.m3u8', /Engine: hls/], ['/dash/manifest.mpd', /Engine: dash/], ['/normal.mp4?signature=public-playback&expires=9999999999', /Engine: direct/]] as const) {
   test(`public ${asset} plays Direct without gateway media requests`, async ({ page }) => {
     const gateway: string[] = [];

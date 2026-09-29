@@ -414,6 +414,34 @@ export function PlayerControlBar({
     [canControl, videoRef, computeTimeFromClientX, onRequestSeek]
   )
 
+  const handleProgressKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (!controlBarVisible || duration <= 0 || (!canControl && !onRequestSeek)) return
+      const actualTime = canControl ? videoRef.current?.currentTime : currentTime
+      const position = typeof actualTime === 'number' && Number.isFinite(actualTime) ? actualTime : 0
+      let nextTime: number
+      switch (event.key) {
+        case 'ArrowLeft':
+        case 'ArrowDown': nextTime = position - 5; break
+        case 'ArrowRight':
+        case 'ArrowUp': nextTime = position + 5; break
+        case 'Home': nextTime = 0; break
+        case 'End': nextTime = duration; break
+        default: return
+      }
+      event.preventDefault()
+      event.stopPropagation()
+      const target = Math.min(duration, Math.max(0, nextTime))
+      if (canControl) {
+        const video = videoRef.current
+        if (video) video.currentTime = target
+      } else {
+        onRequestSeek?.(target)
+      }
+    },
+    [canControl, controlBarVisible, currentTime, duration, onRequestSeek, videoRef]
+  )
+
   const handlePlayPauseClick = useCallback(() => {
     const video = videoRef.current
     if (!video) return
@@ -520,17 +548,20 @@ export function PlayerControlBar({
         <div
           ref={progressRef}
           role="slider"
-          aria-label={canControl ? '播放进度' : '播放进度（仅房主可拖动）'}
+          aria-label={canControl ? '播放进度' : onRequestSeek ? '播放进度（申请房主跳转）' : '播放进度（仅房主可拖动）'}
           aria-valuemin={0}
           aria-valuemax={duration}
           aria-valuenow={currentTime}
-          aria-disabled={!canControl}
+          aria-valuetext={`${formatDuration(currentTime)} / ${formatDuration(duration)}`}
+          aria-disabled={!controlBarVisible || duration <= 0 || (!canControl && !onRequestSeek)}
+          tabIndex={controlBarVisible && duration > 0 && (canControl || onRequestSeek) ? 0 : -1}
           className={cn(
-            'group relative h-1.5 md:h-2 w-full cursor-pointer overflow-visible rounded-full transition-all',
+            'group relative h-1.5 md:h-2 w-full cursor-pointer overflow-visible rounded-full transition-all focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--md-sys-color-primary)]',
             canControl && 'hover:h-2 md:hover:h-2.5'
           )}
           style={{ backgroundColor: 'rgba(128, 128, 128, 0.4)' }}
           onPointerDown={handleProgressPointerDown}
+          onKeyDown={handleProgressKeyDown}
         >
           {/* 缓冲进度 */}
           <div
