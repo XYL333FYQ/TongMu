@@ -155,6 +155,13 @@ function formatDuration(seconds: number): string {
   return `${m}:${String(s).padStart(2, '0')}`
 }
 
+function mediaResolveMessage(error: unknown): string {
+  const detail = error instanceof Error ? error.message : ''
+  if (/DRM/i.test(detail)) return '检测到 DRM 加密，无法作为普通媒体播放'
+  if (/超时|timeout|deadline/i.test(detail)) return '解析超时，请稍后重试'
+  return '暂时无法解析此链接，请确认链接可访问后重试'
+}
+
 interface MoviePushPanelProps {
   isHost: boolean
 }
@@ -1252,8 +1259,10 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
       }
     } catch (err) {
       if (inputRevision !== resolveRevisionRef.current) return
-      console.error('[MoviePushPanel] add movie error:', err)
-      const errorMessage = err instanceof Error ? err.message : '添加影片失败'
+      const errorMessage = sourceType === 'mp4'
+        ? mediaResolveMessage(err)
+        : err instanceof Error ? err.message : '添加影片失败'
+      console.error('[MoviePushPanel] add movie error:', sourceType === 'mp4' ? errorMessage : err)
       if (sourceType === 'mp4') setMediaResolveError(errorMessage)
       message.error(errorMessage)
     } finally {
@@ -1902,72 +1911,48 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           {sourceType === 'mp4' && mediaDiagnostics && (
             <div className="rounded-[var(--md-sys-shape-corner)] bg-[var(--md-sys-color-surface-container-high)] px-3 py-2 text-[11px] leading-relaxed">
               <Text className="block text-xs font-medium">
-                Playback Diagnostics
+                已识别 {mediaDiagnostics.descriptor.container.toUpperCase()} ·{' '}
+                {mediaDiagnostics.plan.engine === 'blocked'
+                  ? '当前设备无法播放'
+                  : '已找到播放方式'}
               </Text>
-              <Text type="secondary" className="block break-all">
-                来源输入：仅服务器保存
-              </Text>
-              <Text type="secondary" className="block break-all">
-                播放地址: {mediaDiagnostics.descriptor.finalUrl}
-              </Text>
-              <Text type="secondary" className="block break-all">
-                Resolver: {mediaDiagnostics.descriptor.resolver} · Source:{' '}
-                {mediaDiagnostics.descriptor.sourceType} · Detected:{' '}
-                {mediaDiagnostics.descriptor.container.toUpperCase()} · MIME:{' '}
-                {mediaDiagnostics.descriptor.contentType || 'unknown'}
-              </Text>
-              <Text type="secondary" className="block">
-                Range:{' '}
-                {mediaDiagnostics.descriptor.rangeSupported ? 'yes' : 'no'} ·
-                Engine: {mediaDiagnostics.plan.engine} · Mode:{' '}
-                {mediaDiagnostics.plan.mode} · Proxy:{' '}
-                {mediaDiagnostics.plan.proxy ? 'signed handle' : 'no'}
-              </Text>
-              <Text type="secondary" className="block">
-                Video: {mediaDiagnostics.descriptor.videoCodec || 'unknown'} ·
-                Audio: {mediaDiagnostics.descriptor.audioCodec || 'unknown'} ·
-                Resolution:{' '}
-                {mediaDiagnostics.descriptor.width &&
-                mediaDiagnostics.descriptor.height
-                  ? `${mediaDiagnostics.descriptor.width}×${mediaDiagnostics.descriptor.height}`
-                  : 'unknown'}{' '}
-                · Duration:{' '}
-                {mediaDiagnostics.descriptor.duration
-                  ? `${Math.round(mediaDiagnostics.descriptor.duration)}s`
-                  : 'unknown'}
-              </Text>
-              <Text type="secondary" className="block">
-                Video action: {mediaDiagnostics.plan.videoAction} · Audio
-                action: {mediaDiagnostics.plan.audioAction} · DRM:{' '}
-                {mediaDiagnostics.descriptor.drm.protected
-                  ? mediaDiagnostics.descriptor.drm.systems?.join(', ') || 'yes'
-                  : 'no'}
-              </Text>
-              {mediaDiagnostics.descriptor.fallbackReason && (
-                <Text className="block text-[var(--md-sys-color-error)]">
-                  Fallback: {mediaDiagnostics.descriptor.fallbackReason}
+              <details>
+                <summary className="cursor-pointer">技术详情</summary>
+                <Text type="secondary" className="block">播放地址已隐藏</Text>
+                <Text type="secondary" className="block break-all">
+                  Resolver: {mediaDiagnostics.descriptor.resolver} · Source:{' '}
+                  {mediaDiagnostics.descriptor.sourceType} · Detected:{' '}
+                  {mediaDiagnostics.descriptor.container.toUpperCase()}
                 </Text>
-              )}
-              {mediaDiagnostics.descriptor.probe.warnings.map((warning) => (
-                <Text key={warning} type="secondary" className="block">
-                  Probe: {warning}
+                <Text type="secondary" className="block">
+                  Range:{' '}
+                  {mediaDiagnostics.descriptor.rangeSupported ? 'yes' : 'no'} ·
+                  Engine: {mediaDiagnostics.plan.engine} · Mode:{' '}
+                  {mediaDiagnostics.plan.mode} · Proxy:{' '}
+                  {mediaDiagnostics.plan.proxy ? 'signed handle' : 'no'}
                 </Text>
-              ))}
-              {mediaDiagnostics.plan.reasons.map((reason) => (
-                <Text key={reason} type="secondary" className="block">
-                  Plan: {reason}
+                <Text type="secondary" className="block">
+                  Resolution:{' '}
+                  {mediaDiagnostics.descriptor.width &&
+                  mediaDiagnostics.descriptor.height
+                    ? `${mediaDiagnostics.descriptor.width}×${mediaDiagnostics.descriptor.height}`
+                    : 'unknown'}{' '}
+                  · Duration:{' '}
+                  {mediaDiagnostics.descriptor.duration
+                    ? `${Math.round(mediaDiagnostics.descriptor.duration)}s`
+                    : 'unknown'}
                 </Text>
-              ))}
+              </details>
             </div>
           )}
 
           {sourceType === 'mp4' && mediaResolveError && (
             <div className="rounded-[var(--md-sys-shape-corner)] bg-[var(--md-sys-color-error-container)] px-3 py-2 text-[11px] leading-relaxed text-[var(--md-sys-color-on-error-container)]">
               <Text className="block text-xs font-medium">
-                Playback Diagnostics
+                无法解析
               </Text>
               <Text className="block break-all">
-                Error: {mediaResolveError}
+                {mediaResolveError}
               </Text>
             </div>
           )}
@@ -2007,7 +1992,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
               </Text>
               {resolvedMovie.fallbackReason && (
                 <Text className="block text-[var(--md-sys-color-error)]">
-                  Fallback: {resolvedMovie.fallbackReason}
+                  已采用备用播放方案
                 </Text>
               )}
             </div>

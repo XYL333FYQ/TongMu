@@ -378,6 +378,7 @@ async function addAndPlay(
   const input = page.getByPlaceholder(/影片网页、MP4\/MKV/).last();
   await input.fill(url);
   await page.getByRole("button", { name: "添加", exact: true }).last().click();
+  await page.getByText('技术详情').last().click();
   await expect(page.getByText(/Resolver: (?:direct-url|live)/).last()).toBeVisible();
   await expect(page.getByText(engine).last()).toBeVisible();
   const title = decodeURIComponent(new URL(url).pathname.split('/').pop()!);
@@ -620,6 +621,41 @@ test('repeated Enter while a movie POST is pending sends one add request', async
   await expect(page.getByText('影片已添加')).toBeVisible();
   await input.press('Enter');
   expect(postCount).toBe(1);
+});
+
+test('movie diagnostics never render a media capability or raw resolver error', async ({ page }) => {
+  await loginAndCreateRoom(page);
+  await page.getByRole('tab', { name: '添加影片' }).click();
+  const secret = 'private-fixture-token-123';
+  let fail = false;
+  await page.route('**/api/stream/media/resolve', async (route) => {
+    if (fail) {
+      await route.fulfill({ status: 422, contentType: 'application/json', body: JSON.stringify({ success: false, message: `failed https://cdn.example/video.mp4?token=${secret}` }) });
+      return;
+    }
+    const input = (route.request().postDataJSON() as { input: string }).input;
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, descriptor: {
+      input, originalUrl: input, finalUrl: `https://cdn.example/video.mp4?token=${secret}`,
+      title: 'Fixture', sourceType: 'url', resolver: 'direct-url', transport: 'direct', container: 'mp4',
+      headers: {}, drm: { protected: false }, probe: { method: 'resolver', bytesRead: 0, warnings: [] },
+      transportPlan: { candidates: [{ mode: 'DIRECT', url: `https://cdn.example/video.mp4?token=${secret}`, transport: 'progressive', container: 'mp4', requiredPipelines: ['native'] }], reason: 'fixture' },
+    } }) });
+  });
+  await page.route('**/api/rooms/*/movies', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ success: true }) });
+  });
+  const input = page.getByPlaceholder('影片网页、MP4/MKV、M3U8、MPD、FLV 或无后缀媒体 URL');
+  await input.fill(`${FIXTURE_ORIGIN}/normal.mp4`);
+  await page.getByRole('tabpanel', { name: '添加影片' }).getByRole('button', { name: '添加', exact: true }).click();
+  await expect(page.getByText(/已识别 MP4/)).toBeVisible();
+  await page.getByText('技术详情').click();
+  expect(await page.locator('body').textContent()).not.toContain(secret);
+  fail = true;
+  await input.fill(`${FIXTURE_ORIGIN}/extensionless`);
+  await page.getByRole('tabpanel', { name: '添加影片' }).getByRole('button', { name: '添加', exact: true }).click();
+  await expect(page.getByText('暂时无法解析此链接，请确认链接可访问后重试').first()).toBeVisible();
+  expect(await page.locator('body').textContent()).not.toContain(secret);
 });
 
 test("real MP4 and extensionless sources load, play, and seek directly without gateway bytes", async ({
