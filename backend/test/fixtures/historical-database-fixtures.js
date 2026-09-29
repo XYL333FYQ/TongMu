@@ -1,4 +1,5 @@
 const fs = require('node:fs');
+const crypto = require('node:crypto');
 const path = require('node:path');
 const { DataSource } = require('typeorm');
 const { CreateHistoricalBaseline1790000000000 } = require('../../dist/migrations/1790000000000-CreateHistoricalBaseline');
@@ -33,7 +34,13 @@ async function addVoiceColumns(queryRunner) {
   await queryRunner.query(`ALTER TABLE "room" ADD COLUMN "voiceMuted" text NOT NULL DEFAULT ('[]')`);
 }
 
-async function insertRepresentativeData(queryRunner, fixture, configDir) {
+function legacyMovieCiphertext(plain, key = 'zcontrol-movie-secret-key-32b') {
+  const iv = Buffer.alloc(16, 7);
+  const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(key.padEnd(32, '0').slice(0, 32)), iv);
+  return `${iv.toString('hex')}:${Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]).toString('hex')}`;
+}
+
+async function insertRepresentativeData(queryRunner, fixture, configDir, movieSecretKey) {
   const now = '2026-09-15 12:00:00.000';
   const roomExtraColumns = fixture.level >= 3 ? ', "moderators", "voiceMuted"' : '';
   const roomExtraValues = fixture.level >= 3 ? `, '[12]', '[13]'` : '';
@@ -42,7 +49,7 @@ async function insertRepresentativeData(queryRunner, fixture, configDir) {
   await queryRunner.query(`INSERT INTO "session" ("id", "roomId", "socketId", "role", "userId", "startedAt", "endedAt") VALUES (31, '历史 房间 α', 'socket-history', 'sharer', 11, ?, NULL)`, [now]);
   const movieColumns = fixture.level >= 1 ? ', "sourceInput", "mediaDescriptor"' : '';
   const movieValues = fixture.level >= 1 ? `, 'provider://anime/legacy', '{"protocol":"hls","quality":"original"}'` : '';
-  await queryRunner.query(`INSERT INTO "movie" ("id", "roomId", "url", "title", "cover", "source"${movieColumns}, "sourceMeta", "password", "directLink", "wasmEngine", "playsvideoEnabled", "order", "createdAt", "updatedAt") VALUES (41, '历史 房间 α', 'https://media.example/legacy.m3u8', 'Legacy Movie', 'https://img.example/cover.jpg', 'anime'${movieValues}, '{"sourceId":"legacy-anime","episode":1}', 'legacy-movie-ciphertext', 0, 0, 1, 7, ?, ?)`, [now, now]);
+  await queryRunner.query(`INSERT INTO "movie" ("id", "roomId", "url", "title", "cover", "source"${movieColumns}, "sourceMeta", "password", "directLink", "wasmEngine", "playsvideoEnabled", "order", "createdAt", "updatedAt") VALUES (41, '历史 房间 α', 'https://media.example/legacy.m3u8', 'Legacy Movie', 'https://img.example/cover.jpg', 'anime'${movieValues}, '{"sourceId":"legacy-anime","episode":1}', ?, 0, 0, 1, 7, ?, ?)`, [legacyMovieCiphertext('legacy-movie-password', movieSecretKey), now, now]);
   const mounts = [
     [51, 'webdav', 'WebDAV', 'webdav-password', null],
     [52, 'ftp', 'FTP', 'ftp-password', null],
@@ -75,7 +82,7 @@ async function insertRepresentativeData(queryRunner, fixture, configDir) {
   }
 }
 
-async function buildHistoricalFixture({ fixtureId, databasePath, configDir }) {
+async function buildHistoricalFixture({ fixtureId, databasePath, configDir, movieSecretKey }) {
   const fixture = HISTORICAL_FIXTURES.find((item) => item.id === fixtureId);
   if (!fixture) throw new Error(`Unknown historical fixture: ${fixtureId}`);
   fs.mkdirSync(path.dirname(databasePath), { recursive: true });
@@ -98,7 +105,7 @@ async function buildHistoricalFixture({ fixtureId, databasePath, configDir }) {
     if (fixture.level >= 4) await apply(runner, new AddRealtimePersistence1790200000000());
     if (fixture.level >= 5) await apply(runner, new AddMusicPersistence1790300000000());
     if (fixture.level >= 6) await apply(runner, new AddNcmCredential1790400000000());
-    await insertRepresentativeData(runner, fixture, configDir);
+    await insertRepresentativeData(runner, fixture, configDir, movieSecretKey);
     await runner.commitTransaction();
     fs.writeFileSync(databasePath, Buffer.from(dataSource.driver.export()));
   } catch (error) {

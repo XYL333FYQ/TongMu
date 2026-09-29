@@ -24,6 +24,7 @@ const { SecretVault } = require('../dist/services/secret-vault');
 const {
   __setMigrationVaultForTests,
 } = require('../dist/migrations/1790500000000-EncryptLegacyCredentials');
+const { __setMovieMigrationVaultForTests } = require('../dist/migrations/1790600000000-EncryptMoviePasswords');
 const { HISTORICAL_FIXTURES, buildHistoricalFixture } = require('./fixtures/historical-database-fixtures');
 const { sharedSqlJs } = require('./helpers/shared-sqljs');
 
@@ -62,7 +63,9 @@ async function createApplicationDataSource(databasePath) {
 async function upgradeDatabase({ configDir, databasePath, ...options }) {
   const existed = fs.existsSync(databasePath);
   const dataSource = await createApplicationDataSource(databasePath);
-  __setMigrationVaultForTests(new SecretVault({ configDir }));
+  const vault = new SecretVault({ configDir });
+  __setMigrationVaultForTests(vault);
+  __setMovieMigrationVaultForTests(vault);
   try {
     await dataSource.initialize();
     const result = await runDatabaseUpgrade(dataSource, {
@@ -77,6 +80,7 @@ async function upgradeDatabase({ configDir, databasePath, ...options }) {
     throw error;
   } finally {
     __setMigrationVaultForTests();
+    __setMovieMigrationVaultForTests();
   }
 }
 
@@ -103,13 +107,15 @@ async function assertGoldenData(dataSource, configDir, sourceLevel) {
   assert.deepEqual(await dataSource.query('SELECT "id", "roomId", "userId", "role" FROM "session"'), [
     { id: 31, roomId: '历史 房间 α', userId: 11, role: 'sharer' },
   ]);
-  const movies = await dataSource.query('SELECT "id", "roomId", "source", "sourceInput", "mediaDescriptor", "sourceMeta", "order" FROM "movie"');
+  const movies = await dataSource.query('SELECT "id", "roomId", "source", "sourceInput", "mediaDescriptor", "sourceMeta", "password", "order" FROM "movie"');
   assert.equal(movies[0].id, 41);
   assert.equal(movies[0].sourceInput, sourceLevel >= 1 ? 'provider://anime/legacy' : null);
   assert.equal(movies[0].order, 7);
   assert.match(movies[0].sourceMeta, /legacy-anime/);
 
   const vault = new SecretVault({ configDir, createIfMissing: false });
+  assert.match(movies[0].password, /^v1:/);
+  assert.equal(vault.decrypt(movies[0].password), 'legacy-movie-password');
   const mounts = await dataSource.query('SELECT "id", "type", "password", "apiKey" FROM "user_mount" ORDER BY "id"');
   assert.deepEqual(mounts.map((row) => row.id), [51, 52, 53, 54, 55]);
   for (const row of mounts) {
@@ -121,8 +127,8 @@ async function assertGoldenData(dataSource, configDir, sourceLevel) {
   assert.match(bili.cookie, /^v1:/);
   assert.equal(vault.decrypt(bili.cookie), 'SESSDATA=legacy-secret; bili_jct=csrf');
   assert.equal(vault.decrypt(bili.refreshToken), 'legacy-refresh-token');
-  const rawSecrets = JSON.stringify({ mounts, bili });
-  for (const plaintext of ['webdav-password', 'ftp-password', 'openlist-password', 'emby-password', 'jellyfin-password', 'legacy-secret', 'legacy-refresh-token']) {
+  const rawSecrets = JSON.stringify({ movies, mounts, bili });
+  for (const plaintext of ['legacy-movie-password', 'webdav-password', 'ftp-password', 'openlist-password', 'emby-password', 'jellyfin-password', 'legacy-secret', 'legacy-refresh-token']) {
     assert.equal(rawSecrets.includes(plaintext), false);
   }
 
@@ -217,7 +223,7 @@ test('current synchronize-created V2 adopts only after exact fingerprint and rep
   const firstBackup = first.result.backupDir;
   try {
     assert.equal(first.result.baselineAdopted, true);
-    assert.deepEqual(first.result.executed, ['EncryptLegacyCredentials1790500000000']);
+    assert.deepEqual(first.result.executed, ['EncryptLegacyCredentials1790500000000', 'EncryptMoviePasswords1790600000000']);
   } finally {
     await first.dataSource.destroy();
   }
@@ -335,6 +341,53 @@ test('wrong or missing SecretVault key fails without generating a replacement', 
       if (mode === 'missing') assert.equal(fs.existsSync(keyPath), false);
     });
   }
+});
+
+test('wrong legacy movie key preserves the backup and original ciphertext for retry', async (t) => {
+  const paths = temporaryConfig(t, 'legacy movie key');
+  const legacyKey = 'fixture-custom-movie-secret-key';
+  await buildHistoricalFixture({ fixtureId: 'tongmu-71ba034', ...paths, movieSecretKey: legacyKey });
+  const originalKey = process.env.MOVIE_SECRET_KEY;
+  try {
+    delete process.env.MOVIE_SECRET_KEY;
+    const original = await rawDatabase(paths.databasePath);
+    let before;
+    try { before = (await original.query('SELECT "password" FROM "movie" WHERE "id" = 41'))[0].password; }
+    finally { await original.destroy(); }
+    await assert.rejects(upgradeDatabase(paths),
+      (error) => error instanceof DatabaseUpgradeError && error.code === 'DATABASE_MIGRATION_FAILED');
+    const failed = await rawDatabase(paths.databasePath);
+    try {
+      assert.equal((await failed.query('SELECT "password" FROM "movie" WHERE "id" = 41'))[0].password, before);
+    } finally { await failed.destroy(); }
+    assert.equal(fs.readdirSync(path.join(paths.configDir, 'backups')).filter((name) => !name.startsWith('.')).length, 1);
+    process.env.MOVIE_SECRET_KEY = legacyKey;
+    const retry = await upgradeDatabase(paths);
+    try { await assertGoldenData(retry.dataSource, paths.configDir, 0); }
+    finally { await retry.dataSource.destroy(); }
+  } finally {
+    if (originalKey === undefined) delete process.env.MOVIE_SECRET_KEY;
+    else process.env.MOVIE_SECRET_KEY = originalKey;
+  }
+});
+
+test('movie-only SecretVault password requires its original key at startup', async (t) => {
+  const paths = temporaryConfig(t, 'movie-only key');
+  const fresh = await upgradeDatabase(paths);
+  await fresh.dataSource.destroy();
+  const vault = new SecretVault({ configDir: paths.configDir });
+  const raw = await rawDatabase(paths.databasePath);
+  try {
+    await raw.query('INSERT INTO "room" ("roomId") VALUES (?)', ['fixture-room']);
+    await raw.query('INSERT INTO "movie" ("roomId", "url", "title", "password") VALUES (?, ?, ?, ?)',
+      ['fixture-room', 'https://media.example/movie.mp4', 'Movie', vault.encrypt('movie-only-secret')]);
+    persistRawDatabase(raw, paths.databasePath);
+  } finally { await raw.destroy(); }
+  const keyPath = path.join(paths.configDir, 'secret-vault.json');
+  fs.unlinkSync(keyPath);
+  await assert.rejects(upgradeDatabase(paths),
+    (error) => error instanceof DatabaseUpgradeError && error.code === 'DATABASE_SECRET_KEY_INVALID');
+  assert.equal(fs.existsSync(keyPath), false);
 });
 
 test('backup failure blocks migration and migration failure is retryable from one verified backup', async (t) => {

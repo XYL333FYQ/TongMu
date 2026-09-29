@@ -10,6 +10,8 @@ const { normalizePlayUrlData } = require('../dist/services/bilibili/playurl');
 const { videoIdentityParams } = require('../dist/services/bilibili/video');
 const { extractBvid, resolveBilibiliVideo } = require('../dist/services/bilibili/resolver');
 const { movieService } = require('../dist/modules/movie/movie.service');
+const { moviePasswordTransformer } = require('../dist/entities/Movie');
+const { SecretVault } = require('../dist/services/secret-vault');
 
 const media = { finalUrl: 'https://cdn.example/movie.mp4', input: 'https://page.example/?token=private', originalUrl: 'https://page.example/?cookie=private', transport: 'direct', container: 'mp4', resolver: 'direct-url', sourceType: 'url', drm: { protected: false }, probe: { warnings: [], bytesRead: 0, method: 'resolver' } };
 test('public MP4, extensionless, HLS, DASH and public signed capabilities are direct eligible', () => {
@@ -27,6 +29,17 @@ test('Movie DTO and descriptors omit private refresh inputs, credentials and own
   assert.equal(dto.path, null);
   assert.match(dto.url, /^\/api\/stream\/media\//);
   assert.equal('playbackPlan' in dto.mediaDescriptor, false);
+});
+test('new movie passwords use authenticated envelopes and reject legacy or tampered reads', () => {
+  const vault = new SecretVault({ masterKey: Buffer.alloc(32, 7) });
+  const transformer = moviePasswordTransformer(vault);
+  const first = transformer.to('private-movie-password');
+  const second = transformer.to('private-movie-password');
+  assert.match(first, /^v1:/);
+  assert.notEqual(first, second);
+  assert.equal(transformer.from(first), 'private-movie-password');
+  assert.throws(() => transformer.from(first.slice(0, -1) + (first.endsWith('A') ? 'B' : 'A')));
+  assert.throws(() => transformer.from('07070707070707070707070707070707:00'));
 });
 test('continuous socket session renews expired grant, disconnected session cannot renew', async () => {
   const now = Date.now;

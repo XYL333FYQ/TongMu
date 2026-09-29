@@ -11,39 +11,44 @@ import {
 } from 'typeorm';
 import crypto from 'crypto';
 import { Room } from './Room';
-
-const CRYPTO_KEY = process.env.MOVIE_SECRET_KEY || 'zcontrol-movie-secret-key-32b';
+import { isSecretVaultEnvelope, secretVault, SecretVaultError, type SecretVault } from '../services/secret-vault';
 
 function getKeyBuffer(): Buffer {
-  return Buffer.from(CRYPTO_KEY.padEnd(32, '0').slice(0, 32));
+  const legacyKey = process.env.MOVIE_SECRET_KEY || 'zcontrol-movie-secret-key-32b';
+  return Buffer.from(legacyKey.padEnd(32, '0').slice(0, 32));
 }
 
-export function encryptMovieField(plain: string): string {
-  const iv = crypto.randomBytes(16);
-  const cipher = crypto.createCipheriv('aes-256-cbc', getKeyBuffer(), iv);
-  const encrypted = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]);
-  return iv.toString('hex') + ':' + encrypted.toString('hex');
-}
-
+/** Legacy AES-CBC read path, retained only for one-time migration. */
 export function decryptMovieField(encrypted: string): string {
+  if (!/^[0-9a-f]{32}:(?:[0-9a-f]{32})+$/i.test(encrypted)) {
+    throw new SecretVaultError('旧影片密码格式无效；拒绝猜测原文');
+  }
   const [ivHex, dataHex] = encrypted.split(':');
-  if (!ivHex || !dataHex) return '';
-  const iv = Buffer.from(ivHex, 'hex');
-  const decipher = crypto.createDecipheriv('aes-256-cbc', getKeyBuffer(), iv);
-  const decrypted = Buffer.concat([decipher.update(Buffer.from(dataHex, 'hex')), decipher.final()]);
-  return decrypted.toString('utf8');
+  try {
+    const iv = Buffer.from(ivHex, 'hex');
+    const decipher = crypto.createDecipheriv('aes-256-cbc', getKeyBuffer(), iv);
+    const decrypted = Buffer.concat([decipher.update(Buffer.from(dataHex, 'hex')), decipher.final()]);
+    return new TextDecoder('utf-8', { fatal: true }).decode(decrypted);
+  } catch {
+    throw new SecretVaultError('旧影片密码无法解密；请检查 MOVIE_SECRET_KEY');
+  }
 }
 
-const secretTransformer: ValueTransformer = {
-  to: (value: unknown) => {
-    if (typeof value !== 'string' || !value) return value;
-    return encryptMovieField(value);
-  },
-  from: (value: unknown) => {
-    if (typeof value !== 'string' || !value) return value;
-    return decryptMovieField(value);
-  },
-};
+export function moviePasswordTransformer(vault: Pick<SecretVault, 'encrypt' | 'decrypt'> = secretVault): ValueTransformer {
+  return {
+    to: (value: unknown) => {
+      if (typeof value !== 'string' || !value) return value;
+      return vault.encrypt(value);
+    },
+    from: (value: unknown) => {
+      if (typeof value !== 'string' || !value) return value;
+      if (!isSecretVaultEnvelope(value)) throw new SecretVaultError('影片密码尚未完成迁移');
+      return vault.decrypt(value);
+    },
+  };
+}
+
+const secretTransformer = moviePasswordTransformer();
 
 @Entity()
 export class Movie {

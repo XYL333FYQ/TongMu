@@ -78,6 +78,12 @@ async function validateSecretCoupling(dataSource: DataSource, backupDir: string)
       if (isSecretVaultEnvelope(row.apiKey)) envelopes.push(String(row.apiKey));
     }
   }
+  if (names.has('movie')) {
+    const rows = await dataSource.query('SELECT "password" FROM "movie"');
+    for (const row of rows as Array<Record<string, unknown>>) {
+      if (isSecretVaultEnvelope(row.password)) envelopes.push(String(row.password));
+    }
+  }
   if (names.has('ncm_credentials')) {
     const rows = await dataSource.query('SELECT "credentialEnvelope" FROM "ncm_credentials"');
     for (const row of rows as Array<Record<string, unknown>>) {

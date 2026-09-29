@@ -25,6 +25,7 @@ import { AddRealtimePersistence1790200000000 } from './migrations/1790200000000-
 import { AddMusicPersistence1790300000000 } from './migrations/1790300000000-AddMusicPersistence';
 import { AddNcmCredential1790400000000 } from './migrations/1790400000000-AddNcmCredential';
 import { EncryptLegacyCredentials1790500000000 } from './migrations/1790500000000-EncryptLegacyCredentials';
+import { EncryptMoviePasswords1790600000000 } from './migrations/1790600000000-EncryptMoviePasswords';
 
 function persistSqlJsDatabase(database: Uint8Array): void {
   // sql.js invokes this after each committed write. Keep the callback
@@ -64,6 +65,7 @@ export const AppDataSource = new DataSource({
     AddMusicPersistence1790300000000,
     AddNcmCredential1790400000000,
     EncryptLegacyCredentials1790500000000,
+    EncryptMoviePasswords1790600000000,
   ],
   subscribers: [],
 });

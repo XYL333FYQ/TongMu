@@ -44,6 +44,7 @@ export const ORDERED_MIGRATIONS = [
   { timestamp: 1790300000000, name: 'AddMusicPersistence1790300000000', schema: true },
   { timestamp: 1790400000000, name: 'AddNcmCredential1790400000000', schema: true },
   { timestamp: 1790500000000, name: 'EncryptLegacyCredentials1790500000000', schema: false },
+  { timestamp: 1790600000000, name: 'EncryptMoviePasswords1790600000000', schema: false },
 ] as const;
 
 interface MigrationRow {
@@ -212,6 +213,12 @@ async function inspectSecretEnvelopes(dataSource: DataSource): Promise<string[]>
       }
     }
   }
+  if (tables.has('movie')) {
+    const rows = await dataSource.query('SELECT "password" FROM "movie"');
+    for (const row of rows as Array<Record<string, unknown>>) {
+      if (isSecretVaultEnvelope(row.password)) values.push(String(row.password));
+    }
+  }
   if (tables.has('ncm_credentials')) {
     const rows = await dataSource.query('SELECT "credentialEnvelope" FROM "ncm_credentials"');
     for (const row of rows as Array<Record<string, unknown>>) {
@@ -246,6 +253,12 @@ async function assertNoLegacyCredentialStorage(dataSource: DataSource): Promise<
     for (const row of rows as Array<Record<string, unknown>>) {
       if (row.password && !isSecretVaultEnvelope(row.password)) legacyLocations.push(`user_mount:${row.id}:password`);
       if (row.apiKey && !isSecretVaultEnvelope(row.apiKey)) legacyLocations.push(`user_mount:${row.id}:apiKey`);
+    }
+  }
+  if (tables.has('movie')) {
+    const rows = await dataSource.query('SELECT "id", "password" FROM "movie"');
+    for (const row of rows as Array<Record<string, unknown>>) {
+      if (row.password && !isSecretVaultEnvelope(row.password)) legacyLocations.push(`movie:${row.id}:password`);
     }
   }
   if (legacyLocations.length > 0) {

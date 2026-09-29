@@ -16,6 +16,9 @@ edit SQLite manually.
    - uploads and any certificates/config files you rely on.
 4. Keep the database and `secret-vault.json` together. A database containing
    encrypted provider credentials cannot be recovered with a different key.
+5. If the old installation set `MOVIE_SECRET_KEY`, keep that exact value for the
+   first upgraded start and for any later restore of a pre-upgrade backup.
+   Legacy movie passwords use it; new writes use `secret-vault.json`.
 
 Do not delete the old installation or its backup until the upgraded server has
 been tested with your real rooms, users and providers.
@@ -29,7 +32,8 @@ Before opening the HTTP port, TongMu:
 3. identifies the exact supported historical schema;
 4. validates the existing SecretVault key when encrypted credentials exist;
 5. creates a small automatic pre-migration backup under `config/backups/`;
-6. runs the committed migrations and credential conversion in a transaction;
+6. runs the committed migrations and credential conversion in a transaction,
+   including legacy movie passwords from AES-CBC to SecretVault;
 7. checks the final schema, data constraints, key and migration history;
 8. starts the web server only if every check passes.
 
@@ -47,7 +51,8 @@ code such as:
 - `DATABASE_SECRET_KEY_INVALID`: the key is missing/wrong or an NCM credential
   is not a supported envelope;
 - `DATABASE_MIGRATION_FAILED`: migration rolled back; the message identifies
-  the backup;
+  the backup. If it says a legacy movie password cannot be decrypted, check
+  the previous installation's `MOVIE_SECRET_KEY` before retrying;
 - `INCOMPLETE_DATABASE_MIGRATION`: a crash marker and the live schema do not
   form a safe automatic retry state.
 
@@ -83,6 +88,11 @@ Restore refuses an unsafe path, an active server lock, a missing/tampered file,
 a bad manifest/hash, a corrupt database, a fingerprint mismatch, or a missing/
 wrong SecretVault key. It stages replacements and rolls back the original live
 files if a replace step fails.
+
+After migration, verify a real password-protected movie stream. Legacy AES-CBC
+did not authenticate its plaintext, so an incorrect old key cannot be detected
+with absolute certainty from ciphertext alone. Keep the pre-upgrade backup until
+that playback check succeeds.
 
 ## Docker notes
 
