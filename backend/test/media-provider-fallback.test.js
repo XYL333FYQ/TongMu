@@ -6,6 +6,8 @@ const { LegacyResolverAdapter } = require('../dist/services/media/providers/lega
 const { GenericWebResolver } = require('../dist/services/media/resolvers/generic-web');
 const { DirectUrlResolver } = require('../dist/services/media/resolvers/direct-url');
 const { ResolverNotApplicableError } = require('../dist/services/media/types');
+const { MediaResolutionError } = require('../dist/services/media/resolution-error');
+const { ProxyTargetError } = require('../dist/services/proxy/safe-fetch');
 
 const mp4 = Buffer.from([0, 0, 0, 12, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d]);
 const adapter = (id, resolver) => new LegacyResolverAdapter({ id, sourceKinds: ['web-page'], resolver });
@@ -20,6 +22,8 @@ async function withHttpFixture(work) {
     if (request.url === '/page') {
       response.setHeader('Content-Type', 'text/html');
       response.end('<!doctype html><title>Dynamic fixture</title><script>fetch("/movie.mp4")</script>');
+    } else if (request.url === '/denied') {
+      response.statusCode = 403; response.end();
     } else if (request.url === '/movie.mp4') {
       response.setHeader('Content-Type', 'video/mp4');
       response.setHeader('Content-Length', mp4.length);
@@ -72,7 +76,8 @@ test('browserSniff=false reaches the adapter as false and does not produce brows
       },
     });
     const registry = new MediaProviderRegistry([adapter('generic-web', new GenericWebResolver()), browser]);
-    await assert.rejects(registry.resolveProvider(`${origin}/page`, context(false), {}), /browser sniff not requested/);
+    await assert.rejects(registry.resolveProvider(`${origin}/page`, context(false), {}),
+      (error) => error instanceof MediaResolutionError && error.code === 'NO_MEDIA_FOUND');
     assert.equal(observed, false);
   });
 });
@@ -93,9 +98,29 @@ test('cancellation and expired deadline stop fallback before Browser', async () 
   const controller = new AbortController();
   const cancelled = registry.resolveProvider('https://example.com/page', context(true, { signal: controller.signal }), {});
   setTimeout(() => controller.abort(), 1);
-  await assert.rejects(cancelled, /cancelled/);
-  await assert.rejects(registry.resolveProvider('https://example.com/page', context(true, { deadline: Date.now() + 1 }), {}), /deadline/);
+  await assert.rejects(cancelled, (error) => error instanceof MediaResolutionError && error.code === 'CANCELLED');
+  await assert.rejects(registry.resolveProvider('https://example.com/page', context(true, { deadline: Date.now() + 1 }), {}),
+    (error) => error instanceof MediaResolutionError && error.code === 'TIMEOUT');
   assert.equal(browserCalls, 0);
+});
+
+test('known access and safety failures stop fallback with stable codes', async () => {
+  await withHttpFixture(async (origin) => {
+    let browserCalls = 0;
+    const browser = adapter('browser', { name: 'browser', canHandle: () => true,
+      resolve: async () => { browserCalls++; throw new Error('unexpected browser'); },
+    });
+    const registry = new MediaProviderRegistry([adapter('generic-web', new GenericWebResolver()), browser]);
+    await assert.rejects(registry.resolveProvider(`${origin}/denied`, context(true), {}),
+      (error) => error instanceof MediaResolutionError && error.code === 'ACCESS_DENIED' && !error.retryable);
+    assert.equal(browserCalls, 0);
+    const blocked = adapter('generic-web', { name: 'generic-web', canHandle: () => true,
+      resolve: async () => { throw new ProxyTargetError('blocked fixture'); },
+    });
+    await assert.rejects(new MediaProviderRegistry([blocked, browser]).resolveProvider(`${origin}/page`, context(true), {}),
+      (error) => error instanceof MediaResolutionError && error.code === 'TARGET_BLOCKED' && !error.retryable);
+    assert.equal(browserCalls, 0);
+  });
 });
 
 test('existing direct media succeeds without invoking GenericWeb or Browser', async () => {

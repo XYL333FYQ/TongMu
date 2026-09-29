@@ -222,6 +222,45 @@ export interface ResolveMediaInputOptions {
   allowQualityChangingTranscode?: boolean
 }
 
+export type MediaResolveCode =
+  | 'NO_MEDIA_FOUND' | 'ACCESS_DENIED' | 'TARGET_BLOCKED' | 'BROWSER_BUSY'
+  | 'CANCELLED' | 'TIMEOUT' | 'RESOLVE_FAILED' | 'DRM_UNSUPPORTED'
+
+const mediaResolveCodes = new Set<MediaResolveCode>([
+  'NO_MEDIA_FOUND', 'ACCESS_DENIED', 'TARGET_BLOCKED', 'BROWSER_BUSY',
+  'CANCELLED', 'TIMEOUT', 'RESOLVE_FAILED', 'DRM_UNSUPPORTED',
+])
+
+const mediaResolveMessages: Record<MediaResolveCode, string> = {
+  NO_MEDIA_FOUND: '未找到可验证的媒体资源',
+  ACCESS_DENIED: '源站拒绝访问该页面',
+  TARGET_BLOCKED: '该地址不符合安全访问规则',
+  BROWSER_BUSY: '浏览器解析暂时繁忙，请稍后重试',
+  CANCELLED: '媒体解析已取消',
+  TIMEOUT: '媒体解析超时，请稍后重试',
+  RESOLVE_FAILED: '暂时无法解析此链接，请稍后重试',
+  DRM_UNSUPPORTED: '检测到 DRM 加密，当前无法作为普通媒体播放',
+}
+
+export class MediaResolveError extends Error {
+  readonly code: MediaResolveCode | undefined
+  readonly retryable: boolean
+  readonly requestId?: string
+
+  constructor(
+    code: MediaResolveCode | undefined,
+    message: string,
+    retryable: boolean,
+    requestId?: string
+  ) {
+    super(message)
+    this.name = 'MediaResolveError'
+    this.code = code
+    this.retryable = retryable
+    this.requestId = requestId
+  }
+}
+
 export async function resolveMediaInput(
   input: string,
   options: ResolveMediaInputOptions = {}
@@ -258,13 +297,24 @@ export async function resolveMediaInput(
   })
   const data = await safeJson<{
     success?: boolean
+    code?: string
     message?: string
+    retryable?: boolean
+    requestId?: string
     descriptor?: MediaDescriptor
     sourceReference?: string
     viability?: { removed?: Array<{ mode: string; reason: string }> }
   }>(response, {})
   if (!response.ok || !data.success || !data.descriptor) {
-    throw new Error(data.message || '媒体解析失败')
+    const code = data.code && mediaResolveCodes.has(data.code as MediaResolveCode)
+      ? data.code as MediaResolveCode
+      : undefined
+    throw new MediaResolveError(
+      code,
+      code ? mediaResolveMessages[code] : '媒体解析失败',
+      data.retryable === true,
+      typeof data.requestId === 'string' ? data.requestId : response.headers.get('X-Request-Id') || undefined
+    )
   }
   const result: ResolvedMedia = {
     descriptor: {

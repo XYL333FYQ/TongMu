@@ -3,6 +3,7 @@ import { fetchWithProxyPolicy } from '../../proxy/safe-fetch';
 import { probeMediaUrl } from '../probe';
 import type { MediaCandidate, MediaDescriptor, ResolverContext, SourceResolver } from '../types';
 import { ResolverNotApplicableError } from '../types';
+import { MediaResolutionError } from '../resolution-error';
 import { scoreMediaCandidate } from '../candidates';
 
 const MAX_HTML_BYTES = 1024 * 1024;
@@ -67,7 +68,11 @@ export class GenericWebResolver implements SourceResolver {
         method: 'GET', headers: { Accept: 'text/html,application/xhtml+xml', 'User-Agent': 'Mozilla/5.0 ZViewer/2.0' },
         signal: controller.signal,
       }, 'public-only');
-      if (!response.ok) { await response.body?.cancel(); throw new Error(`网页加载失败（HTTP ${response.status}）`); }
+      if (!response.ok) {
+        await response.body?.cancel();
+        if (response.status === 401 || response.status === 403) throw new MediaResolutionError('ACCESS_DENIED');
+        throw new Error(`网页加载失败（HTTP ${response.status}）`);
+      }
       pageUrl = response.url || input;
       const contentType = response.headers.get('content-type') ?? '';
       if (!contentType.includes('html') && !contentType.includes('json') && !contentType.includes('text')) {

@@ -4,6 +4,7 @@ import { DirectUrlResolver } from '../services/media/resolvers/direct-url';
 import { GenericWebResolver } from '../services/media/resolvers/generic-web';
 import { LegacyResolverAdapter } from '../services/media/providers/legacy-resolver-adapter';
 import { MediaProviderRegistry, providerContextFromResolverContext } from '../services/media/providers/registry';
+import { MediaResolutionError } from '../services/media/resolution-error';
 import { probeMediaUrl } from '../services/media/probe';
 import { ResolverNotApplicableError } from '../services/media/types';
 
@@ -85,7 +86,7 @@ export async function runBrowserResolverContainerSmoke(): Promise<Record<string,
       let disabledFailedClosed = false;
       try { await resolve(`${origin}/browser-page`, false); }
       catch (error) {
-        if (!(error instanceof Error) || !error.message.includes('浏览器嗅探未请求')) throw error;
+        if (!(error instanceof MediaResolutionError) || error.code !== 'NO_MEDIA_FOUND') throw error;
         disabledFailedClosed = true;
       }
       if (!disabledFailedClosed) throw new Error('browserSniff=false unexpectedly resolved dynamic media');

@@ -63,6 +63,7 @@ import { useAuthStore } from '@/store/authStore'
 import { useSystemSettingsStore } from '@/store/systemSettingsStore'
 import { cn } from '@/lib/utils'
 import {
+  MediaResolveError,
   resolveMediaInput,
   stripTransientMediaDescriptor,
   toBilibiliResolvedSource,
@@ -156,9 +157,18 @@ function formatDuration(seconds: number): string {
 }
 
 function mediaResolveMessage(error: unknown): string {
-  const detail = error instanceof Error ? error.message : ''
-  if (/DRM/i.test(detail)) return '检测到 DRM 加密，无法作为普通媒体播放'
-  if (/超时|timeout|deadline/i.test(detail)) return '解析超时，请稍后重试'
+  if (error instanceof MediaResolveError) {
+    switch (error.code) {
+      case 'DRM_UNSUPPORTED': return '检测到 DRM 加密，无法作为普通媒体播放'
+      case 'NO_MEDIA_FOUND': return '网页中未找到可播放的视频，请检查链接或尝试其他来源'
+      case 'ACCESS_DENIED': return '源站拒绝访问该页面，请确认你有访问权限'
+      case 'TARGET_BLOCKED': return '该地址不符合安全访问规则，请检查链接'
+      case 'BROWSER_BUSY': return '浏览器解析繁忙，请稍后重试'
+      case 'CANCELLED': return '解析已取消，请重试'
+      case 'TIMEOUT': return '解析超时，请稍后重试'
+      default: break
+    }
+  }
   return '暂时无法解析此链接，请确认链接可访问后重试'
 }
 

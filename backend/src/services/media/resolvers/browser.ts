@@ -2,6 +2,7 @@ import { assertPublicUrl } from '../../proxy/safe-fetch';
 import { probeMediaUrl } from '../probe';
 import type { MediaCandidate, MediaDescriptor, ResolverContext, SourceResolver } from '../types';
 import { ResolverNotApplicableError } from '../types';
+import { MediaResolutionError } from '../resolution-error';
 import { scoreMediaCandidate } from '../candidates';
 import { createBrowserSafeProxy } from './browser-safe-proxy';
 
@@ -88,7 +89,7 @@ export class BrowserResolver implements SourceResolver {
     try { playwright = this.runtime?.playwright ?? require('playwright') as typeof playwright; }
     catch { throw new Error('Browser Resolver 未安装 Playwright/Chromium'); }
     const limit = Math.max(1, Number(process.env.MEDIA_BROWSER_MAX_CONCURRENCY) || 1);
-    if (activeBrowsers >= limit) throw new Error('Browser Resolver 正忙，请稍后重试');
+    if (activeBrowsers >= limit) throw new MediaResolutionError('BROWSER_BUSY');
     activeBrowsers += 1;
     let browser: any;
     let pageContext: any;

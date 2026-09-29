@@ -1,4 +1,5 @@
 import { redactMediaError } from '../../services/media/redact';
+import { MediaResolutionError } from '../../services/media/resolution-error';
 import {
   canDirect,
   publicMetadata,
@@ -905,20 +906,29 @@ router.post('/media/resolve', authenticateToken, mediaResolveLimiter, async (req
       result: 'success',
     });
   } catch (error) {
-    const rawCode = error && typeof error === 'object' && 'code' in error
-      ? String((error as { code?: unknown }).code ?? '')
-      : '';
-    const result = /TIMEOUT|ABORT/i.test(rawCode) || (error instanceof Error && error.name === 'AbortError')
+    const resolutionError = error instanceof MediaResolutionError
+      ? error
+      : new MediaResolutionError(resolveController.signal.aborted
+        ? (Date.now() >= resolveDeadline ? 'TIMEOUT' : 'CANCELLED')
+        : 'RESOLVE_FAILED');
+    const result = resolutionError.code === 'TIMEOUT' || resolutionError.code === 'CANCELLED'
       ? 'timeout'
-      : /AUTH|CREDENTIAL|LOGIN|TOKEN/i.test(rawCode)
+      : resolutionError.code === 'ACCESS_DENIED'
         ? 'auth_error'
-        : /INVALID|MALFORMED/i.test(rawCode)
+        : resolutionError.code === 'TARGET_BLOCKED'
           ? 'invalid'
-          : /UNAVAILABLE|NOT_FOUND|UNSUPPORTED/i.test(rawCode)
+          : resolutionError.code === 'NO_MEDIA_FOUND' || resolutionError.code === 'BROWSER_BUSY'
             ? 'unavailable'
             : 'internal';
     metrics.increment('media_resolve_total', { provider_type: 'unknown', result });
-    res.status(422).json({ success: false, message: redactMediaError(error) });
+    const requestId = res.getHeader('X-Request-Id');
+    res.status(422).json({
+      success: false,
+      code: resolutionError.code,
+      message: resolutionError.message,
+      retryable: resolutionError.retryable,
+      ...(typeof requestId === 'string' ? { requestId } : {}),
+    });
   } finally {
     clearTimeout(resolveTimer);
     req.off('aborted', abortResolve);

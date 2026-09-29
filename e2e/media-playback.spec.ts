@@ -627,9 +627,16 @@ test('movie diagnostics never render a media capability or raw resolver error', 
   await loginAndCreateRoom(page);
   await page.getByRole('tab', { name: '添加影片' }).click();
   const secret = 'private-fixture-token-123';
-  let fail = false;
+  let failMode: 'none' | 'unknown' | 'denied' = 'none';
   await page.route('**/api/stream/media/resolve', async (route) => {
-    if (fail) {
+    if (failMode !== 'none') {
+      if (failMode === 'denied') {
+        await route.fulfill({ status: 422, contentType: 'application/json', body: JSON.stringify({
+          success: false, code: 'ACCESS_DENIED', retryable: false, requestId: 'fixture-request-id',
+          message: `failed https://cdn.example/video.mp4?token=${secret}`,
+        }) });
+        return;
+      }
       await route.fulfill({ status: 422, contentType: 'application/json', body: JSON.stringify({ success: false, message: `failed https://cdn.example/video.mp4?token=${secret}` }) });
       return;
     }
@@ -651,11 +658,42 @@ test('movie diagnostics never render a media capability or raw resolver error', 
   await expect(page.getByText(/已识别 MP4/)).toBeVisible();
   await page.getByText('技术详情').click();
   expect(await page.locator('body').textContent()).not.toContain(secret);
-  fail = true;
+  failMode = 'unknown';
   await input.fill(`${FIXTURE_ORIGIN}/extensionless`);
   await page.getByRole('tabpanel', { name: '添加影片' }).getByRole('button', { name: '添加', exact: true }).click();
   await expect(page.getByText('暂时无法解析此链接，请确认链接可访问后重试').first()).toBeVisible();
   expect(await page.locator('body').textContent()).not.toContain(secret);
+  failMode = 'denied';
+  await input.fill(`${FIXTURE_ORIGIN}/denied`);
+  await page.getByRole('tabpanel', { name: '添加影片' }).getByRole('button', { name: '添加', exact: true }).click();
+  await expect(page.getByText('源站拒绝访问该页面，请确认你有访问权限').first()).toBeVisible();
+  expect(await page.locator('body').textContent()).not.toContain(secret);
+  const apiErrorMessage = await page.evaluate(async (sourceInput) => {
+    // @ts-ignore Vite serves application modules for the browser integration test.
+    const { resolveMediaInput } = await import('/src/modules/media/mediaApi.ts');
+    try { await resolveMediaInput(sourceInput); return ''; }
+    catch (error) { return error instanceof Error ? error.message : String(error); }
+  }, `${FIXTURE_ORIGIN}/denied`);
+  expect(apiErrorMessage).not.toContain(secret);
+});
+
+test('real media resolve failure exposes a safe code and request ID to the API client', async ({ page }) => {
+  await loginRoot(page);
+  const failure = await page.evaluate(async (input) => {
+    // @ts-ignore Vite serves application modules for the browser integration test.
+    const { resolveMediaInput } = await import('/src/modules/media/mediaApi.ts');
+    try {
+      await resolveMediaInput(input);
+      return { success: true };
+    } catch (error) {
+      const resolved = error as { name?: string; code?: string; retryable?: boolean; requestId?: string; message?: string };
+      return { success: false, name: resolved.name, code: resolved.code,
+        retryable: resolved.retryable, requestId: resolved.requestId, message: resolved.message };
+    }
+  }, `${FIXTURE_ORIGIN}/not-a-media-page`);
+  expect(failure).toMatchObject({ success: false, name: 'MediaResolveError', code: 'RESOLVE_FAILED', retryable: true });
+  expect(failure.requestId).toMatch(/^[a-zA-Z0-9-]+$/);
+  expect(failure.message).not.toContain(FIXTURE_ORIGIN);
 });
 
 test("real MP4 and extensionless sources load, play, and seek directly without gateway bytes", async ({

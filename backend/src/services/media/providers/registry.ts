@@ -1,9 +1,10 @@
-import { fetchWithProxyPolicy } from '../../proxy/safe-fetch';
+import { fetchWithProxyPolicy, ProxyTargetError } from '../../proxy/safe-fetch';
 import { BilibiliResolver } from '../resolvers/bilibili';
 import { BrowserResolver } from '../resolvers/browser';
 import { DirectUrlResolver } from '../resolvers/direct-url';
 import { GenericWebResolver } from '../resolvers/generic-web';
 import { ResolverNotApplicableError, type MediaDescriptor, type ResolverContext } from '../types';
+import { MediaResolutionError } from '../resolution-error';
 import { legacyPlaybackClientProfile, type PlaybackClientProfileV1 } from '../playback-profile';
 import { LegacyResolverAdapter } from './legacy-resolver-adapter';
 import { FtpProvider, LocalFileProvider, OpenListProvider, WebDavProvider } from './storage-providers';
@@ -66,7 +67,7 @@ export class MediaProviderRegistry {
     context: ProviderContext,
     privateContext: ProviderPrivateContext,
   ): Promise<ProviderResolution> {
-    const failures: string[] = [];
+    let hadUnexpectedFailure = false;
     for (const provider of this.matching(input)) {
       try {
         assertProviderActive(context);
@@ -76,11 +77,15 @@ export class MediaProviderRegistry {
         if (!available.available) throw new Error(available.reason ?? 'provider unavailable');
         return await provider.resolve(context, normalized, privateContext);
       } catch (error) {
-        failures.push(`${provider.id}: ${error instanceof Error ? error.message : String(error)}`);
+        if (context.signal.aborted) throw new MediaResolutionError('CANCELLED');
+        if (Date.now() >= context.deadline) throw new MediaResolutionError('TIMEOUT');
+        if (error instanceof ProxyTargetError) throw new MediaResolutionError('TARGET_BLOCKED');
+        if (error instanceof MediaResolutionError) throw error;
         if (!(error instanceof ResolverNotApplicableError) && provider.id === 'bilibili') throw error;
+        if (!(error instanceof ResolverNotApplicableError)) hadUnexpectedFailure = true;
       }
     }
-    throw new Error(`无法解析该输入。${failures.join('；')}`);
+    throw new MediaResolutionError(hadUnexpectedFailure ? 'RESOLVE_FAILED' : 'NO_MEDIA_FOUND');
   }
 
   async resolve(
