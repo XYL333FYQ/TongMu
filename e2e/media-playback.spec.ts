@@ -949,6 +949,24 @@ test("unified media panel has no horizontal overflow at a phone viewport", async
   );
 });
 
+test('unconnected media libraries remain discoverable with a profile connection path', async ({ page }) => {
+  await loginAndCreateRoom(page);
+  await page.getByRole('tab', { name: '添加影片', exact: true }).click();
+  const panel = page.getByRole('tabpanel', { name: '添加影片' });
+  await panel.getByRole('button', { name: 'Emby', exact: true }).click();
+  await expect(panel.getByText('尚未连接此来源')).toBeVisible();
+  const connectionLink = panel.getByRole('link', { name: '到个人空间添加挂载' });
+  await expect(connectionLink).toHaveAttribute('href', '/profile');
+  const popupPromise = page.waitForEvent('popup');
+  await connectionLink.click();
+  const profile = await popupPromise;
+  await expect(profile).toHaveURL(/\/profile$/);
+  await expect(page.getByRole('tabpanel', { name: '添加影片' })).toBeVisible();
+  await profile.close();
+  await panel.getByRole('button', { name: 'WebDAV', exact: true }).click();
+  await expect(panel.getByText('可以在下方手动填写')).toBeVisible();
+});
+
 for (const [asset, engine] of [['/hls/master.m3u8', /Engine: hls/], ['/dash/manifest.mpd', /Engine: dash/], ['/normal.mp4?signature=public-playback&expires=9999999999', /Engine: direct/]] as const) {
   test(`public ${asset} plays Direct without gateway media requests`, async ({ page }) => {
     const gateway: string[] = [];

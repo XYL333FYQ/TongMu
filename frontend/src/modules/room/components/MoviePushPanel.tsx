@@ -1832,13 +1832,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
               (opt) =>
                 (!opt.rootOnly || userRole === 'root') &&
                 (betaFeaturesEnabled ||
-                  (opt.value !== 'anime' && opt.value !== 'kazumi')) &&
-                // 挂载类型需有对应挂载才显示
-                !(
-                  ['webdav', 'ftp', 'openlist', 'emby', 'jellyfin'].includes(
-                    opt.value
-                  ) && mounts.filter((m) => m.type === opt.value).length === 0
-                )
+                  (opt.value !== 'anime' && opt.value !== 'kazumi'))
             ).map((option) => (
               <button
                 key={option.value}
@@ -1859,6 +1853,17 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
               </button>
             ))}
           </div>
+
+          {(['webdav', 'ftp', 'openlist', 'emby', 'jellyfin'] as const).includes(sourceType as MountType) &&
+            !mounts.some((mount) => mount.type === sourceType) && (
+              <div className="rounded-xl border border-[var(--md-sys-color-outline-variant)] px-3 py-2 text-xs text-[var(--md-sys-color-on-surface-variant)]">
+                尚未连接此来源。{['webdav', 'ftp', 'openlist'].includes(sourceType) && '可以在下方手动填写，或'}
+                <a className="text-[var(--md-sys-color-primary)] underline" href="/profile" target="_blank" rel="noopener noreferrer">
+                  到个人空间添加挂载
+                </a>
+                。只有房主可以将影片加入房间。
+              </div>
+            )}
 
           {renderSourceForm()}
 
