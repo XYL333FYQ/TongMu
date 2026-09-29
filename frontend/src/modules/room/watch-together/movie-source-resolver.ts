@@ -154,7 +154,7 @@ async function resolveMediaCoreMovie(
   registerMediaTransport(storedDescriptor)
   // A media-server session is bound to the resolved source generation. Re-resolve
   // for a real host playback generation instead of reusing an old capability.
-  if (!volatileProvider && storedExpiry > Date.now() + 60_000 && !(isMediaServerDescriptor && sourceGeneration !== undefined)) {
+  if (!volatileProvider && storedPlan.engine !== 'blocked' && storedPlan.candidateUrl && storedExpiry > Date.now() + 60_000 && !(isMediaServerDescriptor && sourceGeneration !== undefined)) {
     return {
       sourceUrl: storedPlan.candidateUrl ?? movie.url,
       audioUrl: movie.audioUrl,

@@ -1,8 +1,21 @@
 import { expect, test, type Page } from "@playwright/test";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const FIXTURE_ORIGIN = "http://127.0.0.1:3456";
+
+async function persistedMovieContains(value: string): Promise<boolean> {
+  const { default: initSqlJs } = await import('sql.js');
+  const SQL = await initSqlJs();
+  const database = new SQL.Database(await readFile(path.resolve('.e2e-runtime', 'test.sqlite')));
+  try {
+    const persisted = [
+      database.exec('SELECT "url", "sourceInput", "audioUrl", "mediaDescriptor" FROM "movie"'),
+      database.exec('SELECT "sourceUrl", "audioUrl", "headers" FROM "playback_states"'),
+    ];
+    return JSON.stringify(persisted).includes(value);
+  } finally { database.close(); }
+}
 
 function safeRequestUrl(rawUrl: string): string {
   try {
@@ -944,6 +957,9 @@ for (const [asset, engine] of [['/hls/master.m3u8', /Engine: hls/], ['/dash/mani
     await addAndPlay(page, `${FIXTURE_ORIGIN}${asset}`, engine);
     expect(gateway).toEqual([]);
     expect(await page.locator('video').first().evaluate((v: HTMLVideoElement) => v.dataset.mediaTransport)).toBe('DIRECT');
+    if (asset.includes('signature=')) {
+      await expect.poll(() => persistedMovieContains('public-playback')).toBe(false);
+    }
   });
 }
 
@@ -976,6 +992,7 @@ test('private source token stays out of media resolve and Socket movie-list; hos
   expect(JSON.stringify(payload)).not.toContain('private-source-secret');
   await expect.poll(() => lists.some(value => value.includes('media-movie:'))).toBe(true);
   expect(lists.join('')).not.toContain('private-source-secret');
+  await expect.poll(() => persistedMovieContains('private-source-secret')).toBe(false);
   const refresh = await page.evaluate(async () => {
     // @ts-ignore Vite serves application modules for the browser integration test.
     const { apiFetch } = await import('/src/lib/api.ts');

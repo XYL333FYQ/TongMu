@@ -12,6 +12,7 @@ import {
 import crypto from 'crypto';
 import { Room } from './Room';
 import { isSecretVaultEnvelope, secretVault, SecretVaultError, type SecretVault } from '../services/secret-vault';
+import { movieUrlTransformer } from '../services/media/movie-url-storage';
 
 function getKeyBuffer(): Buffer {
   const legacyKey = process.env.MOVIE_SECRET_KEY || 'zcontrol-movie-secret-key-32b';
@@ -59,7 +60,7 @@ export class Movie {
   @Column()
   roomId!: string;
 
-  @Column()
+  @Column({ transformer: movieUrlTransformer() })
   url!: string;
 
   @Column()
@@ -71,13 +72,13 @@ export class Movie {
   @Column({ type: 'varchar', nullable: true })
   source!: string | null;
 
-  @Column({ type: 'varchar', nullable: true })
+  @Column({ type: 'varchar', nullable: true, transformer: movieUrlTransformer() })
   sourceInput!: string | null;
 
   @Column({ type: 'text', nullable: true })
   mediaDescriptor!: string | null;
 
-  @Column({ type: 'varchar', nullable: true })
+  @Column({ type: 'varchar', nullable: true, transformer: movieUrlTransformer() })
   audioUrl!: string | null;
 
   @Column({ type: 'varchar', nullable: true })

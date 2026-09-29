@@ -1,5 +1,6 @@
 import { issueMediaHandle } from '../../services/media/handles';
 import { canPublishDirectUrl, publicMetadata } from '../../services/media/protocol';
+import { durableMovieUrl } from '../../services/media/movie-url-storage';
 /**
  * 影片 CRUD 服务。v2
  *
@@ -210,14 +211,16 @@ export class MovieService {
     });
     const nextOrder = existing.length > 0 ? existing[0].order + 1 : 0;
 
+    const sourceInput = typeof data.sourceInput === 'string' ? data.sourceInput.slice(0, 4096) : null;
+    const mediaDescriptor = normalizeMediaDescriptor(data.mediaDescriptor);
     const movie = repo.create({
       roomId,
-      url: (data.url ?? '').trim(),
+      url: durableMovieUrl((data.url ?? '').trim(), undefined, sourceInput, mediaDescriptor),
       title: (data.title ?? '').trim(),
       cover: typeof data.cover === 'string' ? data.cover : null,
       source: typeof data.source === 'string' ? (data.source as MovieSourceType | string) : null,
-      sourceInput: typeof data.sourceInput === 'string' ? data.sourceInput.slice(0, 4096) : null,
-      mediaDescriptor: normalizeMediaDescriptor(data.mediaDescriptor),
+      sourceInput,
+      mediaDescriptor,
       audioUrl: typeof data.audioUrl === 'string' ? data.audioUrl : null,
       format: typeof data.format === 'string' ? data.format : null,
       videoCodec: typeof data.videoCodec === 'string' ? data.videoCodec : null,
@@ -250,6 +253,11 @@ export class MovieService {
     });
 
     await repo.save(movie);
+
+    if (movie.url === 'media-movie:pending') {
+      movie.url = `media-movie:${movie.id}`;
+      await repo.update({ id: movie.id }, { url: movie.url });
+    }
 
     // 代理模式下，用新生成的 movieId 重写 url 为基于影片 ID 的 stream URL，
     // 这样房间内任何成员（含观众）都能访问该影片流，不依赖 userId 查询挂载表。
@@ -288,7 +296,13 @@ export class MovieService {
     if (!movie) return null;
 
     const update: Partial<Movie> = {};
-    if (typeof data.url === 'string' && data.url.trim()) update.url = data.url.trim();
+    if (typeof data.url === 'string' && data.url.trim()) {
+      update.url = durableMovieUrl(
+        data.url.trim(), movie.id,
+        typeof data.sourceInput === 'string' && !data.sourceInput.startsWith('media-movie:') ? data.sourceInput : movie.sourceInput,
+        data.mediaDescriptor === undefined ? movie.mediaDescriptor : normalizeMediaDescriptor(data.mediaDescriptor),
+      );
+    }
     if (typeof data.title === 'string' && data.title.trim()) update.title = data.title.trim();
     if (typeof data.cover === 'string') update.cover = data.cover;
     if (typeof data.order === 'number' && Number.isFinite(data.order)) update.order = data.order;

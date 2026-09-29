@@ -79,9 +79,19 @@ async function validateSecretCoupling(dataSource: DataSource, backupDir: string)
     }
   }
   if (names.has('movie')) {
-    const rows = await dataSource.query('SELECT "password" FROM "movie"');
+    const rows = await dataSource.query('SELECT "password", "url", "sourceInput", "audioUrl" FROM "movie"');
     for (const row of rows as Array<Record<string, unknown>>) {
-      if (isSecretVaultEnvelope(row.password)) envelopes.push(String(row.password));
+      for (const value of [row.password, row.url, row.sourceInput, row.audioUrl]) {
+        if (isSecretVaultEnvelope(value)) envelopes.push(String(value));
+      }
+    }
+  }
+  if (names.has('playback_states')) {
+    const rows = await dataSource.query('SELECT "sourceUrl", "audioUrl", "headers" FROM "playback_states"');
+    for (const row of rows as Array<Record<string, unknown>>) {
+      for (const value of [row.sourceUrl, row.audioUrl, row.headers]) {
+        if (isSecretVaultEnvelope(value)) envelopes.push(String(value));
+      }
     }
   }
   if (names.has('ncm_credentials')) {

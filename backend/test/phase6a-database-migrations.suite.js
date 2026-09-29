@@ -25,6 +25,7 @@ const {
   __setMigrationVaultForTests,
 } = require('../dist/migrations/1790500000000-EncryptLegacyCredentials');
 const { __setMovieMigrationVaultForTests } = require('../dist/migrations/1790600000000-EncryptMoviePasswords');
+const { __setMovieUrlMigrationVaultForTests } = require('../dist/migrations/1790700000000-ProtectMovieUrls');
 const { HISTORICAL_FIXTURES, buildHistoricalFixture } = require('./fixtures/historical-database-fixtures');
 const { sharedSqlJs } = require('./helpers/shared-sqljs');
 
@@ -66,6 +67,7 @@ async function upgradeDatabase({ configDir, databasePath, ...options }) {
   const vault = new SecretVault({ configDir });
   __setMigrationVaultForTests(vault);
   __setMovieMigrationVaultForTests(vault);
+  __setMovieUrlMigrationVaultForTests(vault);
   try {
     await dataSource.initialize();
     const result = await runDatabaseUpgrade(dataSource, {
@@ -81,6 +83,7 @@ async function upgradeDatabase({ configDir, databasePath, ...options }) {
   } finally {
     __setMigrationVaultForTests();
     __setMovieMigrationVaultForTests();
+    __setMovieUrlMigrationVaultForTests();
   }
 }
 
@@ -223,7 +226,7 @@ test('current synchronize-created V2 adopts only after exact fingerprint and rep
   const firstBackup = first.result.backupDir;
   try {
     assert.equal(first.result.baselineAdopted, true);
-    assert.deepEqual(first.result.executed, ['EncryptLegacyCredentials1790500000000', 'EncryptMoviePasswords1790600000000']);
+    assert.deepEqual(first.result.executed, ['EncryptLegacyCredentials1790500000000', 'EncryptMoviePasswords1790600000000', 'ProtectMovieUrls1790700000000']);
   } finally {
     await first.dataSource.destroy();
   }
@@ -240,6 +243,47 @@ test('current synchronize-created V2 adopts only after exact fingerprint and rep
   const backups = fs.readdirSync(path.join(paths.configDir, 'backups')).filter((name) => !name.startsWith('.'));
   assert.equal(backups.length, 1);
   assert.equal(path.basename(firstBackup), backups[0]);
+});
+
+test('movie URL migration protects signed addresses and replaces refreshable room handles', async (t) => {
+  for (const kind of ['signed', 'handle']) {
+    await t.test(kind, async (t) => {
+      const paths = temporaryConfig(t, `movie url ${kind}`);
+      await buildHistoricalFixture({ fixtureId: 'tongmu-8eea2bc-current-v2', ...paths });
+      const original = kind === 'signed'
+        ? 'https://cdn.example/movie.mp4?signature=private-capability&expires=9999999999'
+        : '/api/stream/media/temporary-capability';
+      const source = 'https://site.example/watch/41?token=private-source';
+      const before = await rawDatabase(paths.databasePath);
+      try {
+        await before.query('UPDATE "movie" SET "url" = ?, "sourceInput" = ?, "mediaDescriptor" = ? WHERE "id" = 41',
+          [original, source, '{"resolver":"browser","expiresAt":9999999999999}']);
+        await before.query('UPDATE "playback_states" SET "sourceUrl" = ?, "headers" = ? WHERE "roomId" = ?',
+          ['https://cdn.example/play.mp4?signature=private-playback', '{"Authorization":"Bearer private-header"}', '历史 房间 α']);
+        persistRawDatabase(before, paths.databasePath);
+      } finally { await before.destroy(); }
+      const upgraded = await upgradeDatabase(paths);
+      try {
+        const row = (await upgraded.dataSource.query('SELECT "url", "sourceInput" FROM "movie" WHERE "id" = 41'))[0];
+        const vault = new SecretVault({ configDir: paths.configDir, createIfMissing: false });
+        assert.match(row.sourceInput, /^v1:/);
+        assert.equal(vault.decrypt(row.sourceInput), source);
+        if (kind === 'signed') {
+          assert.match(row.url, /^v1:/);
+          assert.equal(vault.decrypt(row.url), original);
+        } else {
+          assert.equal(row.url, 'media-movie:41');
+        }
+        assert.equal(JSON.stringify(row).includes('private-capability'), false);
+        assert.equal(JSON.stringify(row).includes('private-source'), false);
+        const playback = (await upgraded.dataSource.query('SELECT "sourceUrl", "headers" FROM "playback_states" WHERE "roomId" = ?', ['历史 房间 α']))[0];
+        assert.match(playback.sourceUrl, /^v1:/);
+        assert.match(playback.headers, /^v1:/);
+        assert.equal(vault.decrypt(playback.sourceUrl), 'https://cdn.example/play.mp4?signature=private-playback');
+        assert.equal(vault.decrypt(playback.headers), '{"Authorization":"Bearer private-header"}');
+      } finally { await upgraded.dataSource.destroy(); }
+    });
+  }
 });
 
 test('an existing historical migrations table is validated and resumed without duplicate records', async (t) => {

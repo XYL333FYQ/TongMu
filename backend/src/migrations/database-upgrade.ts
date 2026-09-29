@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { DataSource } from 'typeorm';
 import { CONFIG_DIR, DATABASE_PATH } from '../services/paths';
 import { isSecretVaultEnvelope, SecretVault, secretVaultKeyPath } from '../services/secret-vault';
+import { requiresProtectedMovieUrl } from '../services/media/movie-url-storage';
 import { createPreMigrationBackup, readAndValidateBackupManifest } from './database-backup';
 import { inspectSchemaFingerprint, schemaTableNames } from './schema-inventory';
 
@@ -45,6 +46,7 @@ export const ORDERED_MIGRATIONS = [
   { timestamp: 1790400000000, name: 'AddNcmCredential1790400000000', schema: true },
   { timestamp: 1790500000000, name: 'EncryptLegacyCredentials1790500000000', schema: false },
   { timestamp: 1790600000000, name: 'EncryptMoviePasswords1790600000000', schema: false },
+  { timestamp: 1790700000000, name: 'ProtectMovieUrls1790700000000', schema: false },
 ] as const;
 
 interface MigrationRow {
@@ -214,9 +216,19 @@ async function inspectSecretEnvelopes(dataSource: DataSource): Promise<string[]>
     }
   }
   if (tables.has('movie')) {
-    const rows = await dataSource.query('SELECT "password" FROM "movie"');
+    const rows = await dataSource.query('SELECT "password", "url", "sourceInput", "audioUrl" FROM "movie"');
     for (const row of rows as Array<Record<string, unknown>>) {
-      if (isSecretVaultEnvelope(row.password)) values.push(String(row.password));
+      for (const value of [row.password, row.url, row.sourceInput, row.audioUrl]) {
+        if (isSecretVaultEnvelope(value)) values.push(String(value));
+      }
+    }
+  }
+  if (tables.has('playback_states')) {
+    const rows = await dataSource.query('SELECT "sourceUrl", "audioUrl", "headers" FROM "playback_states"');
+    for (const row of rows as Array<Record<string, unknown>>) {
+      for (const value of [row.sourceUrl, row.audioUrl, row.headers]) {
+        if (isSecretVaultEnvelope(value)) values.push(String(value));
+      }
     }
   }
   if (tables.has('ncm_credentials')) {
@@ -256,9 +268,27 @@ async function assertNoLegacyCredentialStorage(dataSource: DataSource): Promise<
     }
   }
   if (tables.has('movie')) {
-    const rows = await dataSource.query('SELECT "id", "password" FROM "movie"');
+    const rows = await dataSource.query('SELECT "id", "password", "url", "sourceInput", "audioUrl" FROM "movie"');
     for (const row of rows as Array<Record<string, unknown>>) {
       if (row.password && !isSecretVaultEnvelope(row.password)) legacyLocations.push(`movie:${row.id}:password`);
+      for (const field of ['url', 'sourceInput', 'audioUrl'] as const) {
+        const value = row[field];
+        if (typeof value === 'string' && !isSecretVaultEnvelope(value) && requiresProtectedMovieUrl(value)) {
+          legacyLocations.push(`movie:${row.id}:${field}`);
+        }
+      }
+    }
+  }
+  if (tables.has('playback_states')) {
+    const rows = await dataSource.query('SELECT "roomId", "sourceUrl", "audioUrl", "headers" FROM "playback_states"');
+    for (const row of rows as Array<Record<string, unknown>>) {
+      for (const field of ['sourceUrl', 'audioUrl'] as const) {
+        const value = row[field];
+        if (typeof value === 'string' && !isSecretVaultEnvelope(value) && requiresProtectedMovieUrl(value)) {
+          legacyLocations.push(`playback_states:${row.roomId}:${field}`);
+        }
+      }
+      if (row.headers && !isSecretVaultEnvelope(row.headers)) legacyLocations.push(`playback_states:${row.roomId}:headers`);
     }
   }
   if (legacyLocations.length > 0) {

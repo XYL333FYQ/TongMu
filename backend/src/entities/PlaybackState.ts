@@ -26,6 +26,7 @@ import {
   JoinColumn,
 } from 'typeorm';
 import { Room } from './Room';
+import { movieUrlTransformer, playbackHeadersTransformer } from '../services/media/movie-url-storage';
 
 @Entity('playback_states')
 export class PlaybackState {
@@ -34,7 +35,7 @@ export class PlaybackState {
   roomId!: string;
 
   /** 视频源 URL（B站 DASH 为视频流 m4s 地址） */
-  @Column({ type: 'text' })
+  @Column({ type: 'text', transformer: movieUrlTransformer() })
   sourceUrl!: string;
 
   /** 源类型 */
@@ -42,7 +43,7 @@ export class PlaybackState {
   sourceType!: string;
 
   /** DASH 音频流地址（独立于视频流） */
-  @Column({ type: 'text', nullable: true })
+  @Column({ type: 'text', nullable: true, transformer: movieUrlTransformer() })
   audioUrl!: string | null;
 
   /** 媒体容器格式 */
@@ -86,7 +87,7 @@ export class PlaybackState {
   acceptQuality!: string | null;
 
   /** 源指定的防盗链 headers（JSON 字符串） */
-  @Column({ type: 'text', nullable: true })
+  @Column({ type: 'text', nullable: true, transformer: playbackHeadersTransformer() })
   headers!: string | null;
 
   /** 是否为预览源（不入影片列表） */
