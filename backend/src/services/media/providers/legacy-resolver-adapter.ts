@@ -71,6 +71,7 @@ export class LegacyResolverAdapter implements MediaProvider {
       roomId: context.roomId,
       sourceGeneration: context.sourceGeneration,
       requestedQn: context.requestedQn,
+      browserSniff: context.browserSniff === true,
       preferMp4: context.preferMp4,
       page: context.page,
       cid: context.cid,

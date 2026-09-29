@@ -30,6 +30,7 @@ export interface ProviderContext {
   deadline: number;
   profile: PlaybackClientProfileV1;
   requestedQn?: number;
+  browserSniff?: boolean;
   preferMp4?: boolean;
   page?: number;
   cid?: number;

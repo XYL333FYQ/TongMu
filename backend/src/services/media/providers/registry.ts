@@ -74,7 +74,7 @@ export class MediaProviderRegistry {
         const normalized = provider.normalizeInput(input);
         const available = await provider.availability(context);
         if (!available.available) throw new Error(available.reason ?? 'provider unavailable');
-        return provider.resolve(context, normalized, privateContext);
+        return await provider.resolve(context, normalized, privateContext);
       } catch (error) {
         failures.push(`${provider.id}: ${error instanceof Error ? error.message : String(error)}`);
         if (!(error instanceof ResolverNotApplicableError) && provider.id === 'bilibili') throw error;
@@ -112,6 +112,7 @@ export function providerContextFromResolverContext(context: ResolverContext): Pr
     deadline: context.deadline ?? Date.now() + 30_000,
     profile: context.playbackClientProfile ?? legacyPlaybackClientProfile(),
     requestedQn: context.requestedQn,
+    browserSniff: context.browserSniff === true,
     preferMp4: context.preferMp4,
     page: context.page,
     cid: context.cid,

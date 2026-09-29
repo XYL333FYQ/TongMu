@@ -1,6 +1,9 @@
 import { createServer } from 'node:http';
 import { BrowserResolver } from '../services/media/resolvers/browser';
+import { DirectUrlResolver } from '../services/media/resolvers/direct-url';
 import { GenericWebResolver } from '../services/media/resolvers/generic-web';
+import { LegacyResolverAdapter } from '../services/media/providers/legacy-resolver-adapter';
+import { MediaProviderRegistry, providerContextFromResolverContext } from '../services/media/providers/registry';
 import { probeMediaUrl } from '../services/media/probe';
 import { ResolverNotApplicableError } from '../services/media/types';
 
@@ -66,10 +69,38 @@ export async function runBrowserResolverContainerSmoke(): Promise<Record<string,
       genericFailedClosed = true;
     }
     if (!genericFailedClosed) throw new Error('static HTTP resolver unexpectedly found the dynamic fixture');
+    const previousBrowserResolver = process.env.MEDIA_BROWSER_RESOLVER;
     process.env.MEDIA_BROWSER_RESOLVER = 'true';
-    const descriptor = await new BrowserResolver().resolve(`${origin}/browser-page`, { userId: 'smoke', browserSniff: true });
-    if (descriptor.container !== 'mp4' || descriptor.transport !== 'direct') throw new Error('BrowserResolver returned the wrong media descriptor');
-    return { ok: true, genericFailedClosed, browserFallback: true, container: descriptor.container, transport: descriptor.transport };
+    try {
+      const registry = new MediaProviderRegistry([
+        new LegacyResolverAdapter({ id: 'direct-url', sourceKinds: ['url'], resolver: new DirectUrlResolver() }),
+        new LegacyResolverAdapter({ id: 'generic-web', sourceKinds: ['web-page'], resolver: new GenericWebResolver() }),
+        new LegacyResolverAdapter({ id: 'browser', sourceKinds: ['browser-page'], resolver: new BrowserResolver() }),
+      ]);
+      const resolve = (input: string, browserSniff: boolean) => registry.resolveProvider(
+        input,
+        providerContextFromResolverContext({ userId: 'smoke', browserSniff }),
+        {},
+      );
+      let disabledFailedClosed = false;
+      try { await resolve(`${origin}/browser-page`, false); }
+      catch (error) {
+        if (!(error instanceof Error) || !error.message.includes('浏览器嗅探未请求')) throw error;
+        disabledFailedClosed = true;
+      }
+      if (!disabledFailedClosed) throw new Error('browserSniff=false unexpectedly resolved dynamic media');
+      const resolution = await resolve(`${origin}/browser-page`, true);
+      const descriptor = resolution.descriptor;
+      if (descriptor.resolver !== 'browser' || descriptor.container !== 'mp4' || descriptor.transport !== 'direct') {
+        throw new Error('Unified Provider chain returned the wrong browser media descriptor');
+      }
+      const direct = await resolve(`${origin}/direct.mp4`, false);
+      if (direct.descriptor.resolver !== 'direct-url') throw new Error('Direct URL unexpectedly fell back to another provider');
+      return { ok: true, genericFailedClosed, disabledFailedClosed, browserFallback: true, directUnchanged: true, container: descriptor.container, transport: descriptor.transport };
+    } finally {
+      if (previousBrowserResolver === undefined) delete process.env.MEDIA_BROWSER_RESOLVER;
+      else process.env.MEDIA_BROWSER_RESOLVER = previousBrowserResolver;
+    }
   });
 }
 
