@@ -12,6 +12,7 @@ import {
   Headphones,
   PanelRight,
   PanelRightClose,
+  Plus,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/Button'
@@ -486,6 +487,21 @@ export function RoomLayout({
           </div>
         )}
       </div>
+      {isHost && roomMode === 'watch-together' && controlLabels?.includes('添加影片') &&
+        !webFullscreen && !isNativeFullscreen && (
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<Plus className="h-4 w-4" />}
+            className="mt-2 self-start md:hidden"
+            onClick={() => {
+              setActiveControlIndex(controlLabels.indexOf('添加影片'))
+              workspaceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+            }}
+          >
+            添加影片
+          </Button>
+        )}
     </>
   )
 

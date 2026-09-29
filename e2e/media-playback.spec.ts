@@ -967,6 +967,20 @@ test('unconnected media libraries remain discoverable with a profile connection 
   await expect(panel.getByText('可以在下方手动填写')).toBeVisible();
 });
 
+test('host phone shortcut opens add panel without remounting the playing video', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await loginAndCreateRoom(page);
+  await addAndPlay(page, `${FIXTURE_ORIGIN}/normal.mp4`, /Engine: direct/);
+  const video = page.locator('video').first();
+  await video.evaluate((element: HTMLVideoElement) => { (element as HTMLVideoElement & { shortcutProbe?: boolean }).shortcutProbe = true; });
+  await page.getByRole('tab', { name: '影片列表', exact: true }).click();
+  await expect(page.getByRole('tab', { name: '影片列表', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await page.getByRole('button', { name: '添加影片', exact: true }).click();
+  await expect(page.getByRole('tab', { name: '添加影片', exact: true })).toHaveAttribute('aria-selected', 'true');
+  expect(await video.evaluate((element: HTMLVideoElement) => (element as HTMLVideoElement & { shortcutProbe?: boolean }).shortcutProbe)).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+});
+
 for (const [asset, engine] of [['/hls/master.m3u8', /Engine: hls/], ['/dash/manifest.mpd', /Engine: dash/], ['/normal.mp4?signature=public-playback&expires=9999999999', /Engine: direct/]] as const) {
   test(`public ${asset} plays Direct without gateway media requests`, async ({ page }) => {
     const gateway: string[] = [];
