@@ -1001,6 +1001,24 @@ test('host can seek with keyboard on the playback slider', async ({ page }) => {
   }).toBeLessThan(0.2);
 });
 
+test('room modal traps keyboard focus and restores its trigger on close', async ({ page }) => {
+  await loginAndCreateRoom(page);
+  await page.getByRole('tab', { name: '影片列表', exact: true }).click();
+  const trigger = page.getByRole('button', { name: '展开查看完整影片列表' });
+  await trigger.focus();
+  await trigger.press('Enter');
+  const dialog = page.getByRole('dialog', { name: /影片列表/ });
+  await expect(dialog).toHaveAttribute('aria-modal', 'true');
+  const close = dialog.getByRole('button', { name: '关闭弹窗' });
+  await expect(close).toBeFocused();
+  await close.press('Tab');
+  await expect(dialog).toContainText('影片列表');
+  expect(await page.evaluate(() => document.activeElement?.closest('[role="dialog"]') !== null)).toBe(true);
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+});
+
 for (const [asset, engine] of [['/hls/master.m3u8', /Engine: hls/], ['/dash/manifest.mpd', /Engine: dash/], ['/normal.mp4?signature=public-playback&expires=9999999999', /Engine: direct/]] as const) {
   test(`public ${asset} plays Direct without gateway media requests`, async ({ page }) => {
     const gateway: string[] = [];

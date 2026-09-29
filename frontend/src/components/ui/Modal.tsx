@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -27,6 +27,14 @@ export function Modal({
   const [exiting, setExiting] = useState(false)
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const prevOpenRef = useRef(open)
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const openerRef = useRef<HTMLElement | null>(null)
+  const onCloseRef = useRef(onClose)
+  const openRef = useRef(open)
+  const titleId = useId()
+
+  useEffect(() => { onCloseRef.current = onClose }, [onClose])
+  useEffect(() => { openRef.current = open }, [open])
 
   useEffect(() => {
     if (open && !prevOpenRef.current) {
@@ -68,12 +76,42 @@ export function Modal({
 
   useEffect(() => {
     if (!visible) return
+    const dialog = dialogRef.current
+    if (!dialog) return
+    openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const focusableSelector = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    const focusables = () => Array.from(dialog.querySelectorAll<HTMLElement>(focusableSelector))
+      .filter((element) => element.getClientRects().length > 0 && !element.closest('[aria-hidden="true"]'))
+    const initialFocus = focusables()[0] ?? dialog
+    initialFocus.focus()
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      const dialogs = document.querySelectorAll('[data-tongmu-modal]')
+      if (dialogs[dialogs.length - 1] !== dialog) return
+      if (e.key === 'Escape' && openRef.current) {
+        e.preventDefault()
+        e.stopPropagation()
+        onCloseRef.current()
+      }
+      if (e.key !== 'Tab') return
+      const items = focusables()
+      if (!items.length) { e.preventDefault(); dialog.focus(); return }
+      const first = items[0]
+      const last = items[items.length - 1]
+      if (e.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+        e.preventDefault()
+        first.focus()
+      }
     }
     document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [visible, onClose])
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      if (openerRef.current?.isConnected) openerRef.current.focus()
+      openerRef.current = null
+    }
+  }, [visible])
 
   if (!visible) return null
 
@@ -98,6 +136,13 @@ export function Modal({
         aria-hidden="true"
       />
       <div
+        ref={dialogRef}
+        data-tongmu-modal
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={title ? titleId : undefined}
+        aria-label={title ? undefined : '对话框'}
+        tabIndex={-1}
         className={cn(
           'glass-strong relative z-10 flex w-full max-w-md flex-col overflow-hidden rounded-[var(--md-sys-shape-corner)] p-6 shadow-lg',
           exiting ? 'zen-modal-content-exit' : 'zen-modal-content-enter',
@@ -111,13 +156,15 @@ export function Modal({
       >
         <div className="flex shrink-0 items-start justify-between">
           {title ? (
-            <h3 className="text-lg font-semibold text-[var(--md-sys-color-on-surface)]">
+            <h3 id={titleId} className="text-lg font-semibold text-[var(--md-sys-color-on-surface)]">
               {title}
             </h3>
           ) : (
             <span />
           )}
           <button
+            type="button"
+            aria-label="关闭弹窗"
             onClick={onClose}
             className="rounded-[var(--md-sys-shape-corner)] p-1 text-[var(--md-sys-color-on-surface-variant)] transition-all hover:bg-[var(--md-sys-color-surface-container)] hover:text-[var(--md-sys-color-on-surface)] hover:scale-110 active:scale-95"
           >
