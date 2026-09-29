@@ -156,6 +156,6 @@ TongMu/
 
 ## GitHub Actions
 
-- `ci.yml`：在 push/PR 上执行后端 lint/test、前端 test/build、关键 E2E 和 Compose 配置检查，不依赖 Docker Hub secret。
+- `ci.yml`：在 push/PR 上执行后端 lint/test、前端 test/build、关键 E2E 和 Compose 配置检查；main push 还必须通过同一 SHA 的 Docker/Chromium 烟测，CI 成功后才会触发自动部署。
 - `build.yml`：仅 tag / `workflow_dispatch` 构建并签名 Windows/Linux immutable release candidate；校验 tag/version/SHA、lockfile、manifest 和包内清单，上传名含 version/platform/arch/SHA。它不自动创建 GitHub Release，也没有 `contents: write`。
-- `docker.yml`：仅 `workflow_dispatch` 手动构建 BrowserResolver 镜像，不登录 Docker Hub，也不自动 push。
+- `docker.yml`：供 main CI 调用，也可用 `workflow_dispatch` 手动运行 BrowserResolver 镜像烟测；不登录 Docker Hub，也不自动 push。

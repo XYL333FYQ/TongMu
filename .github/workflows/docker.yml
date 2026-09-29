@@ -2,25 +2,7 @@ name: TongMu Docker browser smoke
 
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - 'Dockerfile.linux-browser'
-      - 'docker-compose.yml'
-      - '.github/workflows/docker.yml'
-      - 'backend/**'
-      - 'frontend/**'
-      - 'package*.json'
-      - 'patches/**'
-  push:
-    branches: [main]
-    paths:
-      - 'Dockerfile.linux-browser'
-      - 'docker-compose.yml'
-      - '.github/workflows/docker.yml'
-      - 'backend/**'
-      - 'frontend/**'
-      - 'package*.json'
-      - 'patches/**'
+  workflow_call:
 
 concurrency:
   group: tongmu-docker-${{ github.workflow }}-${{ github.ref }}
