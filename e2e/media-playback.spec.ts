@@ -549,6 +549,79 @@ test('Chromium capability collector emits a bounded deterministic V1 profile', a
     capability.transport === 'progressive')).toBe(true);
 });
 
+test('movie input A to B to A keeps only the newest Bilibili preview', async ({ page }) => {
+  test.setTimeout(45_000);
+  await loginAndCreateRoom(page);
+  await page.getByRole('tab', { name: '添加影片' }).click();
+  const input = page.getByPlaceholder('视频 Url 或 bv 号');
+  await page.getByRole('group', { name: '内容来源' }).getByRole('button', { name: '哔哩哔哩' }).click();
+  const oldA = 'https://www.bilibili.com/video/BV1xx411c7mD';
+  const b = 'https://www.bilibili.com/video/BV1yy411c7mD';
+  let requestCount = 0;
+  let addedTitle = '';
+  const pending: Array<() => Promise<void>> = [];
+  await page.route('**/api/rooms/*/movies', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    addedTitle = (route.request().postDataJSON() as { title: string }).title;
+    await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ success: true }) });
+  });
+  await page.route('**/api/stream/media/resolve', async (route) => {
+    const body = route.request().postDataJSON() as { input: string };
+    requestCount += 1;
+    const order = requestCount;
+    const complete = () => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      success: true,
+      descriptor: {
+        input: body.input, originalUrl: body.input, finalUrl: `${FIXTURE_ORIGIN}/normal.mp4`,
+        title: order === 1 ? 'Old A' : order === 2 ? 'Old B' : 'Newest A',
+        sourceType: 'bilibili', resolver: 'bilibili', transport: 'direct', container: 'mp4',
+        headers: {}, drm: { protected: false }, probe: { method: 'resolver', bytesRead: 0, warnings: [] },
+        transportPlan: { candidates: [{ mode: 'DIRECT', url: `${FIXTURE_ORIGIN}/normal.mp4`, transport: 'progressive', container: 'mp4', requiredPipelines: ['native'] }], reason: 'fixture' },
+      },
+    }) });
+    if (order < 3) pending.push(complete);
+    else await complete();
+  });
+  await input.fill(oldA);
+  await input.press('Enter');
+  await expect.poll(() => requestCount).toBe(1);
+  await input.fill(b);
+  await input.press('Enter');
+  await expect.poll(() => requestCount).toBe(2);
+  await input.fill(oldA);
+  await input.press('Enter');
+  await expect.poll(() => requestCount).toBe(3);
+  await expect(page.getByRole('tabpanel', { name: '添加影片' }).getByRole('button', { name: '添加', exact: true })).toBeVisible();
+  await pending[1]();
+  await pending[0]();
+  await page.getByRole('tabpanel', { name: '添加影片' }).getByRole('button', { name: '添加', exact: true }).click();
+  await expect.poll(() => addedTitle).toBe('Newest A');
+});
+
+test('repeated Enter while a movie POST is pending sends one add request', async ({ page }) => {
+  test.setTimeout(45_000);
+  await loginAndCreateRoom(page);
+  await page.getByRole('tab', { name: '添加影片' }).click();
+  let postCount = 0;
+  let releasePost: (() => Promise<void>) | undefined;
+  await page.route('**/api/rooms/*/movies', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    postCount += 1;
+    await new Promise<void>((resolve) => { releasePost = async () => { await route.continue(); resolve(); }; });
+  });
+  const input = page.getByPlaceholder('影片网页、MP4/MKV、M3U8、MPD、FLV 或无后缀媒体 URL');
+  await input.fill(`${FIXTURE_ORIGIN}/normal.mp4`);
+  await input.press('Enter');
+  await expect.poll(() => postCount).toBe(1);
+  await input.press('Enter');
+  await input.press('Enter');
+  expect(postCount).toBe(1);
+  await releasePost?.();
+  await expect(page.getByText('影片已添加')).toBeVisible();
+  await input.press('Enter');
+  expect(postCount).toBe(1);
+});
+
 test("real MP4 and extensionless sources load, play, and seek directly without gateway bytes", async ({
   page,
 }) => {

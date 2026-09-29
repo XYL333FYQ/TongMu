@@ -256,6 +256,35 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
   // 多 P 视频分集选择弹窗
   const [showPageSelector, setShowPageSelector] = useState(false)
   const [pageSelectLoading, setPageSelectLoading] = useState(false)
+  const resolveRevisionRef = useRef(0)
+  const addInFlightRef = useRef(false)
+  const lastAddedUrlRef = useRef<{ roomId: string; url: string } | null>(null)
+
+  useEffect(() => () => {
+    resolveRevisionRef.current += 1
+  }, [])
+
+  const invalidateResolvedInput = useCallback(() => {
+    resolveRevisionRef.current += 1
+    setResolvedMovie(null)
+    setMediaDiagnostics(null)
+    setMediaResolveError('')
+    setShowPageSelector(false)
+    if (!addInFlightRef.current) {
+      setLoading(false)
+      setQualityLoading(false)
+      setPageSelectLoading(false)
+      setResolveProgress('')
+    }
+  }, [])
+
+  const changeUrl = (value: string) => {
+    if (value !== url) {
+      invalidateResolvedInput()
+      lastAddedUrlRef.current = null
+    }
+    setUrl(value)
+  }
 
   useEffect(() => {
     void fetchSettings()
@@ -274,7 +303,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- sourceType 变化时重置状态
-    setResolvedMovie(null)
+    invalidateResolvedInput()
     setOpenlist({ serverUrl: '', path: '' })
     setSelectedMountId('')
     if (sourceType !== 'bilibili') return
@@ -288,7 +317,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
         setBilibiliUser(null)
       }
     })
-  }, [sourceType])
+  }, [sourceType, invalidateResolvedInput])
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- 头像变化时重置错误状态
@@ -755,8 +784,9 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
   )
 
   const resetForm = () => {
+    invalidateResolvedInput()
+    lastAddedUrlRef.current = null
     setUrl('')
-    setResolvedMovie(null)
     setSelectedMountId('')
     setWebdav({ serverUrl: '', path: '' })
     setWebdavDirectLink(false)
@@ -766,8 +796,6 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
     setFtp({ serverUrl: '', path: '', port: 21, username: '', password: '' })
     setOpenlist({ serverUrl: '', path: '' })
     setServerFilePath('')
-    setMediaDiagnostics(null)
-    setMediaResolveError('')
   }
 
   // 仅 bilibili 需要 handleResolve：解析后显示清晰度选择器，再点"添加"
@@ -787,10 +815,13 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
       return
     }
 
+    if (addInFlightRef.current) return
+    const revision = ++resolveRevisionRef.current
+    const input = url.trim()
     setLoading(true)
     setResolveProgress('正在初始化解析...')
     try {
-      const bvid = extractBvid(url.trim())
+      const bvid = extractBvid(input)
 
       let resolved: ResolvedSource | undefined
       // CLI 已连接时优先使用本地 CLI 代理解析（使用用户自己的 B站 Cookie，可获取高画质）
@@ -807,6 +838,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
             true
           )
         } catch (cliErr) {
+          if (revision !== resolveRevisionRef.current) return
           // CLI 代理解析失败：连接失败或后端返回错误，自动回退到服务器端解析
           if (cliErr instanceof CliConnectionError) {
             console.warn(
@@ -819,32 +851,39 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
         }
       }
 
+      if (revision !== resolveRevisionRef.current) return
       if (!resolved) {
         setResolveProgress('正在通过服务器解析...')
-        const mediaResolved = await resolveMediaInput(url.trim(), {
+        const mediaResolved = await resolveMediaInput(input, {
           roomId,
           requestedQn: undefined,
           preferMp4: false,
         })
+        if (revision !== resolveRevisionRef.current) return
         setMediaDiagnostics(mediaResolved)
         resolved = toBilibiliResolvedSource(mediaResolved)
       } else {
         // CLI path remains client-local and deliberately does not create a
         // server media handle.
+        if (revision !== resolveRevisionRef.current) return
         setMediaDiagnostics(null)
       }
 
+      if (revision !== resolveRevisionRef.current) return
       setResolvedMovie(resolved)
       // 自动检测多 P 视频：若有多 P，弹出分集选择界面
       if (resolved.pages && resolved.pages.length > 1) {
         setShowPageSelector(true)
       }
     } catch (err) {
+      if (revision !== resolveRevisionRef.current) return
       console.error('[MoviePushPanel] resolve error:', err)
       message.error(err instanceof Error ? err.message : '解析失败')
     } finally {
-      setLoading(false)
-      setResolveProgress('')
+      if (revision === resolveRevisionRef.current) {
+        setLoading(false)
+        setResolveProgress('')
+      }
     }
   }
 
@@ -853,10 +892,12 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
     const qn = Number(selectedQn)
     if (!Number.isFinite(qn)) return
 
+    const revision = ++resolveRevisionRef.current
+    const input = url.trim()
     setQualityLoading(true)
     setResolveProgress('正在切换清晰度...')
     try {
-      const bvid = extractBvid(url.trim())
+      const bvid = extractBvid(input)
 
       let resolved: ResolvedSource | undefined
       // CLI 已连接时通过本地 CLI 代理切换清晰度（使用用户自己的 B站 Cookie）
@@ -873,6 +914,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
             true
           )
         } catch (cliErr) {
+          if (revision !== resolveRevisionRef.current) return
           if (cliErr instanceof CliConnectionError) {
             console.warn(
               '[MoviePushPanel] CLI 代理连接失败，回退到服务器端解析'
@@ -883,26 +925,33 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
         }
       }
 
+      if (revision !== resolveRevisionRef.current) return
       if (!resolved) {
         setResolveProgress('正在通过服务器切换清晰度...')
-        const mediaResolved = await resolveMediaInput(url.trim(), {
+        const mediaResolved = await resolveMediaInput(input, {
           roomId,
           requestedQn: qn,
           preferMp4: false,
           cid: resolvedMovie.cid,
         })
+        if (revision !== resolveRevisionRef.current) return
         setMediaDiagnostics(mediaResolved)
         resolved = toBilibiliResolvedSource(mediaResolved)
       } else {
+        if (revision !== resolveRevisionRef.current) return
         setMediaDiagnostics(null)
       }
+      if (revision !== resolveRevisionRef.current) return
       setResolvedMovie(resolved)
     } catch (err) {
+      if (revision !== resolveRevisionRef.current) return
       console.error('[MoviePushPanel] switch quality error:', err)
       message.error(err instanceof Error ? err.message : '切换清晰度失败')
     } finally {
-      setQualityLoading(false)
-      setResolveProgress('')
+      if (revision === resolveRevisionRef.current) {
+        setQualityLoading(false)
+        setResolveProgress('')
+      }
     }
   }
 
@@ -912,11 +961,13 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
     const targetPage = resolvedMovie.pages?.find((p) => p.page === page)
     if (!targetPage) return
 
+    const revision = ++resolveRevisionRef.current
+    const input = url.trim()
     setShowPageSelector(false)
     setPageSelectLoading(true)
     setResolveProgress(`正在解析 P${page} ${targetPage.part}...`)
     try {
-      const bvid = extractBvid(url.trim())
+      const bvid = extractBvid(input)
 
       let resolved: ResolvedSource | undefined
       // CLI 已连接时通过本地 CLI 代理切换分P（使用用户自己的 B站 Cookie）
@@ -933,6 +984,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
             true
           )
         } catch (cliErr) {
+          if (revision !== resolveRevisionRef.current) return
           if (cliErr instanceof CliConnectionError) {
             console.warn(
               '[MoviePushPanel] CLI 代理连接失败，回退到服务器端解析'
@@ -943,32 +995,40 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
         }
       }
 
+      if (revision !== resolveRevisionRef.current) return
       if (!resolved) {
         setResolveProgress(`正在通过服务器解析 P${page}...`)
-        const mediaResolved = await resolveMediaInput(url.trim(), {
+        const mediaResolved = await resolveMediaInput(input, {
           roomId,
           requestedQn: resolvedMovie.currentQn,
           preferMp4: false,
           page,
         })
+        if (revision !== resolveRevisionRef.current) return
         setMediaDiagnostics(mediaResolved)
         resolved = toBilibiliResolvedSource(mediaResolved)
       } else {
+        if (revision !== resolveRevisionRef.current) return
         setMediaDiagnostics(null)
       }
+      if (revision !== resolveRevisionRef.current) return
       setResolvedMovie(resolved)
     } catch (err) {
+      if (revision !== resolveRevisionRef.current) return
       console.error('[MoviePushPanel] page select error:', err)
       message.error(err instanceof Error ? err.message : '切换分P失败')
     } finally {
-      setPageSelectLoading(false)
-      setResolveProgress('')
+      if (revision === resolveRevisionRef.current) {
+        setPageSelectLoading(false)
+        setResolveProgress('')
+      }
     }
   }
 
   // 统一添加影片：对 webdav/ftp/openlist/mp4 合并 resolve+add 为单步操作
   // bilibili 仍走两步：先 handleResolve 解析 → 选清晰度 → handleAddMovie 添加
   const handleAddMovie = async () => {
+    if (addInFlightRef.current) return
     if (!isHost) {
       message.info('只有房主可以添加影片')
       return
@@ -977,7 +1037,18 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
       message.error('未连接房间')
       return
     }
+    if (
+      sourceType === 'mp4' &&
+      url.trim() &&
+      lastAddedUrlRef.current?.roomId === roomId &&
+      lastAddedUrlRef.current.url === url.trim()
+    ) {
+      message.info('这条影片已添加，修改链接后可再次添加')
+      return
+    }
 
+    addInFlightRef.current = true
+    const inputRevision = resolveRevisionRef.current
     setLoading(true)
     setResolveProgress('正在添加影片...')
     try {
@@ -1012,7 +1083,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           pages: resolvedMovie.pages,
           currentPage: resolvedMovie.currentPage ?? 1,
         })
-        resetForm()
+        if (inputRevision === resolveRevisionRef.current) resetForm()
         message.success('影片已添加')
       } else if (sourceType === 'mp4') {
         if (!url.trim()) {
@@ -1025,6 +1096,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           browserSniff: true,
           roomId,
         })
+        if (inputRevision !== resolveRevisionRef.current) return
         setMediaDiagnostics(resolved)
         const media = resolved.descriptor
         const movieUrl = media.finalUrl
@@ -1043,6 +1115,9 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           playsvideoEnabled:
             resolved.plan.engine === 'playsvideo' || playsvideoEnabled,
         })
+        if (inputRevision === resolveRevisionRef.current) {
+          lastAddedUrlRef.current = { roomId, url: url.trim() }
+        }
         message.success('影片已添加')
       } else if (sourceType === 'webdav' || sourceType === 'openlist') {
         const mountPath = (
@@ -1080,7 +1155,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           path: mountPath,
           directLink: resolved.plan.candidateMode === 'DIRECT',
         })
-        resetForm()
+        if (inputRevision === resolveRevisionRef.current) resetForm()
         message.success('影片已添加')
       } else if (sourceType === 'ftp') {
         if (!ftp.serverUrl.trim() || !ftp.path.trim()) {
@@ -1112,7 +1187,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           serverUrl: mount?.serverUrl,
           path: ftp.path.trim(),
         })
-        resetForm()
+        if (inputRevision === resolveRevisionRef.current) resetForm()
         message.success('影片已添加')
       } else if (sourceType === 'emby') {
         const mountId = Number(selectedMountId)
@@ -1131,7 +1206,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
         const sourceInput = buildMediaServerReference({ provider: 'emby', mountId, itemId })
         const resolved = await resolveMediaInput(sourceInput, { roomId })
         await addMovie(roomId, mediaServerMoviePayload('emby', mountId, itemId, resolved))
-        resetForm()
+        if (inputRevision === resolveRevisionRef.current) resetForm()
         message.success('影片已添加')
       } else if (sourceType === 'jellyfin') {
         const mountId = Number(selectedMountId)
@@ -1150,7 +1225,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
         const sourceInput = buildMediaServerReference({ provider: 'jellyfin', mountId, itemId })
         const resolved = await resolveMediaInput(sourceInput, { roomId })
         await addMovie(roomId, mediaServerMoviePayload('jellyfin', mountId, itemId, resolved))
-        resetForm()
+        if (inputRevision === resolveRevisionRef.current) resetForm()
         message.success('影片已添加')
       } else if (sourceType === 'server-files') {
         if (!serverFilePath.trim()) {
@@ -1172,15 +1247,17 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           duration: media.duration ?? undefined,
           audioCodec: media.audioCodec ?? undefined,
         })
-        resetForm()
+        if (inputRevision === resolveRevisionRef.current) resetForm()
         message.success('影片已添加')
       }
     } catch (err) {
+      if (inputRevision !== resolveRevisionRef.current) return
       console.error('[MoviePushPanel] add movie error:', err)
       const errorMessage = err instanceof Error ? err.message : '添加影片失败'
       if (sourceType === 'mp4') setMediaResolveError(errorMessage)
       message.error(errorMessage)
     } finally {
+      addInFlightRef.current = false
       setLoading(false)
       setResolveProgress('')
     }
@@ -1280,7 +1357,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
         <Input
           size="sm"
           value={url}
-          onChange={(e) => setUrl(e.target.value)}
+          onChange={(e) => changeUrl(e.target.value)}
           placeholder={
             sourceType === 'bilibili'
               ? '视频 Url 或 bv 号'
@@ -1748,7 +1825,10 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
                 key={option.value}
                 type="button"
                 aria-pressed={sourceType === option.value}
-                onClick={() => setSourceType(option.value as SourceType)}
+                onClick={() => {
+                  invalidateResolvedInput()
+                  setSourceType(option.value as SourceType)
+                }}
                 className={cn(
                   'rounded-xl border px-3 py-3 text-left text-xs font-medium transition-colors',
                   sourceType === option.value
