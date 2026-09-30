@@ -683,8 +683,12 @@ router.post('/media/resolve', authenticateToken, mediaResolveLimiter, async (req
   const resolveController = new AbortController();
   const resolveDeadline = Date.now() + 30_000;
   const abortResolve = () => resolveController.abort();
+  // After Express has read the POST body, request 'aborted' no longer covers
+  // a client closing the connection while it waits for the response.
+  const responseClosed = () => { if (!res.writableEnded) abortResolve(); };
   const resolveTimer = setTimeout(abortResolve, 30_000);
   req.once('aborted', abortResolve);
+  res.once('close', responseClosed);
   try {
     const cookie = (await getUserCookie(req.user?.userId)) || undefined;
     const providerResolution = await resolveMediaProvider(input, {
@@ -934,6 +938,7 @@ router.post('/media/resolve', authenticateToken, mediaResolveLimiter, async (req
   } finally {
     clearTimeout(resolveTimer);
     req.off('aborted', abortResolve);
+    res.off('close', responseClosed);
   }
 });
 

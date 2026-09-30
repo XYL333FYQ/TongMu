@@ -8,7 +8,7 @@ const { DataSource } = require('typeorm');
 const { AppDataSource } = require('../dist/data-source');
 const {
   DatabaseUpgradeError,
-  EXPECTED_SCHEMA_V2_FINGERPRINT,
+  EXPECTED_CURRENT_SCHEMA_FINGERPRINT,
   ORDERED_MIGRATIONS,
   runDatabaseUpgrade,
   SUPPORTED_DATABASE_SCHEMAS,
@@ -165,7 +165,7 @@ async function assertGoldenData(dataSource, configDir, sourceLevel) {
   }
 
   const schema = await inspectSchemaFingerprint(dataSource);
-  assert.equal(schema.fingerprint, EXPECTED_SCHEMA_V2_FINGERPRINT);
+  assert.equal(schema.fingerprint, EXPECTED_CURRENT_SCHEMA_FINGERPRINT);
   const migrationRows = await dataSource.query('SELECT "name", "timestamp" FROM "migrations" ORDER BY "timestamp"');
   assert.deepEqual(migrationRows.map((row) => row.name), ORDERED_MIGRATIONS.map((row) => row.name));
   assert.deepEqual(await dataSource.query('PRAGMA foreign_key_check'), []);
@@ -177,7 +177,7 @@ async function assertGoldenData(dataSource, configDir, sourceLevel) {
 test('historical Git-backed fixture matrix upgrades with identity and credential golden assertions', async (t) => {
   assert.deepEqual(
     HISTORICAL_FIXTURES.map((fixture) => fixture.id),
-    SUPPORTED_DATABASE_SCHEMAS.map((schema) => schema.id),
+    SUPPORTED_DATABASE_SCHEMAS.filter(schema => schema.id !== 'tongmu-movie-create-receipts').map((schema) => schema.id),
   );
   for (const fixture of HISTORICAL_FIXTURES) {
     await t.test(`${fixture.id} (${fixture.evidence})`, async (t) => {
@@ -209,7 +209,7 @@ test('fresh no-file and existing empty-file installs are migration-created', asy
       const { dataSource, result } = await upgradeDatabase(paths);
       try {
         assert.equal(result.sourceSchemaId, 'fresh-empty');
-        assert.equal(result.finalFingerprint, EXPECTED_SCHEMA_V2_FINGERPRINT);
+        assert.equal(result.finalFingerprint, EXPECTED_CURRENT_SCHEMA_FINGERPRINT);
         assert.equal(Boolean(result.backupDir), existingEmpty);
         assert.equal((await dataSource.query('SELECT COUNT(*) AS count FROM "migrations"'))[0].count, ORDERED_MIGRATIONS.length);
       } finally {
@@ -226,7 +226,7 @@ test('current synchronize-created V2 adopts only after exact fingerprint and rep
   const firstBackup = first.result.backupDir;
   try {
     assert.equal(first.result.baselineAdopted, true);
-    assert.deepEqual(first.result.executed, ['EncryptLegacyCredentials1790500000000', 'EncryptMoviePasswords1790600000000', 'ProtectMovieUrls1790700000000']);
+    assert.deepEqual(first.result.executed, ['EncryptLegacyCredentials1790500000000', 'EncryptMoviePasswords1790600000000', 'ProtectMovieUrls1790700000000', 'AddMovieCreateRequests1790800000000']);
   } finally {
     await first.dataSource.destroy();
   }
@@ -306,6 +306,8 @@ test('a forged completed migration history cannot hide legacy plaintext credenti
   const paths = temporaryConfig(t, 'forged migration history');
   await buildHistoricalFixture({ fixtureId: 'tongmu-8eea2bc-current-v2', ...paths });
   const forged = await rawDatabase(paths.databasePath);
+  const { AddMovieCreateRequests1790800000000 } = require('../dist/migrations/1790800000000-AddMovieCreateRequests');
+  await new AddMovieCreateRequests1790800000000().up(forged.createQueryRunner());
   await forged.query('CREATE TABLE "migrations" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "timestamp" bigint NOT NULL, "name" varchar NOT NULL)');
   for (const migration of ORDERED_MIGRATIONS) {
     await forged.query('INSERT INTO "migrations" ("timestamp", "name") VALUES (?, ?)', [migration.timestamp, migration.name]);
@@ -318,7 +320,7 @@ test('a forged completed migration history cannot hide legacy plaintext credenti
   );
 });
 
-test('entity schema exactly equals migration-created ExpectedSchemaV2', async (t) => {
+test('entity schema exactly equals migration-created ExpectedCurrentSchema', async (t) => {
   const paths = temporaryConfig(t, 'entity drift');
   const migrated = await upgradeDatabase(paths);
   let entityDataSource;
@@ -338,7 +340,7 @@ test('entity schema exactly equals migration-created ExpectedSchemaV2', async (t
     await entityDataSource.initialize();
     const entitySchema = await inspectSchemaFingerprint(entityDataSource);
     const migrationSchema = await inspectSchemaFingerprint(migrated.dataSource);
-    assert.equal(entitySchema.fingerprint, EXPECTED_SCHEMA_V2_FINGERPRINT);
+    assert.equal(entitySchema.fingerprint, EXPECTED_CURRENT_SCHEMA_FINGERPRINT);
     assert.deepEqual(migrationSchema.inventory, entitySchema.inventory);
   } finally {
     if (entityDataSource?.isInitialized) await entityDataSource.destroy();

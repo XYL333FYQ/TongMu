@@ -9,7 +9,7 @@
 ## 追加整改
 
 - **F03/F10**：通用网页/直链入口改为解析、预览、确认添加；自动识别 B 站后复用既有分集与画质路径。成功后统一清空输入。解析和切换画质期间不能提交旧结果。
-- **F01/F02 客户端部分**：输入版本 fence 和同步 in-flight guard 保留；新增加 AbortSignal 与取消解析。仍没有持久化的服务端请求幂等键，网络响应丢失后再次提交不属于当前单 POST 保证；不能宣称 F02 的服务端建议已经实现。
+- **F01/F02**：输入版本 fence、同步 in-flight guard 与 AbortSignal 保留。2026-09-30 在用户要求完成可本地处理项后，补上 API 层合并并发添加、失败重试复用请求编号，以及绑定用户/房间的服务端持久幂等记录。相同编号重试返回同一影片；不同内容或已删除影片返回 409；成功后的再次添加生成新编号，允许有意重复添加。详见 `local-completion-and-manual-acceptance-20260930.md`。
 - **R01**：只提取 B 站预览展示组件 `BilibiliLinkPreview`。保留挂载、房间、解析和播放既有实现，没有为了行数拆写业务。
 - **R02**：对报告列出的 11 个静态候选核对 import、路由、脚本、测试和替代实现后删除 8 个旧模块：DirectSharePage、DirectWatchPage、ConnectionStatsPanel、StreamStatusPanel、signalingApi、WebDAVMountPanel、OpenListMountPanel、useAppStore。旧 direct 路由此前已经跳转主页；当前 SharePage/WebRTC、MountManager/MountFormModal、authStore 保留。danmaku/index、server-files/index 为导出边界，useStreamPush 为明确兼容 re-export，保留这三个文件。
 - **真实电影 HLS 故障**：ODC 107 分钟电影的 1080p playlist 有 1066 个分片。网页来源通过认证代理重写清单时触发原 1000 个资源限制，返回 502。先新增回归复现失败，再把有限默认预算调整为 10000；4 MiB 输入限制、递归深度、URL 校验、授权和同画质策略保留。新增超限拒绝测试。更大输出和 CPU 预算是该调整的代价，不是取消资源限制。
@@ -24,7 +24,7 @@
 | 能力 | 参考源码 | TongMu 当前实现与本轮判断 |
 | --- | --- | --- |
 | 播放能力按容器/codec/pipeline 同组匹配 | SyncTV `synctv-core/src/provider/playback_profile.rs` 的 PlaybackMediaCapability、supports_media、cache_fingerprint | 已适配为 `playback-profile.ts`、客户端 `playbackProfile.ts` 和 `localPlanner.ts`；继续保留，不复制 Rust 服务架构 |
-| Provider 接口与可选动态播放列表 | SyncTV `synctv-core/src/provider/traits.rs` 的 DynamicPlaylistProvider、list_playlist、resolve_item | 当前 registry、ProviderContext 和 adapters 已统一；A01/A02 修复异步降级与参数传递。B 站已有分集、媒体库已有浏览路径；通用动态 playlist 合约仍未实现，需要单独范围，不表述成已整合 |
+| Provider 接口与可选动态播放列表 | SyncTV `synctv-core/src/provider/traits.rs` 的 DynamicPlaylistProvider、list_playlist、resolve_item | 当前 registry、ProviderContext 和 adapters 已统一；A01/A02 修复异步降级与参数传递。B 站已有分集、媒体库已有浏览路径；报告原文为“真有多集需求再做动态播放列表”，因此通用动态合约为按需后续建议，非本轮必修缺陷；不表述成已经整合 |
 | Range / 分片缓存 | SyncTV `synctv-proxy/src/slice_cache/range.rs` 的 ClientRangePlan、ContentRange | TongMu 已有 ByteRange、typed manifest、可选 slice-cache、validator 失效策略；本轮复核并修正真实长清单限制，没有重新移植 proxy |
 | 播放时刷新短效地址 | ZViewer `backend/src/services/movie-direct-resolver.ts` 的 TTL cache、inFlight、挂载反查 | 已有对应服务；TongMu 用 durable movie reference、Provider 和 room grant 扩展，保持数据库/API 兼容 |
 | B 站分集与画质确认 | ZViewer `frontend/src/modules/room/components/MoviePushPanel.tsx` 与 B 站 resolver | 保留现有领域实现，补通用入口自动识别和确认步骤，修复旧结果覆盖与重复点击 |
@@ -56,4 +56,4 @@ Docker CLI 缺失，实际容器/GitHub Actions 未执行；没有推送、合�
 
 自行审查了参数和 AbortSignal 传递、旧输入版本 fence、画质切换期间禁止提交、安全错误展示、Provider 权限及网络策略、highest sibling 选择、清单上限和 socket 清理。没有把测试产物、数据库、JWT 密钥或 references 加入提交。
 
-压缩包建议仍有未完成项：服务端持久幂等、通用动态 playlist 合约、实际 Docker/CI 运行以及人工跨平台验收。它们保留为明确的后续范围，不用本次两个电影样本的通过代替验收。
+2026-09-30 补完服务端持久幂等与主动取消清理后，本机处理和验证结果更新在 `local-completion-and-manual-acceptance-20260930.md`。剩余外部验收为实际 Docker/CI、真机跨平台及长时间真实播放；通用动态 playlist、新来源和大规模拆组件仍属于按需建议。本文上方测试结果是前轮记录，不替代最新提交的验收。

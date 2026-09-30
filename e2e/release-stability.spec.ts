@@ -100,9 +100,8 @@ test('explicitly reselecting a failed movie retries once while state refreshes s
   let attempts = 0
   await page.route('**/api/stream/media/resolve', async (route) => {
     const body = route.request().postDataJSON() as { input?: string }
-    if (body.input?.includes('BV1xx411c7mD')) {
-      attempts += 1
-    }
+    if (!body.input?.includes('BV1xx411c7mD')) return route.continue()
+    attempts += 1
     await route.fulfill({
       status: 500,
       contentType: 'application/json',

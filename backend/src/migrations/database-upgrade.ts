@@ -18,6 +18,11 @@ export const ExpectedSchemaV2 = {
     'user', 'user_mount',
   ],
 } as const;
+export const EXPECTED_CURRENT_SCHEMA_FINGERPRINT = '0c3f68f06ea8cfb2bdee7b242f468248319b1ec9e3caace127fcab7bc5cd28d9';
+export const ExpectedCurrentSchema = {
+  fingerprint: EXPECTED_CURRENT_SCHEMA_FINGERPRINT,
+  tables: [...ExpectedSchemaV2.tables, 'movie_create_request'].sort(),
+};
 export const MIGRATION_STATE_FILENAME = 'database-migration-state.json';
 
 export interface SupportedDatabaseSchema {
@@ -35,6 +40,7 @@ export const SUPPORTED_DATABASE_SCHEMAS: readonly SupportedDatabaseSchema[] = [
   { id: 'tongmu-98c6e71-realtime', fingerprint: 'd9a3ebbe0570d8b2c780ee6119b9759dfad751417a1ba5b6a9526bd699c90afd', evidence: 'commit 98c6e71 entity snapshot', current: false },
   { id: 'tongmu-0707e78-music', fingerprint: 'e1f8731bc652498a7c85d6688f9a1c67e4eb7776e88c4ef8ead894934cbc861c', evidence: 'commit 0707e78 entity snapshot', current: false },
   { id: 'tongmu-8eea2bc-current-v2', fingerprint: EXPECTED_SCHEMA_V2_FINGERPRINT, evidence: 'commit 8eea2bc and 75ed7bd entity snapshots', current: true },
+  { id: 'tongmu-movie-create-receipts', fingerprint: EXPECTED_CURRENT_SCHEMA_FINGERPRINT, evidence: 'AddMovieCreateRequests1790800000000 migration and MovieCreateRequest entity', current: true },
 ] as const;
 
 export const ORDERED_MIGRATIONS = [
@@ -47,6 +53,7 @@ export const ORDERED_MIGRATIONS = [
   { timestamp: 1790500000000, name: 'EncryptLegacyCredentials1790500000000', schema: false },
   { timestamp: 1790600000000, name: 'EncryptMoviePasswords1790600000000', schema: false },
   { timestamp: 1790700000000, name: 'ProtectMovieUrls1790700000000', schema: false },
+  { timestamp: 1790800000000, name: 'AddMovieCreateRequests1790800000000', schema: true },
 ] as const;
 
 interface MigrationRow {
@@ -199,6 +206,15 @@ async function inspectSecretEnvelopes(dataSource: DataSource): Promise<string[]>
   const tableRows = await dataSource.query("SELECT name FROM sqlite_master WHERE type='table'");
   const tables = new Set((tableRows as Array<{ name: string }>).map((row) => row.name));
   const values: string[] = [];
+  if (tables.has('movie_create_request')) {
+    const receipts = await dataSource.query('SELECT "fingerprintEnvelope" FROM "movie_create_request"');
+    for (const receipt of receipts) {
+      if (!isSecretVaultEnvelope(receipt.fingerprintEnvelope)) throw new DatabaseUpgradeError(
+        'DATABASE_SECRET_KEY_INVALID', '影片添加请求凭据格式无效；拒绝猜测。',
+      );
+      values.push(receipt.fingerprintEnvelope);
+    }
+  }
   if (tables.has('bilibili_credential')) {
     const rows = await dataSource.query('SELECT "cookie", "refreshToken" FROM "bilibili_credential"');
     for (const row of rows as Array<Record<string, unknown>>) {
@@ -328,6 +344,9 @@ async function adoptCurrentSchemaBaseline(dataSource: DataSource, rows: Migratio
       await runner.query('CREATE TABLE "migrations" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "timestamp" bigint NOT NULL, "name" varchar NOT NULL)');
     }
     for (const migration of ORDERED_MIGRATIONS.filter((item) => item.schema)) {
+      // The recognized pre-receipt V2 schema may adopt its existing tables,
+      // but must actually run the new migration before recording it.
+      if (migration.name === 'AddMovieCreateRequests1790800000000' && !(await runner.hasTable('movie_create_request'))) continue;
       if (!applied.has(migration.name)) {
         await runner.query(
           'INSERT INTO "migrations" ("timestamp", "name") VALUES (?, ?)',
@@ -402,7 +421,7 @@ async function runDatabaseUpgradeInternal(
   let existingBackupDir: string | null = null;
   if (marker) {
     const sourceStillPresent = marker.sourceFingerprint === inspected.fingerprint;
-    const completedBeforeMarkerCleanup = inspected.fingerprint === EXPECTED_SCHEMA_V2_FINGERPRINT && allApplied;
+    const completedBeforeMarkerCleanup = inspected.fingerprint === EXPECTED_CURRENT_SCHEMA_FINGERPRINT && allApplied;
     if (!sourceStillPresent && !completedBeforeMarkerCleanup) {
       throw new DatabaseUpgradeError(
         'INCOMPLETE_DATABASE_MIGRATION',
@@ -431,10 +450,10 @@ async function runDatabaseUpgradeInternal(
   }
 
   if (allApplied) {
-    if (inspected.fingerprint !== EXPECTED_SCHEMA_V2_FINGERPRINT) {
+    if (inspected.fingerprint !== EXPECTED_CURRENT_SCHEMA_FINGERPRINT) {
       throw new DatabaseUpgradeError(
         'UNSUPPORTED_DATABASE_SCHEMA',
-        'migration history 已完成，但 schema 不等于 ExpectedSchemaV2。',
+        'migration history 已完成，但 schema 不等于 ExpectedCurrentSchema。',
       );
     }
     await assertNoLegacyCredentialStorage(dataSource);
@@ -494,10 +513,10 @@ async function runDatabaseUpgradeInternal(
     await assertIntegrity(dataSource);
     await assertForeignKeys(dataSource);
     const finalSchema = await inspectSchemaFingerprint(dataSource);
-    if (finalSchema.fingerprint !== EXPECTED_SCHEMA_V2_FINGERPRINT) {
+    if (finalSchema.fingerprint !== EXPECTED_CURRENT_SCHEMA_FINGERPRINT) {
       throw new DatabaseUpgradeError(
         'UNSUPPORTED_DATABASE_SCHEMA',
-        `migration 后 fingerprint ${finalSchema.fingerprint} 不等于 ExpectedSchemaV2。`,
+        `migration 后 fingerprint ${finalSchema.fingerprint} 不等于 ExpectedCurrentSchema。`,
         { backupDir: backupDir || undefined },
       );
     }

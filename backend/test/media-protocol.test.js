@@ -163,6 +163,41 @@ test('BrowserResolver prefers an available 1080p sibling over a first-loaded 720
   assert.equal(result.candidates.some(candidate => candidate.url.endsWith('master_720p.m3u8')), false);
 });
 
+test('BrowserResolver actively releases a stalled navigation on cancellation and deadline', async () => {
+  for (const reason of ['cancel', 'deadline']) {
+    const controller = new AbortController();
+    let rejectNavigation; let fallback; let closed = 0; let proxyClosed = 0;
+    const page = { route: async () => {}, on: () => {}, goto: () => new Promise((_resolve, reject) => {
+      rejectNavigation = reject;
+      fallback = setTimeout(() => reject(new Error('fixture navigation timeout')), 300);
+    }) };
+    const context = { newPage: async () => page, close: async () => {
+      closed++; clearTimeout(fallback); rejectNavigation?.(new Error('fixture context closed'));
+    } };
+    const runtime = { playwright: { chromium: { launch: async () => ({ newContext: async () => context, close: async () => {} }) } },
+      createProxy: async () => ({ url: 'http://unused', close: async () => { proxyClosed++; } }) };
+    const started = Date.now();
+    const pending = new BrowserResolver(runtime).resolve('https://8.8.8.8/page', {
+      userId: '1', browserSniff: true, signal: controller.signal,
+      deadline: Date.now() + (reason === 'deadline' ? 30 : 2000),
+    });
+    const cancel = reason === 'cancel' ? setTimeout(() => controller.abort(), 30) : undefined;
+    await assert.rejects(pending);
+    clearTimeout(cancel);
+    assert.ok(Date.now() - started < 200, `${reason} must close stalled browser work promptly`);
+    assert.ok(closed >= 1); assert.equal(proxyClosed, 1);
+  }
+});
+
+test('BrowserResolver releases its slot and proxy if creating a page fails', async () => {
+  let closed = 0; let proxyClosed = 0;
+  const context = { newPage: async () => { throw new Error('fixture page failure'); }, close: async () => { closed++; } };
+  const runtime = { playwright: { chromium: { launch: async () => ({ newContext: async () => context, close: async () => {} }) } },
+    createProxy: async () => ({ url: 'http://unused', close: async () => { proxyClosed++; } }) };
+  for (let i = 0; i < 2; i++) await assert.rejects(new BrowserResolver(runtime).resolve('https://8.8.8.8/page', { userId: '1', browserSniff: true }), /fixture page failure/);
+  assert.equal(closed, 2); assert.equal(proxyClosed, 2);
+});
+
 test('assisted HLS master keeps highest resolution and external audio groups without lower video variants', () => {
   const { highestHlsMaster } = require('../dist/routes/stream/media');
   const master = '#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",URI="audio.m3u8"\n#EXT-X-STREAM-INF:BANDWIDTH=9000000,RESOLUTION=1280x720,AUDIO="a"\n720.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=3840x2160,AUDIO="a"\n4k.m3u8';

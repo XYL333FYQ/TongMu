@@ -84,6 +84,8 @@ export class BrowserResolver implements SourceResolver {
 
   async resolve(input: string, context: ResolverContext): Promise<MediaDescriptor> {
     if (!context.browserSniff) throw new ResolverNotApplicableError('浏览器嗅探未请求');
+    if (context.signal?.aborted) throw new MediaResolutionError('CANCELLED');
+    if (context.deadline !== undefined && Date.now() >= context.deadline) throw new MediaResolutionError('TIMEOUT');
     await assertPublicUrl(input);
     let playwright: { chromium: { launch(options: { headless: boolean; executablePath?: string; proxy?: { server: string }; args?: string[] }): Promise<any> } };
     try { playwright = this.runtime?.playwright ?? require('playwright') as typeof playwright; }
@@ -114,12 +116,20 @@ export class BrowserResolver implements SourceResolver {
       activeBrowsers -= 1;
       throw error;
     }
-    const page = await pageContext.newPage();
+    const controller = new AbortController();
+    let contextClosing: Promise<void> | undefined;
+    const closeContext = (): Promise<void> => contextClosing ??= pageContext.close().catch(() => undefined);
+    const stop = () => { controller.abort(); void closeContext(); };
+    context.signal?.addEventListener('abort', stop, { once: true });
+    const deadlineTimer = context.deadline === undefined ? undefined
+      : setTimeout(stop, Math.max(0, context.deadline - Date.now()));
     const candidates = new Map<string, MediaCandidate>();
     const candidateHeaders = new Map<string, Record<string, string>>();
     const pendingResponses = new Set<Promise<void>>();
     try {
-      if (context.signal?.aborted) throw new Error('browser resolution cancelled');
+      if (context.signal?.aborted || (context.deadline !== undefined && Date.now() >= context.deadline)) stop();
+      if (controller.signal.aborted) throw new Error('browser resolution stopped');
+      const page = await pageContext.newPage();
       await page.route('**/*', async (route: any) => {
         const requestUrl = route.request().url();
         if (!/^https?:/i.test(requestUrl)) return route.continue();
@@ -171,27 +181,30 @@ export class BrowserResolver implements SourceResolver {
       // Extend only an empty result, within the existing request deadline.
       const discoveryDeadline = Math.min(Date.now() + 10_000, context.deadline ?? Infinity);
       while (!candidates.size && Date.now() < discoveryDeadline) {
-        if (context.signal?.aborted) throw new Error('browser resolution cancelled');
+        if (controller.signal.aborted) throw new Error('browser resolution stopped');
         await page.waitForTimeout(Math.min(250, discoveryDeadline - Date.now()));
         await Promise.allSettled([...pendingResponses]);
       }
-      if (context.signal?.aborted) throw new Error('browser resolution cancelled');
+      if (controller.signal.aborted) throw new Error('browser resolution stopped');
       await Promise.allSettled([...pendingResponses]);
       const ranked = rankMediaCandidates([...candidates.values()]).slice(0, 12);
       for (const candidate of ranked) {
         try {
           const headers = candidateHeaders.get(candidate.url);
-          const descriptor = await probeMediaUrl(candidate.url, { headers, sourceType: 'browser-page', resolver: this.name, signal: context.signal });
+          const descriptor = await probeMediaUrl(candidate.url, { headers, sourceType: 'browser-page', resolver: this.name, signal: controller.signal });
           if (descriptor.container === 'unknown') continue;
           return { ...descriptor, input, originalUrl: page.url(), candidates: ranked };
         } catch { /* test next candidate */ }
       }
       throw new ResolverNotApplicableError('浏览器网络中未发现可验证的主媒体');
     } finally {
-      await pageContext.close();
-      await browser.close();
-      await safeProxy?.close();
-      activeBrowsers -= 1;
+      clearTimeout(deadlineTimer);
+      context.signal?.removeEventListener('abort', stop);
+      try {
+        await closeContext();
+        await browser.close().catch(() => undefined);
+        await safeProxy?.close().catch(() => undefined);
+      } finally { activeBrowsers -= 1; }
     }
   }
 }

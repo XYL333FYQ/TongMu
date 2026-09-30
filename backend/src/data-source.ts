@@ -7,6 +7,7 @@ import { User } from './entities/User';
 import { Comment } from './entities/Comment';
 import { BilibiliCredential } from './entities/BilibiliCredential';
 import { Movie } from './entities/Movie';
+import { MovieCreateRequest } from './entities/MovieCreateRequest';
 import { UserMount } from './entities/UserMount';
 import { SystemSettings } from './entities/SystemSettings';
 import { PlaybackState } from './entities/PlaybackState';
@@ -27,6 +28,7 @@ import { AddNcmCredential1790400000000 } from './migrations/1790400000000-AddNcm
 import { EncryptLegacyCredentials1790500000000 } from './migrations/1790500000000-EncryptLegacyCredentials';
 import { EncryptMoviePasswords1790600000000 } from './migrations/1790600000000-EncryptMoviePasswords';
 import { ProtectMovieUrls1790700000000 } from './migrations/1790700000000-ProtectMovieUrls';
+import { AddMovieCreateRequests1790800000000 } from './migrations/1790800000000-AddMovieCreateRequests';
 
 function persistSqlJsDatabase(database: Uint8Array): void {
   // sql.js invokes this after each committed write. Keep the callback
@@ -57,7 +59,7 @@ export const AppDataSource = new DataSource({
   // HTTP/Socket.IO is created. Never let DataSource mutate schema implicitly.
   migrationsRun: false,
   logging: process.env.NODE_ENV === 'development',
-  entities: [Room, Session, User, Comment, BilibiliCredential, NcmCredential, Movie, UserMount, SystemSettings, PlaybackState, ServerFolder, DanmakuTrack, RoomDanmakuMeta, AuditLog, MusicQueueItem, MusicRoomState],
+  entities: [Room, Session, User, Comment, BilibiliCredential, NcmCredential, Movie, MovieCreateRequest, UserMount, SystemSettings, PlaybackState, ServerFolder, DanmakuTrack, RoomDanmakuMeta, AuditLog, MusicQueueItem, MusicRoomState],
   migrations: [
     AddMediaCoreMetadata1789160000000,
     CreateHistoricalBaseline1790000000000,
@@ -68,6 +70,7 @@ export const AppDataSource = new DataSource({
     EncryptLegacyCredentials1790500000000,
     EncryptMoviePasswords1790600000000,
     ProtectMovieUrls1790700000000,
+    AddMovieCreateRequests1790800000000,
   ],
   subscribers: [],
 });

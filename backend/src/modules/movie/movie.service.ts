@@ -17,6 +17,7 @@ import { durableMovieUrl } from '../../services/media/movie-url-storage';
  */
 import { AppDataSource } from '../../data-source';
 import { Movie } from '../../entities/Movie';
+import type { EntityManager } from 'typeorm';
 import type { MovieDto, MovieSourceType } from '../shared';
 
 /** 影片实体别名，便于类型引用 */
@@ -192,8 +193,8 @@ export class MovieService {
    *
    * @returns 序列化后的 MovieDto
    */
-  async createMovie(roomId: string, data: Partial<MovieDto>): Promise<MovieDto> {
-    const repo = AppDataSource.getRepository(Movie);
+  async createMovie(roomId: string, data: Partial<MovieDto>, manager: EntityManager = AppDataSource.manager): Promise<MovieDto> {
+    const repo = manager.getRepository(Movie);
 
     // 调试日志：检查 pages 字段是否被正确接收
     console.log('[movie.service] createMovie input data:', {

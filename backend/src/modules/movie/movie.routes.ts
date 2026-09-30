@@ -30,6 +30,9 @@ import { movieBroadcasterService } from './movie-broadcaster.service';
 import { isInternalOpenListServer } from '../../services/openlist-errors';
 import type { MovieDto } from '../shared';
 import { authorizeRoomMediaGrant } from '../../services/media/room-access';
+import { MovieCreateIdempotency, MovieCreateRequestError } from './movie-create-idempotency';
+
+const movieCreateRequests = new MovieCreateIdempotency(AppDataSource);
 
 /**
  * 校验请求方是否有权限操作房间影片（root 或房间 owner）。
@@ -104,6 +107,11 @@ export function createMovieRouter(io: SocketIOServer): Router {
           return;
         }
 
+        // Fingerprint the client's intent before mount credentials and proxy
+        // policy are filled in. Those server-side details may change on retry.
+        const requestKey = req.get('Idempotency-Key');
+        const requestPayload = requestKey ? structuredClone(data) : undefined;
+
         // WebDAV / OpenList：前端不传凭证（挂载列表 API 不返回密码），
         // 后端从 UserMount 表按 userId + serverUrl 自动补全。
         const sourceType = typeof data.source === 'string' ? data.source.toLowerCase() : '';
@@ -140,10 +148,21 @@ export function createMovieRouter(io: SocketIOServer): Router {
           }
         }
 
-        const movie = await movieService.createMovie(roomId, data);
+        const movie = requestKey
+          ? await movieCreateRequests.execute(roomId, req.user!.userId, requestKey, requestPayload,
+            manager => movieService.createMovie(roomId, data, manager),
+            async (manager, id) => {
+              const existing = await manager.getRepository(MovieEntity).findOneBy({ id, roomId });
+              return existing ? movieService.serializeMovie(existing) : null;
+            })
+          : await movieService.createMovie(roomId, data);
         await movieBroadcasterService.broadcastMovieList(io, roomId);
         res.status(201).json({ success: true, movie });
       } catch (err) {
+        if (err instanceof MovieCreateRequestError) {
+          res.status(err.status).json({ success: false, message: err.message });
+          return;
+        }
         console.error('[POST /movies] error:', err);
         res.status(500).json({ success: false, message: '新增影片失败' });
       }

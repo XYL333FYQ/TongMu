@@ -29,11 +29,11 @@ The default database is `<CONFIG_DIR>/dev.sqlite`; Docker continues to use
 SecretVault master key is `<CONFIG_DIR>/secret-vault.json`. The database and
 that key are one recoverable unit whenever encrypted credentials exist.
 
-`ExpectedSchemaV2` is defined in
+`ExpectedCurrentSchema` is defined in
 `backend/src/migrations/database-upgrade.ts`. Its fingerprint is:
 
 ```text
-99b1097bff5278e0365bf0336c29a1369fd6abc0345932f98c3c44ac7934a7a9
+0c3f68f06ea8cfb2bdee7b242f468248319b1ec9e3caace127fcab7bc5cd28d9
 ```
 
 The static inventory covers columns, normalized SQLite types, nullability,
@@ -43,7 +43,7 @@ defaults, primary keys, unique/explicit indexes, and foreign keys for:
 | --- | --- |
 | Users and auth | `user` including password hash, role/status, avatar and token invalidation |
 | Rooms and sessions | `room`, `session`; room owner, approval/mute/moderator/Voice state |
-| Movies/media | `movie`, `playback_states`; legacy source fields remain compatible |
+| Movies/media | `movie`, `playback_states`, `movie_create_request`; legacy source fields remain compatible |
 | Provider mounts | `user_mount`; Local has no credential, WebDAV/FTP/OpenList/Emby/Jellyfin fields remain |
 | Provider credentials | `bilibili_credential`, `ncm_credentials` |
 | Music | `music_queue_items`, `music_room_states`; stable queue IDs/order and independent generation/version |
@@ -68,6 +68,7 @@ not used as historical database evidence.
 | `tongmu-98c6e71-realtime` | commit `98c6e71` | `d9a3ebbe0570d8b2c780ee6119b9759dfad751417a1ba5b6a9526bd699c90afd` | playback version/source generation |
 | `tongmu-0707e78-music` | commit `0707e78` | `e1f8731bc652498a7c85d6688f9a1c67e4eb7776e88c4ef8ead894934cbc861c` | Music queue/state tables |
 | `tongmu-8eea2bc-current-v2` | commits `8eea2bc` and `75ed7bd` | `99b1097bff5278e0365bf0336c29a1369fd6abc0345932f98c3c44ac7934a7a9` | NCM table/current synchronize-created schema |
+| `tongmu-movie-create-receipts` | `MovieCreateRequest` entity and `AddMovieCreateRequests1790800000000` | `0c3f68f06ea8cfb2bdee7b242f468248319b1ec9e3caace127fcab7bc5cd28d9` | current schema with durable private add-request receipts |
 
 An existing empty file and a missing file are fresh installs. Any database with
 application tables whose fingerprint is absent from this table fails with
@@ -85,11 +86,16 @@ repository history remain **UNKNOWN** and do not receive guessed migrations.
 | `1790300000000` | `AddMusicPersistence1790300000000` | Music queue/state tables, constraints and foreign keys |
 | `1790400000000` | `AddNcmCredential1790400000000` | fresh NCM credential schema only |
 | `1790500000000` | `EncryptLegacyCredentials1790500000000` | authenticated credential conversion and envelope verification |
+| `1790600000000` | `EncryptMoviePasswords1790600000000` | compatibility conversion of movie passwords to SecretVault |
+| `1790700000000` | `ProtectMovieUrls1790700000000` | protected URLs and durable movie references |
+| `1790800000000` | `AddMovieCreateRequests1790800000000` | durable add-request receipts scoped to authenticated actor and room |
 
 Fresh installs run the same chain. A current V2 database without migration
 records is adopted only when its complete fingerprint exactly equals
-`ExpectedSchemaV2`; schema migrations are then recorded and the credential
-migration still runs. A normal second startup does not re-add columns, rewrite
+the recognized pre-receipt `ExpectedSchemaV2`; only its existing schema migrations
+are recorded, then credential conversions and the new receipt-table migration
+actually run. The current entity schema is separately recognized by its exact
+fingerprint. A normal second startup does not re-add columns, rewrite
 credentials, create another backup, or advance the version.
 
 Destructive `down()` migrations are intentionally unsupported. Downgrade and

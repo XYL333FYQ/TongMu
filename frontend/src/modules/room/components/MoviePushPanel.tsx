@@ -1,5 +1,6 @@
 import { BilibiliLinkPreview } from './BilibiliLinkPreview'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { MovieSubmissionError } from '@/lib/movieSubmission'
 import {
   Link2,
   QrCode,
@@ -1274,7 +1275,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
       }
     } catch (err) {
       if (inputRevision !== resolveRevisionRef.current) return
-      const errorMessage = sourceType === 'mp4'
+      const errorMessage = err instanceof MovieSubmissionError ? err.message : sourceType === 'mp4'
         ? mediaResolveMessage(err)
         : err instanceof Error ? err.message : '添加影片失败'
       console.error('[MoviePushPanel] add movie error:', sourceType === 'mp4' ? errorMessage : err)

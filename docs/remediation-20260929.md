@@ -13,7 +13,7 @@
 
 ## 逐项判断与实现
 
-后续用户要求继续核对完整交付包后，F03/F10/R01/R02 的追加实施与真实 ODC 站点验证记录在 [`package-followup-20260929.md`](package-followup-20260929.md)。下表为前轮检查点，相关旧决策以后续记录为准。
+后续用户要求继续核对完整交付包后，F03/F10/R01/R02 的追加实施与真实 ODC 站点验证记录在 [`package-followup-20260929.md`](package-followup-20260929.md)；持久幂等、主动取消及交给用户的验收步骤见 [`local-completion-and-manual-acceptance-20260930.md`](local-completion-and-manual-acceptance-20260930.md)。下表为前轮检查点，相关旧决策以后续记录为准。
 
 | 编号 | 当前处理 | 提交 / 主要文件 |
 | --- | --- | --- |

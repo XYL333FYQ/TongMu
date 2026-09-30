@@ -652,6 +652,43 @@ test('repeated Enter while a movie POST is pending sends one add request', async
   expect(postCount).toBe(1);
 });
 
+test('a lost movie POST response retries the durable key without creating a duplicate', async ({ page }) => {
+  await loginAndCreateRoom(page);
+  await page.getByRole('tab', { name: '添加影片', exact: true }).click();
+  const panel = page.getByRole('tabpanel', { name: '添加影片' });
+  const input = page.getByPlaceholder(/影片网页、MP4\/MKV/);
+  const keys: string[] = [];
+  const movieIds: number[] = [];
+  await page.route('**/api/rooms/*/movies', async route => {
+    if (route.request().method() !== 'POST') return route.continue();
+    const response = await route.fetch();
+    if ([401, 403].includes(response.status())) return route.fulfill({ response });
+    expect(response.status(), (await response.json()).message).toBe(201);
+    keys.push(route.request().headers()['idempotency-key']);
+    movieIds.push((await response.json()).movie.id);
+    if (keys.length === 1) await route.abort('failed');
+    else await route.fulfill({ response });
+  });
+  await input.fill(`${FIXTURE_ORIGIN}/normal.mp4`);
+  await input.press('Enter');
+  const add = panel.getByRole('button', { name: '添加', exact: true });
+  await expect(add).toBeVisible();
+  await add.click();
+  await expect.poll(() => keys.length).toBe(1);
+  await expect(panel.getByText('添加结果尚未确认，请再次点击添加；重试不会重复创建影片')).toBeVisible();
+  await expect(add).toBeEnabled();
+  await add.click();
+  await expect(page.getByText('影片已添加')).toBeVisible();
+  expect(keys[0]).toMatch(/^[a-f0-9]{32}$/);
+  expect(keys).toEqual([keys[0], keys[0]]);
+  expect(movieIds).toEqual([movieIds[0], movieIds[0]]);
+  const movieCount = await page.evaluate(async id => {
+    const { useRoomStore } = await import('/src/store/roomStore.ts');
+    return useRoomStore.getState().movies.filter(movie => movie.id === id).length;
+  }, movieIds[0]);
+  expect(movieCount).toBe(1);
+});
+
 test('unified link preview recognizes Bilibili and confirms the selected page and quality', async ({ page }) => {
   await loginAndCreateRoom(page);
   await page.getByRole('tab', { name: '添加影片', exact: true }).click();
@@ -1313,13 +1350,18 @@ test('private source token stays out of media resolve and Socket movie-list; hos
   });
   expect(refresh.status, JSON.stringify(refresh.body)).toBe(200);
   expect(JSON.stringify(refresh.body)).not.toContain('private-source-secret');
+  await page.getByRole("tab", { name: "影片列表", exact: true }).click();
+  await expect.poll(() => page.evaluate(async () => {
+    // @ts-ignore application module
+    const { useRoomStore } = await import('/src/store/roomStore.ts');
+    return useRoomStore.getState().movies.length;
+  })).toBe(1);
   await page.evaluate(async () => {
     // @ts-ignore application module
     const { useRoomStore } = await import('/src/store/roomStore.ts');
     const store = useRoomStore.getState(); const movie = store.movies[0];
     await store.updateMovie(store.roomId, movie.id, { mediaDescriptor: { ...movie.mediaDescriptor, expiresAt: 0 } });
   });
-  await page.getByRole("tab", { name: "影片列表", exact: true }).click();
   await page.getByText('normal.mp4', { exact: true }).last().locator('../..').getByRole('button', { name: '播放', exact: true }).click();
   await expect.poll(() => page.evaluate(async () => {
     // @ts-ignore application module

@@ -1,5 +1,7 @@
 import { create } from 'zustand'
-import { apiFetch, safeJson } from '@/lib/api'
+import { apiFetch, getApiUrl, safeJson } from '@/lib/api'
+import { createMovieSubmitter, MovieSubmissionError } from '@/lib/movieSubmission'
+import { useAuthStore } from './authStore'
 import type {
   ResolvedSource,
   QualityOption,
@@ -27,6 +29,17 @@ export interface AniSubsSourceMeta {
 function jsonHeaders(): Record<string, string> {
   return { 'Content-Type': 'application/json' }
 }
+
+const submitMovie = createMovieSubmitter(async (body, key, scope) => {
+  const [, , roomId] = JSON.parse(scope) as [string, string | null, string]
+  const res = await apiFetch(`/api/rooms/${encodeURIComponent(roomId)}/movies`, {
+    method: 'POST',
+    headers: { ...jsonHeaders(), 'Idempotency-Key': key },
+    body,
+  })
+  const data = await parseResponse<{ success: boolean; message?: string }>(res)
+  if (!res.ok || !data.success) throw new MovieSubmissionError(res.status, data.message || '新增影片失败')
+})
 
 export interface Viewer {
   socketId: string
@@ -566,22 +579,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
   },
 
   addMovie: async (roomId, payload) => {
-    const res = await apiFetch(
-      `/api/rooms/${encodeURIComponent(roomId)}/movies`,
-      {
-        method: 'POST',
-        headers: jsonHeaders(),
-        body: JSON.stringify(payload),
-      }
-    )
-    const data = await parseResponse<{
-      success: boolean
-      message?: string
-      movie?: MovieDto
-    }>(res)
-    if (!res.ok || !data.success) {
-      throw new Error(data.message || '新增影片失败')
-    }
+    await submitMovie(JSON.stringify([getApiUrl(), useAuthStore.getState().user?.id ?? null, roomId]), payload)
     // 不直接更新本地 state，等待后端广播 movie-list 刷新
   },
 
