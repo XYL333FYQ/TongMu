@@ -3,7 +3,7 @@ import { probeMediaUrl } from '../probe';
 import type { MediaCandidate, MediaDescriptor, ResolverContext, SourceResolver } from '../types';
 import { ResolverNotApplicableError } from '../types';
 import { MediaResolutionError } from '../resolution-error';
-import { scoreMediaCandidate } from '../candidates';
+import { rankMediaCandidates, scoreMediaCandidate } from '../candidates';
 import { createBrowserSafeProxy } from './browser-safe-proxy';
 
 const MEDIA_URL_HINT = /(?:\.m3u8|\.mpd|\.mp4|\.m4v|\.webm|\.mkv|\.flv|videoplayback|playurl)(?:[?#&/]|$)/i;
@@ -166,9 +166,18 @@ export class BrowserResolver implements SourceResolver {
       });
       await page.goto(input, { waitUntil: 'domcontentloaded', timeout: 20_000 });
       await page.waitForTimeout(5_000);
+      await Promise.allSettled([...pendingResponses]);
+      // A SPA can load its playback API after the initial observation window.
+      // Extend only an empty result, within the existing request deadline.
+      const discoveryDeadline = Math.min(Date.now() + 10_000, context.deadline ?? Infinity);
+      while (!candidates.size && Date.now() < discoveryDeadline) {
+        if (context.signal?.aborted) throw new Error('browser resolution cancelled');
+        await page.waitForTimeout(Math.min(250, discoveryDeadline - Date.now()));
+        await Promise.allSettled([...pendingResponses]);
+      }
       if (context.signal?.aborted) throw new Error('browser resolution cancelled');
       await Promise.allSettled([...pendingResponses]);
-      const ranked = [...candidates.values()].sort((a, b) => b.score - a.score).slice(0, 12);
+      const ranked = rankMediaCandidates([...candidates.values()]).slice(0, 12);
       for (const candidate of ranked) {
         try {
           const headers = candidateHeaders.get(candidate.url);

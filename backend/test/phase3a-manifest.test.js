@@ -5,8 +5,26 @@ const {
   classifyHlsPlaylist,
   rewriteHlsManifest,
   rewriteDashManifest,
+  DEFAULT_MAX_MANIFEST_RESOURCES,
 } = require('../dist/services/media/manifest/mapper');
 const { buildBilibiliUnifiedManifest } = require('../dist/services/media/manifest/bilibili');
+
+test('normal long HLS movies fit the bounded default resource budget', () => {
+  // The authorized 107-minute ODC sample has 1066 six-second segments.
+  const playlist = '#EXTM3U\n' + Array.from({ length: 1066 }, (_, i) => `#EXTINF:6,\n1080p_${i}.ts`).join('\n') + '\n#EXT-X-ENDLIST';
+  const seen = [];
+  const result = rewriteHlsManifest(playlist, hlsOptions(mapper('/opaque', seen)));
+  assert.equal(seen.length, 1066);
+  assert.equal(result.playlistKind, 'VodMedia');
+  assert.ok(result.body.includes('/opaque/hls/Segment/1066'));
+});
+
+test('default manifest resource cap still rejects excessive segment lists', () => {
+  const playlist = '#EXTM3U\n' + Array.from({ length: DEFAULT_MAX_MANIFEST_RESOURCES + 1 }, (_, i) => `segment_${i}.ts`).join('\n');
+  let mapped = 0;
+  assert.throws(() => rewriteHlsManifest(playlist, hlsOptions(() => { mapped += 1; return '/opaque'; })), error => error.code === 'RESOURCE_LIMIT');
+  assert.equal(mapped, DEFAULT_MAX_MANIFEST_RESOURCES);
+});
 
 function mapper(prefix, seen) {
   return (resource) => {

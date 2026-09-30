@@ -120,6 +120,49 @@ test('BrowserResolver entire captured-response -> probe -> descriptor chain pres
   assert.deepEqual(result.credentialOrigins, []);
 });
 
+test('BrowserResolver waits for a delayed SPA media response within its deadline', async t => {
+  let now = 100_000;
+  let listener;
+  let sent = false;
+  t.mock.method(Date, 'now', () => now);
+  const page = {
+    route: async () => {}, on: (_event, callback) => { listener = callback; }, goto: async () => {},
+    waitForTimeout: async ms => {
+      now += ms;
+      if (!sent && now >= 106_000) {
+        sent = true;
+        listener({ url: () => 'https://8.8.8.8/delayed.mp4', headers: () => ({ 'content-type': 'video/mp4' }), request: () => ({ allHeaders: async () => ({}) }) });
+      }
+    },
+    url: () => 'https://8.8.8.8/page',
+  };
+  const context = { newPage: async () => page, close: async () => {} };
+  const runtime = { playwright: { chromium: { launch: async () => ({ newContext: async () => context, close: async () => {} }) } }, createProxy: async () => ({ url: 'http://unused', close: async () => {} }) };
+  t.mock.method(require('undici'), 'fetch', async (_url, options) => new Response(options.method === 'HEAD' ? null : Buffer.concat([Buffer.alloc(4), Buffer.from('ftypisom')]), { status: 200, headers: { 'content-type': 'video/mp4' } }));
+  const result = await new BrowserResolver(runtime).resolve('https://8.8.8.8/page', { userId: '1', browserSniff: true, deadline: 115_000 });
+  assert.equal(result.container, 'mp4');
+  assert.ok(now >= 106_000 && now < 115_000);
+});
+
+test('BrowserResolver prefers an available 1080p sibling over a first-loaded 720p master', async t => {
+  let listener;
+  const body = Buffer.from(JSON.stringify({ variants: ['https://8.8.8.8/movie/master_720p.m3u8', 'https://8.8.8.8/movie/master_1080p.m3u8'] }));
+  const page = {
+    route: async () => {}, on: (_event, callback) => { listener = callback; },
+    goto: async () => {
+      listener({ url: () => 'https://8.8.8.8/movie/master_720p.m3u8', headers: () => ({ 'content-type': 'application/vnd.apple.mpegurl' }), request: () => ({ allHeaders: async () => ({}) }) });
+      listener({ url: () => 'https://8.8.8.8/api/playback', headers: () => ({ 'content-type': 'application/json', 'content-length': String(body.length) }), body: async () => body, request: () => ({ allHeaders: async () => ({}) }) });
+    },
+    waitForTimeout: async () => {}, url: () => 'https://8.8.8.8/page',
+  };
+  const context = { newPage: async () => page, cookies: async () => [], close: async () => {} };
+  const runtime = { playwright: { chromium: { launch: async () => ({ newContext: async () => context, close: async () => {} }) } }, createProxy: async () => ({ url: 'http://unused', close: async () => {} }) };
+  t.mock.method(require('undici'), 'fetch', async (_url, options) => new Response(options.method === 'HEAD' ? null : '#EXTM3U\n#EXTINF:6,\nsegment.ts\n#EXT-X-ENDLIST', { status: 200, headers: { 'content-type': 'application/vnd.apple.mpegurl' } }));
+  const result = await new BrowserResolver(runtime).resolve('https://8.8.8.8/page', { userId: '1', browserSniff: true });
+  assert.equal(result.finalUrl, 'https://8.8.8.8/movie/master_1080p.m3u8');
+  assert.equal(result.candidates.some(candidate => candidate.url.endsWith('master_720p.m3u8')), false);
+});
+
 test('assisted HLS master keeps highest resolution and external audio groups without lower video variants', () => {
   const { highestHlsMaster } = require('../dist/routes/stream/media');
   const master = '#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",URI="audio.m3u8"\n#EXT-X-STREAM-INF:BANDWIDTH=9000000,RESOLUTION=1280x720,AUDIO="a"\n720.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=3840x2160,AUDIO="a"\n4k.m3u8';

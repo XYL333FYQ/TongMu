@@ -15,7 +15,9 @@ import {
 } from './model';
 
 export const DEFAULT_MAX_MANIFEST_BYTES = 4 * 1024 * 1024;
-export const DEFAULT_MAX_MANIFEST_RESOURCES = 1000;
+// Long VOD playlists routinely exceed 1000 segments (107 minutes at ~6s).
+// Keep a finite CPU/output budget alongside the independent 4 MiB input cap.
+export const DEFAULT_MAX_MANIFEST_RESOURCES = 10_000;
 export const DEFAULT_MAX_MANIFEST_DEPTH = 4;
 
 function fail(code: string, message: string): never {

@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { connect } from 'node:net';
+import { connect, type Socket } from 'node:net';
 import { Readable } from 'node:stream';
 import { fetchWithProxyPolicy, resolvePublicAddresses, validateProxyUrl } from '../../proxy/safe-fetch';
 
@@ -61,21 +61,36 @@ async function proxyHttp(req: IncomingMessage, res: ServerResponse): Promise<voi
  */
 export async function createBrowserSafeProxy(): Promise<{ url: string; close: () => Promise<void> }> {
   const server = createServer((req, res) => { void proxyHttp(req, res); });
+  const sockets = new Set<Socket>();
+  server.on('connection', socket => {
+    sockets.add(socket);
+    socket.on('error', () => socket.destroy());
+    socket.once('close', () => sockets.delete(socket));
+  });
   server.on('connect', (req, clientSocket, head) => {
+    let upstream: Socket | undefined;
+    const disposeTunnel = () => { clientSocket.destroy(); upstream?.destroy(); };
+    clientSocket.on('error', disposeTunnel);
+    clientSocket.once('close', disposeTunnel);
     void (async () => {
       try {
         const target = validateProxyUrl(`https://${req.url ?? ''}/`);
         const port = Number(target.port || 443);
         if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('非法端口');
         const addresses = await resolvePublicAddresses(target.hostname);
-        const upstream = connect({ host: addresses[0].address, port });
+        if (clientSocket.destroyed) return;
+        upstream = connect({ host: addresses[0].address, port });
+        const tunnel = upstream;
+        sockets.add(tunnel);
+        tunnel.once('close', () => { sockets.delete(tunnel); clientSocket.destroy(); });
+        tunnel.on('error', disposeTunnel);
         upstream.once('connect', () => {
+          if (clientSocket.destroyed) { tunnel.destroy(); return; }
           clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
-          if (head.length) upstream.write(head);
-          upstream.pipe(clientSocket);
-          clientSocket.pipe(upstream);
+          if (head.length) tunnel.write(head);
+          tunnel.pipe(clientSocket);
+          clientSocket.pipe(tunnel);
         });
-        upstream.once('error', () => clientSocket.destroy());
       } catch (error) {
         clientSocket.end(`HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n${error instanceof Error ? error.message : ''}`);
       }
@@ -89,6 +104,10 @@ export async function createBrowserSafeProxy(): Promise<{ url: string; close: ()
   if (!address || typeof address === 'string') throw new Error('无法启动浏览器安全代理');
   return {
     url: `http://127.0.0.1:${address.port}`,
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    close: () => new Promise<void>((resolve) => {
+      // server.close alone does not dispose upgraded CONNECT tunnels.
+      for (const socket of sockets) socket.destroy();
+      server.close(() => resolve());
+    }),
   };
 }

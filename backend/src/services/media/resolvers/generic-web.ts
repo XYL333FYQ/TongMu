@@ -4,7 +4,7 @@ import { probeMediaUrl } from '../probe';
 import type { MediaCandidate, MediaDescriptor, ResolverContext, SourceResolver } from '../types';
 import { ResolverNotApplicableError } from '../types';
 import { MediaResolutionError } from '../resolution-error';
-import { scoreMediaCandidate } from '../candidates';
+import { rankMediaCandidates, scoreMediaCandidate } from '../candidates';
 
 const MAX_HTML_BYTES = 1024 * 1024;
 const MAX_CANDIDATES_TO_PROBE = 12;
@@ -95,12 +95,11 @@ export class GenericWebResolver implements SourceResolver {
       } catch { return undefined; }
     }));
     const playable = probed.filter((item): item is { candidate: MediaCandidate; descriptor: MediaDescriptor } => !!item);
-    playable.sort((a, b) => {
-      const manifestBonus = ['hls', 'dash'].includes(a.descriptor.transport) ? 20 : 0;
-      const otherBonus = ['hls', 'dash'].includes(b.descriptor.transport) ? 20 : 0;
-      return (b.candidate.score + otherBonus) - (a.candidate.score + manifestBonus);
-    });
-    const selected = playable[0];
+    const preferred = rankMediaCandidates(playable.map(item => ({
+      ...item.candidate,
+      score: item.candidate.score + (['hls', 'dash'].includes(item.descriptor.transport) ? 20 : 0),
+    })))[0];
+    const selected = playable.find(item => item.candidate.url === preferred?.url);
     if (!selected) throw new ResolverNotApplicableError('网页中未发现可验证的媒体资源');
     return {
       ...selected.descriptor, title: discovered.title || selected.descriptor.title,
@@ -131,6 +130,6 @@ export function discoverCandidatesFromHtml(
     }
     return {
       title: $('title').first().text().trim() || undefined,
-      candidates: [...candidates.values()].sort((a, b) => b.score - a.score),
+      candidates: rankMediaCandidates([...candidates.values()]),
     };
 }

@@ -215,6 +215,35 @@ test('browser safe proxy blocks private HTTP and HTTPS CONNECT targets at the so
   assert.equal(await connectRequest(port, '[::1]:443'), 403);
 });
 
+test('browser CONNECT client abort is handled and disposes both tunnel sockets', async t => {
+  const net = require('node:net');
+  const { PassThrough } = require('node:stream');
+  const createServer = http.createServer;
+  let serverClient;
+  let browserClient;
+  const upstream = new PassThrough();
+  t.mock.method(http, 'createServer', (...args) => {
+    const server = createServer(...args);
+    server.on('connect', (_request, socket) => { serverClient = socket; });
+    return server;
+  });
+  t.mock.method(net, 'connect', () => {
+    setImmediate(() => upstream.emit('connect'));
+    return upstream;
+  });
+  const proxy = await createBrowserSafeProxy();
+  t.after(async () => { browserClient?.destroy(); serverClient?.destroy(); upstream.destroy(); await proxy.close(); });
+  await new Promise((resolve, reject) => {
+    const request = http.request({ hostname: '127.0.0.1', port: Number(new URL(proxy.url).port), method: 'CONNECT', path: '8.8.8.8:443' });
+    request.on('connect', (_response, socket) => { browserClient = socket; socket.on('error', () => {}); resolve(); });
+    request.on('error', reject);
+    request.end();
+  });
+  assert.doesNotThrow(() => serverClient.emit('error', Object.assign(new Error('write ECONNABORTED'), { code: 'ECONNABORTED' })));
+  assert.equal(serverClient.destroyed, true);
+  assert.equal(upstream.destroyed, true);
+});
+
 test('proxy URL validation rejects non-http schemes and embedded credentials', () => {
   assert.throws(() => validateProxyUrl('file:///etc/passwd'), /HTTP\/HTTPS/);
   assert.throws(() => validateProxyUrl('http://user:pass@example.com/video'), /凭证/);
@@ -799,6 +828,15 @@ test('generic page extraction combines video tags, JSON-LD and player config whi
   assert.ok(result.candidates.some((candidate) => candidate.url.includes('main-1080.mp4')));
   assert.ok(result.candidates.some((candidate) => candidate.url.includes('backup.mpd')));
   assert.ok(result.candidates.at(-1).url.includes('preroll-ad.mp4'));
+});
+
+test('generic page retains highest sibling without promoting unrelated ads', () => {
+  const result = discoverCandidatesFromHtml('<video src="/movie/master_720p.m3u8"></video><script type="application/ld+json">{"contentUrl":"https://watch.example/movie/master_1080p.m3u8"}</script><video src="https://ads.example/preroll_2160p.m3u8"></video>', 'https://watch.example/page');
+  assert.equal(result.candidates[0].url, 'https://watch.example/movie/master_1080p.m3u8');
+  assert.equal(result.candidates.some(candidate => candidate.url.includes('720p')), false);
+  const only = discoverCandidatesFromHtml('<video src="/movie/master_720p.m3u8"></video>', 'https://watch.example/page');
+  assert.equal(only.candidates.length, 1);
+  assert.ok(only.candidates[0].url.endsWith('720p.m3u8'));
 });
 
 test('browser resolver uses complete request headers and reselects cookies for JSON-discovered URLs', async () => {
