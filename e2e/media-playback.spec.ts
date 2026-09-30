@@ -1019,6 +1019,33 @@ test('room modal traps keyboard focus and restores its trigger on close', async 
   await expect(trigger).toBeFocused();
 });
 
+test('source dropdown and mount input expose keyboard and error semantics', async ({ page }) => {
+  await loginAndCreateRoom(page);
+  await page.getByRole('tab', { name: '添加影片', exact: true }).click();
+  const panel = page.getByRole('tabpanel', { name: '添加影片' });
+  await panel.getByRole('button', { name: 'WebDAV', exact: true }).click();
+  const mode = panel.locator('button[aria-haspopup="listbox"]').last();
+  await mode.focus();
+  await mode.press('ArrowDown');
+  const listbox = page.getByRole('listbox');
+  await expect(listbox.getByRole('option', { name: '服务器转发' })).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  const direct = listbox.getByRole('option', { name: '直链直连' });
+  await expect(direct).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(mode).toHaveAttribute('aria-expanded', 'false');
+  await expect(mode).toContainText('直链直连');
+
+  await page.goto('/profile');
+  await page.getByRole('button', { name: '添加挂载' }).click();
+  const name = page.getByRole('textbox', { name: '挂载名称' });
+  await page.getByText('挂载名称', { exact: true }).click();
+  await expect(name).toBeFocused();
+  await page.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(name).toHaveAttribute('aria-invalid', 'true');
+  expect(await name.getAttribute('aria-describedby')).toBeTruthy();
+});
+
 for (const [asset, engine] of [['/hls/master.m3u8', /Engine: hls/], ['/dash/manifest.mpd', /Engine: dash/], ['/normal.mp4?signature=public-playback&expires=9999999999', /Engine: direct/]] as const) {
   test(`public ${asset} plays Direct without gateway media requests`, async ({ page }) => {
     const gateway: string[] = [];

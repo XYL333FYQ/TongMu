@@ -5,6 +5,7 @@ import {
   useLayoutEffect,
   useCallback,
   useMemo,
+  useId,
 } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronDown, Check } from 'lucide-react'
@@ -39,6 +40,11 @@ export function Dropdown({
   onChange,
 }: DropdownProps) {
   const [open, setOpen] = useState(false)
+  const generatedId = useId()
+  const labelId = `${generatedId}-label`
+  const valueId = `${generatedId}-value`
+  const menuId = `${generatedId}-menu`
+  const errorId = `${generatedId}-error`
   const [closing, setClosing] = useState(false)
   const [position, setPosition] = useState<{
     top: number
@@ -49,6 +55,7 @@ export function Dropdown({
   } | null>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const focusMenuOnOpenRef = useRef(false)
   // 记录上次测量到的菜单高度，用于判断是否需要重新定位（避免无限循环）
   const lastMeasuredHeightRef = useRef<number | null>(null)
 
@@ -123,6 +130,14 @@ export function Dropdown({
   }, [open])
 
   useEffect(() => {
+    if (!open || !position || !focusMenuOnOpenRef.current) return
+    focusMenuOnOpenRef.current = false
+    const options = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]:not([disabled])') ?? [])
+    const initialOption = options.find((option) => option.getAttribute('aria-selected') === 'true') ?? options[0]
+    initialOption?.focus()
+  }, [open, position])
+
+  useEffect(() => {
     if (!open) return
     computePosition()
     const handler = () => {
@@ -170,26 +185,61 @@ export function Dropdown({
   const handleSelect = (opt: DropdownOption) => {
     onChange?.(String(opt.value))
     closeMenu()
+    triggerRef.current?.focus()
+  }
+
+  const handleMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      closeMenu()
+      triggerRef.current?.focus()
+      return
+    }
+    if (event.key === 'Tab') { closeMenu(); return }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+    const enabled = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]:not([disabled])') ?? [])
+    if (!enabled.length) return
+    event.preventDefault()
+    const current = enabled.indexOf(document.activeElement as HTMLButtonElement)
+    const next = event.key === 'Home' ? 0
+      : event.key === 'End' ? enabled.length - 1
+      : event.key === 'ArrowDown' ? (current + 1) % enabled.length
+      : (current - 1 + enabled.length) % enabled.length
+    enabled[next].focus()
   }
 
   return (
     <div className={cn('w-full text-left', className)}>
       {label && (
-        <label className="mb-1.5 block text-sm font-medium text-[var(--md-sys-color-on-surface-variant)]">
+        <span id={labelId} className="mb-1.5 block text-sm font-medium text-[var(--md-sys-color-on-surface-variant)]">
           {label}
-        </label>
+        </span>
       )}
       <button
         ref={triggerRef}
         type="button"
         disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open && !closing}
+        aria-controls={open ? menuId : undefined}
+        aria-labelledby={label ? `${labelId} ${valueId}` : undefined}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? errorId : undefined}
         onClick={() => {
           if (open) {
             closeMenu()
           } else {
+            focusMenuOnOpenRef.current = true
             setOpen(true)
             setClosing(false)
           }
+        }}
+        onKeyDown={(event) => {
+          if (open || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+          event.preventDefault()
+          focusMenuOnOpenRef.current = true
+          setOpen(true)
+          setClosing(false)
         }}
         className={cn(
           'zen-input-glow w-full flex items-center justify-between gap-2 rounded-[var(--md-sys-shape-corner)] border border-[var(--md-sys-color-outline)] bg-[var(--md-sys-color-surface-container-high)] px-3 py-2 text-sm text-[var(--md-sys-color-on-surface)] focus:border-[var(--md-sys-color-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--md-sys-color-primary)] disabled:cursor-not-allowed disabled:bg-[var(--md-sys-color-surface-container)] disabled:opacity-60',
@@ -199,7 +249,7 @@ export function Dropdown({
             'border-[var(--md-sys-color-error)] focus:border-[var(--md-sys-color-error)] focus:ring-[var(--md-sys-color-error)]'
         )}
       >
-        <span className="truncate">{selectedLabel}</span>
+        <span id={valueId} className="truncate">{selectedLabel}</span>
         <ChevronDown
           className={cn(
             'h-4 w-4 shrink-0 text-[var(--md-sys-color-on-surface-variant)] transition-transform duration-200',
@@ -208,7 +258,7 @@ export function Dropdown({
         />
       </button>
       {error && (
-        <p className="mt-1 text-xs text-[var(--md-sys-color-error)]">{error}</p>
+        <p id={errorId} className="mt-1 text-xs text-[var(--md-sys-color-error)]">{error}</p>
       )}
 
       {open &&
@@ -216,6 +266,10 @@ export function Dropdown({
         createPortal(
           <div
             ref={menuRef}
+            id={menuId}
+            role="listbox"
+            aria-labelledby={label ? labelId : valueId}
+            onKeyDown={handleMenuKeyDown}
             className={cn(
               'glass-strong fixed overflow-auto rounded-[var(--md-sys-shape-corner)] p-1.5 shadow-lg',
               closing ? 'zen-dropdown-exit' : 'zen-dropdown-enter'
@@ -239,6 +293,8 @@ export function Dropdown({
                 <button
                   key={opt.value}
                   type="button"
+                  role="option"
+                  aria-selected={active}
                   disabled={optDisabled}
                   onClick={() => {
                     if (optDisabled) return
