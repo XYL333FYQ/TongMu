@@ -13,6 +13,8 @@
 
 ## 逐项判断与实现
 
+后续用户要求继续核对完整交付包后，F03/F10/R01/R02 的追加实施与真实 ODC 站点验证记录在 [`package-followup-20260929.md`](package-followup-20260929.md)。下表为前轮检查点，相关旧决策以后续记录为准。
+
 | 编号 | 当前处理 | 提交 / 主要文件 |
 | --- | --- | --- |
 | A01 | 注册中心在 try 内 `await provider.resolve`，异步失败才会进入现有降级判断；取消、超时和访问安全错误停止降级 | `f0ecade`、`e621ed4`；`backend/src/services/media/providers/registry.ts` |
