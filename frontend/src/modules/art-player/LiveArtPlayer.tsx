@@ -2,9 +2,9 @@
  * LiveArtPlayer —— 直播 / WebRTC 场景的 ArtPlayer 统一封装。
  *
  * 适用场景：
- * - WebRTC 远程流观看（RemoteVideoPlayer / DirectWatchPage）：父组件通过
+ * - WebRTC 远程流观看（RemoteVideoPlayer）：父组件通过
  *   onVideoReady 拿到 art.video 后自行绑定 srcObject
- * - 本地采集预览（DirectSharePage / SharePage）：同上
+ * - 本地采集预览（SharePage）：同上
  * - HTTP-FLV 直播由 FlvPlayer 单独封装（带重试与统计），不经过本组件
  *
  * isLive 模式下 ArtPlayer 自动隐藏进度条与时间显示，仅保留播放/音量/全屏。

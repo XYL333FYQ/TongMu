@@ -278,7 +278,7 @@ interface RoomState {
    * - live：NMS 已收到推流
    * - offline：NMS 未收到推流或推流已结束
    * - unknown：初始状态，尚未收到 stream-status 事件
-   * 放在 roomStore 中实现单一数据源，供 SharePage、WatchPage、StreamStatusPanel 等组件共享。
+   * 放在 roomStore 中实现单一数据源，供 SharePage、WatchPage 等组件共享。
    */
   streamStatus: StreamStatus
   setStreamStatus: (status: StreamStatus) => void
