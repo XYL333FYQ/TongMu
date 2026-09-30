@@ -1,11 +1,11 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { Play, Trash2, Film, Monitor, ListVideo, Maximize } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Text, Paragraph } from '@/components/ui/Typography'
 import { Tag } from '@/components/ui/Tag'
 import { Select } from '@/components/ui/Select'
-import { Modal } from '@/components/ui/Modal'
+import { ConfirmModal, Modal } from '@/components/ui/Modal'
 import { message } from '@/components/ui/message'
 import { useSocket } from '@/hooks/useSocket'
 import { useRoomStore, type Movie } from '@/store/roomStore'
@@ -41,6 +41,16 @@ const SOURCE_LABELS: Record<string, string> = {
   ftp: 'FTP',
   openlist: 'OpenList',
   smb: 'SMB',
+  emby: 'Emby',
+  jellyfin: 'Jellyfin',
+  'server-files': '服务器文件',
+  url: '视频直链',
+  'web-page': '电影网页',
+  'browser-page': '浏览器解析',
+  live: '直播',
+  anime: '番剧',
+  anisubs: '番剧订阅',
+  kazumi: 'Kazumi',
 }
 
 /** 格式标签映射，用于在影片卡片中显示真实媒体格式 */
@@ -87,6 +97,8 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
 
   // 弹窗显示完整影片列表
   const [showListModal, setShowListModal] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<Movie | null>(null)
+  const removeInFlightRef = useRef(false)
 
   // 获取当前 B站 会员状态，用于过滤清晰度列表
   const hasBilibiliMovie = movies.some((m) => m.sourceType === 'bilibili')
@@ -124,23 +136,28 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
     requestMoviePlay(movieId)
   }
 
-  const handleRemove = async (movieId: number) => {
+  const handleRemove = async (movieId: number): Promise<boolean> => {
+    if (removeInFlightRef.current) return false
     if (!isHost) {
       message.info('只有房主可以删除影片')
-      return
+      return false
     }
     if (!roomId) {
       message.error('未连接房间')
-      return
+      return false
     }
+    removeInFlightRef.current = true
     setRemovingId(movieId)
     try {
       await removeMovie(roomId, movieId)
       message.success('影片已删除')
+      return true
     } catch (err) {
       console.error('[MovieListPanel] remove movie error:', err)
       message.error(err instanceof Error ? err.message : '删除影片失败')
+      return false
     } finally {
+      removeInFlightRef.current = false
       setRemovingId(null)
     }
   }
@@ -379,7 +396,7 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
               />
             </div>
             <Paragraph type="secondary" className="m-0 text-xs">
-              {search ? '未找到匹配的影片' : '暂无影片，请在右侧添加'}
+              {search ? '未找到匹配的影片' : isHost ? '暂无影片，请切换到“添加影片”' : '暂无影片，等待房主添加'}
             </Paragraph>
           </div>
         )}
@@ -523,7 +540,7 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
                       size="sm"
                       className="h-7 flex-shrink-0 px-2"
                       icon={<Trash2 className="h-3.5 w-3.5" />}
-                      onClick={() => handleRemove(movie.id)}
+                      onClick={() => setDeleteTarget(movie)}
                       loading={removingId === movie.id}
                       disabled={!isHost || isScreenShare}
                       title={
@@ -604,6 +621,21 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
           {movieListContent}
         </div>
       </Modal>
+      <ConfirmModal
+        open={deleteTarget !== null}
+        onClose={() => { if (!removeInFlightRef.current) setDeleteTarget(null) }}
+        title="删除影片"
+        okText="确认删除"
+        confirmLoading={removingId === deleteTarget?.id}
+        onOk={() => {
+          if (!deleteTarget) return
+          void handleRemove(deleteTarget.id).then((removed) => {
+            if (removed) setDeleteTarget(null)
+          })
+        }}
+      >
+        确定从房间影片列表中删除「{deleteTarget?.title}」吗？
+      </ConfirmModal>
     </div>
   )
 }

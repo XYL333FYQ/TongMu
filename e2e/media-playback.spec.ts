@@ -1046,6 +1046,24 @@ test('source dropdown and mount input expose keyboard and error semantics', asyn
   expect(await name.getAttribute('aria-describedby')).toBeTruthy();
 });
 
+test('movie deletion requires confirmation and cancellation keeps the movie', async ({ page }) => {
+  await loginAndCreateRoom(page);
+  await addAndPlay(page, `${FIXTURE_ORIGIN}/normal.mp4`, /Engine: direct/);
+  const panel = page.getByRole('tabpanel', { name: '影片列表' });
+  await expect(panel.getByText('视频直链', { exact: true })).toBeVisible();
+  await panel.getByRole('button', { name: '删除', exact: true }).click();
+  const confirmation = page.getByRole('dialog', { name: '删除影片', exact: true });
+  await expect(confirmation).toContainText('normal.mp4');
+  await confirmation.getByRole('button', { name: '取消', exact: true }).click();
+  await expect(confirmation).toHaveCount(0);
+  await expect(panel.getByText('normal.mp4', { exact: true })).toBeVisible();
+  await panel.getByRole('button', { name: '删除', exact: true }).click();
+  await confirmation.getByRole('button', { name: '确认删除', exact: true }).click();
+  await expect(confirmation).toHaveCount(0);
+  await expect(panel.getByText('normal.mp4', { exact: true })).toHaveCount(0);
+  await expect(panel.getByText('暂无影片，请切换到“添加影片”')).toBeVisible();
+});
+
 for (const [asset, engine] of [['/hls/master.m3u8', /Engine: hls/], ['/dash/manifest.mpd', /Engine: dash/], ['/normal.mp4?signature=public-playback&expires=9999999999', /Engine: direct/]] as const) {
   test(`public ${asset} plays Direct without gateway media requests`, async ({ page }) => {
     const gateway: string[] = [];

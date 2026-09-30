@@ -253,7 +253,7 @@ export function Header() {
       label: '开源项目',
       onClick: () =>
         window.open(
-          'https://github.com/Zero-wyc/ZViewer',
+          'https://github.com/XYL333FYQ/TongMu',
           '_blank',
           'noopener,noreferrer'
         ),
