@@ -214,9 +214,10 @@ function appendAccessToken(url: string, token?: string): string {
 
 function dashAssetUrl(id: string, path: string, token?: string, roomGrant?: string, sourceGeneration?: number): string {
   const encodedPath = encodeDashAssetPath(path);
-  const auth = token ? `&amp;token=${encodeURIComponent(token)}` : '';
-  const roomAuth = roomGrant ? `&amp;roomGrant=${encodeURIComponent(roomGrant)}` : '';
-  const generation = sourceGeneration === undefined ? '' : `&amp;sourceGeneration=${encodeURIComponent(String(sourceGeneration))}`;
+  // The typed XML mapper escapes attribute values during serialization.
+  const auth = token ? `&token=${encodeURIComponent(token)}` : '';
+  const roomAuth = roomGrant ? `&roomGrant=${encodeURIComponent(roomGrant)}` : '';
+  const generation = sourceGeneration === undefined ? '' : `&sourceGeneration=${encodeURIComponent(String(sourceGeneration))}`;
   return `/api/stream/media/${encodeURIComponent(id)}/asset?path=${encodedPath}${auth}${roomAuth}${generation}`;
 }
 
@@ -562,9 +563,10 @@ function mapTypedManifestResource(
     sourceGeneration: effectiveResource.sourceGeneration,
     expiresAt: effectiveResource.expiresAt,
   });
-  const issuedUrl = mapping.protocol === 'dash' && mapping.template
-    ? dashAssetUrl(issued.id, suffix, handle.token, handle.roomGrant, effectiveResource.sourceGeneration)
-    : isBase
+  if (mapping.protocol === 'dash' && mapping.template) {
+    return dashAssetUrl(issued.id, suffix, handle.token, handle.roomGrant, effectiveResource.sourceGeneration);
+  }
+  const issuedUrl = isBase
       ? withSourceGeneration(`${issued.url}/base/`, effectiveResource.sourceGeneration)
     : withSourceGeneration(issued.url, effectiveResource.sourceGeneration);
   return appendRoomGrant(appendAccessToken(issuedUrl, handle.token), handle.roomGrant);

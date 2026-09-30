@@ -12,6 +12,7 @@ const { extractBvid, resolveBilibiliVideo } = require('../dist/services/bilibili
 const { movieService } = require('../dist/modules/movie/movie.service');
 const { moviePasswordTransformer } = require('../dist/entities/Movie');
 const { SecretVault } = require('../dist/services/secret-vault');
+const { DOMParser } = require('@xmldom/xmldom');
 
 const media = { finalUrl: 'https://cdn.example/movie.mp4', input: 'https://page.example/?token=private', originalUrl: 'https://page.example/?cookie=private', transport: 'direct', container: 'mp4', resolver: 'direct-url', sourceType: 'url', drm: { protected: false }, probe: { warnings: [], bytesRead: 0, method: 'resolver' } };
 test('public MP4, extensionless, HLS, DASH and public signed capabilities are direct eligible', () => {
@@ -59,6 +60,20 @@ test('HLS partial proxies only key and manifests, never adds app credentials to 
   assert.match(result, /URI="\/api\/stream\/media\//);
   const segment = result.split('\n').at(-1);
   assert.equal(segment, 'https://cdn.example/seg.m4s');
+});
+test('DASH template authentication is escaped once and survives XML parsing', () => {
+  const resource = { url: 'https://cdn.example/manifest.mpd', scope: 'room:r', sourceGeneration: 7, expiresAt: Date.now() + 10000, transportMode: 'FULL_PROXY' };
+  const result = rewriteManifest('<MPD><Period><AdaptationSet><SegmentTemplate initialization="init.mp4" media="chunk-$Number$.m4s"/><Representation id="v1"/></AdaptationSet></Period></MPD>', 'application/dash+xml', resource, { id: 'id', token: 'app-secret', roomGrant: 'grant-secret' });
+  const document = new DOMParser().parseFromString(result, 'application/xml');
+  const template = document.getElementsByTagName('SegmentTemplate')[0];
+  const url = new URL(template.getAttribute('media'), 'https://gateway.example');
+  assert.equal(url.searchParams.get('token'), 'app-secret');
+  assert.equal(url.searchParams.get('roomGrant'), 'grant-secret');
+  assert.equal(url.searchParams.get('sourceGeneration'), '7');
+  assert.equal(url.searchParams.getAll('token').length, 1);
+  assert.equal(url.searchParams.getAll('roomGrant').length, 1);
+  assert.equal([...url.searchParams.keys()].some(key => key.startsWith('amp;')), false);
+  assert.equal(url.searchParams.get('path'), 'chunk-$Number$.m4s');
 });
 test('Bilibili BV and av identities use distinct API keys and both short domains route to provider', () => {
   assert.deepEqual(videoIdentityParams(extractBvid('https://www.bilibili.com/video/av123456')), { aid: '123456' });
