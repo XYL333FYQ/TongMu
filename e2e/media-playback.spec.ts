@@ -967,6 +967,24 @@ test('unconnected media libraries remain discoverable with a profile connection 
   await expect(panel.getByText('可以在下方手动填写')).toBeVisible();
 });
 
+test('movie workspace remains usable across phone widths and landscape', async ({ page }, testInfo) => {
+  await loginAndCreateRoom(page);
+  for (const viewport of [{ width: 360, height: 800 }, { width: 390, height: 844 }, { width: 430, height: 932 }, { width: 844, height: 390 }]) {
+    await page.setViewportSize(viewport);
+    await page.getByRole('tab', { name: '添加影片', exact: true }).click();
+    const panel = page.getByRole('tabpanel', { name: '添加影片' });
+    await panel.getByRole('button', { name: '视频链接 / 网页', exact: true }).click();
+    const input = page.getByPlaceholder('影片网页、MP4/MKV、M3U8、MPD、FLV 或无后缀媒体 URL');
+    await input.fill(`${FIXTURE_ORIGIN}/normal.mp4`);
+    await input.focus();
+    await expect(input).toBeFocused();
+    await panel.getByRole('button', { name: '添加', exact: true }).scrollIntoViewIfNeeded();
+    await expect(panel.getByRole('button', { name: '添加', exact: true })).toBeInViewport();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(viewport.width);
+    await page.screenshot({ path: testInfo.outputPath(`movie-workspace-${viewport.width}x${viewport.height}.png`), fullPage: true });
+  }
+});
+
 test('host phone shortcut opens add panel without remounting the playing video', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await loginAndCreateRoom(page);
@@ -1062,6 +1080,23 @@ test('movie deletion requires confirmation and cancellation keeps the movie', as
   await expect(confirmation).toHaveCount(0);
   await expect(panel.getByText('normal.mp4', { exact: true })).toHaveCount(0);
   await expect(panel.getByText('暂无影片，请切换到“添加影片”')).toBeVisible();
+});
+
+test('nested delete confirmation keeps the list dialog open and restores focus', async ({ page }) => {
+  await loginAndCreateRoom(page);
+  await addAndPlay(page, `${FIXTURE_ORIGIN}/normal.mp4`, /Engine: direct/);
+  await page.getByRole('button', { name: '展开查看完整影片列表' }).click();
+  const list = page.getByRole('dialog', { name: /影片列表/ });
+  const remove = list.getByRole('button', { name: '删除', exact: true });
+  await remove.click();
+  const confirmation = page.getByRole('dialog', { name: '删除影片', exact: true });
+  await expect(confirmation.getByRole('button', { name: '关闭弹窗' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(confirmation).toHaveCount(0);
+  await expect(list).toBeVisible();
+  await expect(remove).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(list).toHaveCount(0);
 });
 
 for (const [asset, engine] of [['/hls/master.m3u8', /Engine: hls/], ['/dash/manifest.mpd', /Engine: dash/], ['/normal.mp4?signature=public-playback&expires=9999999999', /Engine: direct/]] as const) {
