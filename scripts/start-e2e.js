@@ -27,10 +27,13 @@ const child = spawn(process.execPath, [
     DATABASE_URL: path.join(runtimeDir, 'test.sqlite'),
     NODE_ENV: 'test',
     MEDIA_E2E_FIXTURE_ORIGIN: 'http://127.0.0.1:3456',
+    MEDIA_BROWSER_RESOLVER: 'true',
     NCM_API_BASE_URL: 'http://127.0.0.1:3456/ncm-fixture',
     MEDIA_HANDLE_SECRET: 'e2e-only-media-handle-secret-32-bytes',
-    JWT_ACCESS_EXPIRES_IN: '2s',
-    MEDIA_ROOM_GRANT_TTL_MS: '2000',
+    // Fault-injection fixtures expire quickly; external-site latency needs a
+    // normal session budget to measure playback rather than a refresh storm.
+    JWT_ACCESS_EXPIRES_IN: process.env.TONGMU_REAL_MEDIA_SMOKE === 'true' ? '5m' : '2s',
+    MEDIA_ROOM_GRANT_TTL_MS: process.env.TONGMU_REAL_MEDIA_SMOKE === 'true' ? '300000' : '2000',
     VITE_API_URL: 'http://127.0.0.1:3333',
   },
 });

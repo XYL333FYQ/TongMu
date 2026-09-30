@@ -577,6 +577,17 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   const requestUrl = new URL(req.url, `http://127.0.0.1:${PORT}`);
+  if (requestUrl.pathname === '/static-video-page') {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end('<html><head><title>Static fixture</title></head><body><video><source src="/normal.mp4" type="video/mp4"></video></body></html>');
+    return;
+  }
+  if (requestUrl.pathname === '/dynamic-video-page') {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    // No static media URL: only executing JS produces the real media response.
+    res.end('<html><head><title>Dynamic fixture</title></head><body><script>fetch(["/nor", "mal", ".mp4"].join(""));</script></body></html>');
+    return;
+  }
   const path = requestUrl.pathname;
   if (handleNcmRequest(req, res, requestUrl)) return;
   if (!assets) { res.writeHead(503); res.end('fixture not configured'); return; }

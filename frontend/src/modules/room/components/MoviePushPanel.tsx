@@ -1,3 +1,4 @@
+import { BilibiliLinkPreview } from './BilibiliLinkPreview'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Link2,
@@ -274,15 +275,18 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
   const [showPageSelector, setShowPageSelector] = useState(false)
   const [pageSelectLoading, setPageSelectLoading] = useState(false)
   const resolveRevisionRef = useRef(0)
+  const resolveAbortRef = useRef<AbortController | null>(null)
   const addInFlightRef = useRef(false)
-  const lastAddedUrlRef = useRef<{ roomId: string; url: string } | null>(null)
 
   useEffect(() => () => {
     resolveRevisionRef.current += 1
+    resolveAbortRef.current?.abort()
   }, [])
 
   const invalidateResolvedInput = useCallback(() => {
     resolveRevisionRef.current += 1
+    resolveAbortRef.current?.abort()
+    resolveAbortRef.current = null
     setResolvedMovie(null)
     setMediaDiagnostics(null)
     setMediaResolveError('')
@@ -298,7 +302,6 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
   const changeUrl = (value: string) => {
     if (value !== url) {
       invalidateResolvedInput()
-      lastAddedUrlRef.current = null
     }
     setUrl(value)
   }
@@ -802,7 +805,6 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
 
   const resetForm = () => {
     invalidateResolvedInput()
-    lastAddedUrlRef.current = null
     setUrl('')
     setSelectedMountId('')
     setWebdav({ serverUrl: '', path: '' })
@@ -815,8 +817,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
     setServerFilePath('')
   }
 
-  // 仅 bilibili 需要 handleResolve：解析后显示清晰度选择器，再点"添加"
-  // webdav/ftp/openlist/mp4 的 resolve+add 已合并到 handleAddMovie
+  // 链接入口先识别并预览，再确认加入；媒体库沿用现有选择流程。
   const handleResolve = async () => {
     if (!isHost) {
       message.info('只有房主可以添加影片')
@@ -826,15 +827,19 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
       message.error('未连接房间')
       return
     }
-    if (sourceType !== 'bilibili') return
+    if (sourceType !== 'bilibili' && sourceType !== 'mp4') return
     if (!url.trim()) {
       message.warning('请输入视频地址')
       return
     }
 
     if (addInFlightRef.current) return
+    if (resolveAbortRef.current && !resolveAbortRef.current.signal.aborted) return
     const revision = ++resolveRevisionRef.current
+    const controller = new AbortController()
+    resolveAbortRef.current = controller
     const input = url.trim()
+    setMediaResolveError('')
     setLoading(true)
     setResolveProgress('正在初始化解析...')
     try {
@@ -873,10 +878,21 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
         setResolveProgress('正在通过服务器解析...')
         const mediaResolved = await resolveMediaInput(input, {
           roomId,
+          browserSniff: true,
+          signal: controller.signal,
           requestedQn: undefined,
           preferMp4: false,
         })
         if (revision !== resolveRevisionRef.current) return
+        if (mediaResolved.descriptor.resolver !== 'bilibili') {
+          setResolvedMovie(null)
+          if (sourceType === 'bilibili') {
+            setMediaResolveError('这个链接不是 B 站视频，请使用通用链接入口')
+            return
+          }
+          setMediaDiagnostics(mediaResolved)
+          return
+        }
         setMediaDiagnostics(mediaResolved)
         resolved = toBilibiliResolvedSource(mediaResolved)
       } else {
@@ -894,10 +910,13 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
       }
     } catch (err) {
       if (revision !== resolveRevisionRef.current) return
-      console.error('[MoviePushPanel] resolve error:', err)
-      message.error(err instanceof Error ? err.message : '解析失败')
+      const safeMessage = mediaResolveMessage(err)
+      setMediaResolveError(safeMessage)
+      console.error('[MoviePushPanel] resolve error:', safeMessage)
+      message.error(safeMessage)
     } finally {
       if (revision === resolveRevisionRef.current) {
+        resolveAbortRef.current = null
         setLoading(false)
         setResolveProgress('')
       }
@@ -1042,10 +1061,9 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
     }
   }
 
-  // 统一添加影片：对 webdav/ftp/openlist/mp4 合并 resolve+add 为单步操作
-  // bilibili 仍走两步：先 handleResolve 解析 → 选清晰度 → handleAddMovie 添加
+  // 链接只确认当前预览，不在添加时再次解析另一份结果。
   const handleAddMovie = async () => {
-    if (addInFlightRef.current) return
+    if (addInFlightRef.current || qualityLoading || pageSelectLoading) return
     if (!isHost) {
       message.info('只有房主可以添加影片')
       return
@@ -1054,22 +1072,12 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
       message.error('未连接房间')
       return
     }
-    if (
-      sourceType === 'mp4' &&
-      url.trim() &&
-      lastAddedUrlRef.current?.roomId === roomId &&
-      lastAddedUrlRef.current.url === url.trim()
-    ) {
-      message.info('这条影片已添加，修改链接后可再次添加')
-      return
-    }
-
     addInFlightRef.current = true
     const inputRevision = resolveRevisionRef.current
     setLoading(true)
     setResolveProgress('正在添加影片...')
     try {
-      if (sourceType === 'bilibili' && resolvedMovie) {
+      if ((sourceType === 'bilibili' || sourceType === 'mp4') && resolvedMovie) {
         const title = resolvedMovie.title || url.trim()
         const serverMedia =
           mediaDiagnostics?.descriptor.resolver === 'bilibili'
@@ -1103,18 +1111,15 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
         if (inputRevision === resolveRevisionRef.current) resetForm()
         message.success('影片已添加')
       } else if (sourceType === 'mp4') {
-        if (!url.trim()) {
-          message.warning('请输入视频地址')
+        if (!url.trim() || !mediaDiagnostics) {
+          message.warning('请先解析当前链接')
           return
         }
-        setMediaResolveError('')
-        setResolveProgress('正在识别来源、探测真实格式并规划播放路径...')
-        const resolved = await resolveMediaInput(url.trim(), {
-          browserSniff: true,
-          roomId,
-        })
-        if (inputRevision !== resolveRevisionRef.current) return
-        setMediaDiagnostics(resolved)
+        const resolved = mediaDiagnostics
+        if (resolved.plan.engine === 'blocked') {
+          message.warning('当前设备没有可用播放方式，请更换设备或链接')
+          return
+        }
         const media = resolved.descriptor
         const movieUrl = media.finalUrl
         const title = media.title || extractTitleFromUrl(media.originalUrl)
@@ -1133,7 +1138,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
             resolved.plan.engine === 'playsvideo' || playsvideoEnabled,
         })
         if (inputRevision === resolveRevisionRef.current) {
-          lastAddedUrlRef.current = { roomId, url: url.trim() }
+          resetForm()
         }
         message.success('影片已添加')
       } else if (sourceType === 'webdav' || sourceType === 'openlist') {
@@ -1282,7 +1287,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
     }
   }
 
-  // bilibili 需要先解析再选清晰度；anime 有独立搜索弹窗；其他源点击"添加"直接 resolve+add
+  // URL 入口共用解析/确认状态；媒体库和番剧选择沿用各自操作。
   const renderActionButton = () => {
     if (sourceType === 'anime') {
       return (
@@ -1316,8 +1321,8 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
       )
     }
 
-    if (sourceType === 'bilibili') {
-      if (resolvedMovie) {
+    if (sourceType === 'bilibili' || sourceType === 'mp4') {
+      if (resolvedMovie || mediaDiagnostics) {
         return (
           <Button
             variant="primary"
@@ -1326,7 +1331,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
             loading={loading}
             icon={<Plus className="h-4 w-4" />}
             onClick={handleAddMovie}
-            disabled={!isHost}
+            disabled={!isHost || qualityLoading || pageSelectLoading || mediaDiagnostics?.plan.engine === 'blocked'}
           >
             添加
           </Button>
@@ -1347,7 +1352,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
       )
     }
 
-    // mp4 / webdav / ftp / openlist：单步"添加"
+    // 已配置媒体库：单步添加。
     return (
       <Button
         variant="primary"
@@ -1385,10 +1390,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault()
-              // bilibili 走解析流程，mp4 直接添加
-              void (sourceType === 'bilibili'
-                ? handleResolve()
-                : handleAddMovie())
+              void (resolvedMovie || mediaDiagnostics ? handleAddMovie() : handleResolve())
             }
           }}
         />
@@ -1920,12 +1922,16 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
             >
               <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
               <Text className="text-xs">{resolveProgress}</Text>
+              {!addInFlightRef.current && resolveAbortRef.current && (
+                <Button size="sm" variant="secondary" onClick={invalidateResolvedInput}>取消解析</Button>
+              )}
             </div>
           )}
 
-          {sourceType === 'mp4' && mediaDiagnostics && (
+          {sourceType === 'mp4' && mediaDiagnostics && !resolvedMovie && (
             <div className="rounded-[var(--md-sys-shape-corner)] bg-[var(--md-sys-color-surface-container-high)] px-3 py-2 text-[11px] leading-relaxed">
               <Text className="block text-xs font-medium">
+                {mediaDiagnostics.descriptor.title || extractTitleFromUrl(url)} ·{' '}
                 已识别 {mediaDiagnostics.descriptor.container.toUpperCase()} ·{' '}
                 {mediaDiagnostics.plan.engine === 'blocked'
                   ? '当前设备无法播放'
@@ -1961,7 +1967,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
             </div>
           )}
 
-          {sourceType === 'mp4' && mediaResolveError && (
+          {(sourceType === 'mp4' || sourceType === 'bilibili') && mediaResolveError && (
             <div className="rounded-[var(--md-sys-shape-corner)] bg-[var(--md-sys-color-error-container)] px-3 py-2 text-[11px] leading-relaxed text-[var(--md-sys-color-on-error-container)]">
               <Text className="block text-xs font-medium">
                 无法解析
@@ -1972,48 +1978,9 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
             </div>
           )}
 
-          {sourceType === 'bilibili' && resolvedMovie && (
-            <div className="rounded-[var(--md-sys-shape-corner)] bg-[var(--md-sys-color-surface-container-high)] px-3 py-2 text-[11px] leading-relaxed">
-              <Text className="block text-xs font-medium">
-                Playback Diagnostics
-              </Text>
-              <Text type="secondary" className="block">
-                Requested: {resolvedMovie.requestedQn ?? 'auto'} · Actual:{' '}
-                {resolvedMovie.qualityLabel ||
-                  resolvedMovie.currentQn ||
-                  'unknown'}{' '}
-                · Format: {resolvedMovie.format.toUpperCase()} · Login:{' '}
-                {resolvedMovie.loggedIn ? 'yes' : 'no'} · VIP:{' '}
-                {resolvedMovie.vipStatus === 1 ? 'yes' : 'no'}
-              </Text>
-              <Text type="secondary" className="block">
-                Video: {resolvedMovie.videoCodec || 'unknown'} · Audio:{' '}
-                {resolvedMovie.audioCodec || 'unknown'} · Bandwidth:{' '}
-                {resolvedMovie.videoBandwidth
-                  ? `${Math.round(resolvedMovie.videoBandwidth / 1000)} kbps`
-                  : 'unknown'}
-              </Text>
-              <Text type="secondary" className="block">
-                Resolution:{' '}
-                {resolvedMovie.acceptQuality?.find(
-                  (quality) => quality.id === resolvedMovie.currentQn
-                )?.resolution || 'unknown'}{' '}
-                · Engine:{' '}
-                {resolvedMovie.format === 'dash' ? 'DASH' : 'Direct MP4'} ·
-                Duration:{' '}
-                {resolvedMovie.duration
-                  ? `${Math.round(resolvedMovie.duration)}s`
-                  : 'unknown'}
-              </Text>
-              {resolvedMovie.fallbackReason && (
-                <Text className="block text-[var(--md-sys-color-error)]">
-                  已采用备用播放方案
-                </Text>
-              )}
-            </div>
-          )}
+          {(sourceType === 'bilibili' || sourceType === 'mp4') && resolvedMovie && (<BilibiliLinkPreview movie={resolvedMovie} />)}
 
-          {sourceType === 'bilibili' &&
+          {(sourceType === 'bilibili' || sourceType === 'mp4') &&
             resolvedMovie?.acceptQuality &&
             resolvedMovie.acceptQuality.length > 0 && (
               <>
@@ -2038,7 +2005,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
               </>
             )}
 
-          {sourceType === 'bilibili' &&
+          {(sourceType === 'bilibili' || sourceType === 'mp4') &&
             resolvedMovie?.pages &&
             resolvedMovie.pages.length > 1 && (
               <Button
@@ -2256,7 +2223,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
         onConfirm={handleSelectFilesFromServer}
       />
 
-      {sourceType === 'bilibili' && resolvedMovie?.pages && (
+      {(sourceType === 'bilibili' || sourceType === 'mp4') && resolvedMovie?.pages && (
         <Modal
           open={showPageSelector}
           onClose={() => setShowPageSelector(false)}
@@ -2302,8 +2269,10 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
             {resolvedMovie.pages.map((page) => {
               const isSelected = page.page === (resolvedMovie.currentPage ?? 1)
               return (
-                <div
+                <button
                   key={page.page}
+                  type="button"
+                  aria-pressed={isSelected}
                   className={cn(
                     'flex cursor-pointer items-center gap-3 rounded-[var(--md-sys-shape-corner)] border p-3 transition-all hover:-translate-y-0.5 hover:shadow-md',
                     isSelected
@@ -2349,7 +2318,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
                       </Text>
                     )}
                   </div>
-                </div>
+                </button>
               )
             })}
           </div>

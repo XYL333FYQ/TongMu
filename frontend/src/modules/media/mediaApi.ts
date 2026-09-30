@@ -209,6 +209,7 @@ export function toBilibiliResolvedSource(resolved: ResolvedMedia): ResolvedSourc
 }
 
 export interface ResolveMediaInputOptions {
+  signal?: AbortSignal
   browserSniff?: boolean
   roomId?: string
   requestedQn?: number
@@ -278,6 +279,7 @@ export async function resolveMediaInput(
   } = options
   const profile = await collectPlaybackClientProfile()
   const response = await apiFetch('/api/stream/media/resolve', {
+    signal: options.signal,
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

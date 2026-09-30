@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const FIXTURE_ORIGIN = "http://127.0.0.1:3456";
+let resolveBudget: { remaining: number; resetAt: number } | undefined;
 
 async function persistedMovieContains(value: string): Promise<boolean> {
   const { default: initSqlJs } = await import('sql.js');
@@ -60,6 +61,12 @@ function installMediaDiagnostics(page: Page, title: string): void {
     }));
   });
   page.on('response', (response) => {
+    if (response.url().endsWith('/api/stream/media/resolve')) {
+      const header = response.headers()['ratelimit'];
+      const remaining = header?.match(/remaining=(\d+)/)?.[1];
+      const reset = header?.match(/reset=(\d+)/)?.[1];
+      if (remaining !== undefined && reset !== undefined) resolveBudget = { remaining: Number(remaining), resetAt: Date.now() + Number(reset) * 1000 };
+    }
     if (!isMediaRequest(response.url())) return;
     console.log('[e2e response]', JSON.stringify({
       test: title,
@@ -390,10 +397,11 @@ async function addAndPlay(
   await page.getByRole("tab", { name: "添加影片", exact: true }).click();
   const input = page.getByPlaceholder(/影片网页、MP4\/MKV/).last();
   await input.fill(url);
-  await page.getByRole("button", { name: "添加", exact: true }).last().click();
+  await page.getByRole("button", { name: "解析", exact: true }).last().click();
   await page.getByText('技术详情').last().click();
   await expect(page.getByText(/Resolver: (?:direct-url|live)/).last()).toBeVisible();
   await expect(page.getByText(engine).last()).toBeVisible();
+  await page.getByRole("button", { name: "添加", exact: true }).last().click();
   const title = decodeURIComponent(new URL(url).pathname.split('/').pop()!);
   await page.getByRole("tab", { name: "影片列表", exact: true }).click();
   await page.getByText(title, { exact: true }).last().locator('../..').getByRole('button', { name: '播放', exact: true }).click();
@@ -542,6 +550,11 @@ test.beforeAll(async ({ browser }) => {
 });
 
 test.beforeEach(async ({ page }, testInfo) => {
+  // Respect the real server budget instead of making a long suite trigger 429.
+  if (resolveBudget && resolveBudget.remaining < 8 && resolveBudget.resetAt > Date.now()) {
+    await new Promise(resolve => setTimeout(resolve, resolveBudget!.resetAt - Date.now() + 100));
+    resolveBudget = undefined;
+  }
   await installMseDiagnostics(page);
   installMediaDiagnostics(page, testInfo.title);
 });
@@ -626,6 +639,9 @@ test('repeated Enter while a movie POST is pending sends one add request', async
   const input = page.getByPlaceholder('影片网页、MP4/MKV、M3U8、MPD、FLV 或无后缀媒体 URL');
   await input.fill(`${FIXTURE_ORIGIN}/normal.mp4`);
   await input.press('Enter');
+  await expect(page.getByRole('tabpanel', { name: '添加影片' }).getByRole('button', { name: '添加', exact: true })).toBeVisible();
+  expect(postCount).toBe(0);
+  await input.press('Enter');
   await expect.poll(() => postCount).toBe(1);
   await input.press('Enter');
   await input.press('Enter');
@@ -634,6 +650,74 @@ test('repeated Enter while a movie POST is pending sends one add request', async
   await expect(page.getByText('影片已添加')).toBeVisible();
   await input.press('Enter');
   expect(postCount).toBe(1);
+});
+
+test('unified link preview recognizes Bilibili and confirms the selected page and quality', async ({ page }) => {
+  await loginAndCreateRoom(page);
+  await page.getByRole('tab', { name: '添加影片', exact: true }).click();
+  const panel = page.getByRole('tabpanel', { name: '添加影片' });
+  const input = page.getByPlaceholder(/影片网页、MP4\/MKV/);
+  let added: { source: string; currentQn: number; cid: number; currentPage: number } | undefined;
+  let releaseQuality: (() => Promise<void>) | undefined;
+  await page.route('**/api/rooms/*/movies', async route => {
+    if (route.request().method() !== 'POST') return route.continue();
+    added = route.request().postDataJSON();
+    await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ success: true }) });
+  });
+  await page.route('**/api/stream/media/resolve', async route => {
+    const body = route.request().postDataJSON();
+    const currentPage = body.page ?? (body.cid === 22 ? 2 : 1);
+    const qn = body.requestedQn ?? 80;
+    const fulfill = () => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, descriptor: {
+      input: body.input, originalUrl: body.input, finalUrl: `${FIXTURE_ORIGIN}/normal.mp4`, title: 'Bilibili fixture',
+      sourceType: 'bilibili', resolver: 'bilibili', transport: 'direct', container: 'mp4', headers: {}, drm: { protected: false },
+      probe: { method: 'resolver', bytesRead: 0, warnings: [] },
+      sourceMetadata: { bilibili: { cid: currentPage === 2 ? 22 : 11, currentPage, actualQn: qn, qualityLabel: qn === 64 ? '720P' : '1080P',
+        availableQualities: [{ id: 80, label: '1080P' }, { id: 64, label: '720P' }],
+        pages: [{ page: 1, cid: 11, part: '第一集', duration: 10 }, { page: 2, cid: 22, part: '第二集', duration: 10 }] } },
+      transportPlan: { candidates: [{ mode: 'DIRECT', url: `${FIXTURE_ORIGIN}/normal.mp4`, transport: 'progressive', container: 'mp4', requiredPipelines: ['native'] }], reason: 'fixture' },
+    } }) });
+    if (qn === 64) releaseQuality = fulfill;
+    else await fulfill();
+  });
+  await input.fill('https://b23.tv/fixture');
+  await input.press('Enter');
+  await page.getByRole('dialog', { name: /选择分集/ }).getByText('第二集', { exact: true }).click();
+  await expect(panel.getByRole('button', { name: /P2 第二集/ })).toBeVisible();
+  expect(added).toBeUndefined();
+  await panel.locator('button[aria-haspopup="listbox"]').click();
+  await page.getByRole('option', { name: '720P', exact: true }).click();
+  await expect.poll(() => Boolean(releaseQuality)).toBe(true);
+  await expect(panel.getByRole('button', { name: '添加', exact: true })).toBeDisabled();
+  await input.press('Enter');
+  expect(added).toBeUndefined();
+  await releaseQuality!();
+  await expect(panel.getByRole('button', { name: '添加', exact: true })).toBeEnabled();
+  await panel.getByRole('button', { name: '添加', exact: true }).click();
+  await expect.poll(() => added?.source).toBe('bilibili');
+  expect(added).toMatchObject({ cid: 22, currentQn: 64, currentPage: 2 });
+  await expect(input).toHaveValue('');
+});
+
+test('cancelled link recognition cannot publish a late preview or add a movie', async ({ page }) => {
+  await loginAndCreateRoom(page);
+  await page.getByRole('tab', { name: '添加影片', exact: true }).click();
+  const panel = page.getByRole('tabpanel', { name: '添加影片' });
+  let release: (() => Promise<void>) | undefined;
+  await page.route('**/api/stream/media/resolve', async route => {
+    await new Promise<void>(resolve => { release = async () => {
+      await route.fulfill({ status: 422, contentType: 'application/json', body: JSON.stringify({ success: false, code: 'NO_MEDIA_FOUND' }) }).catch(() => undefined);
+      resolve();
+    }; });
+  });
+  const input = page.getByPlaceholder(/影片网页、MP4\/MKV/);
+  await input.fill(`${FIXTURE_ORIGIN}/normal.mp4`);
+  await input.press('Enter');
+  await expect.poll(() => Boolean(release)).toBe(true);
+  await panel.getByRole('button', { name: '取消解析', exact: true }).click();
+  await release!();
+  await expect(panel.getByRole('button', { name: '添加', exact: true })).toHaveCount(0);
+  await expect(panel.getByRole('button', { name: '解析', exact: true })).toBeEnabled();
 });
 
 test('movie diagnostics never render a media capability or raw resolver error', async ({ page }) => {
@@ -667,18 +751,18 @@ test('movie diagnostics never render a media capability or raw resolver error', 
   });
   const input = page.getByPlaceholder('影片网页、MP4/MKV、M3U8、MPD、FLV 或无后缀媒体 URL');
   await input.fill(`${FIXTURE_ORIGIN}/normal.mp4`);
-  await page.getByRole('tabpanel', { name: '添加影片' }).getByRole('button', { name: '添加', exact: true }).click();
+  await page.getByRole('tabpanel', { name: '添加影片' }).getByRole('button', { name: '解析', exact: true }).click();
   await expect(page.getByText(/已识别 MP4/)).toBeVisible();
   await page.getByText('技术详情').click();
   expect(await page.locator('body').textContent()).not.toContain(secret);
   failMode = 'unknown';
   await input.fill(`${FIXTURE_ORIGIN}/extensionless`);
-  await page.getByRole('tabpanel', { name: '添加影片' }).getByRole('button', { name: '添加', exact: true }).click();
+  await page.getByRole('tabpanel', { name: '添加影片' }).getByRole('button', { name: '解析', exact: true }).click();
   await expect(page.getByText('暂时无法解析此链接，请确认链接可访问后重试').first()).toBeVisible();
   expect(await page.locator('body').textContent()).not.toContain(secret);
   failMode = 'denied';
   await input.fill(`${FIXTURE_ORIGIN}/denied`);
-  await page.getByRole('tabpanel', { name: '添加影片' }).getByRole('button', { name: '添加', exact: true }).click();
+  await page.getByRole('tabpanel', { name: '添加影片' }).getByRole('button', { name: '解析', exact: true }).click();
   await expect(page.getByText('源站拒绝访问该页面，请确认你有访问权限').first()).toBeVisible();
   expect(await page.locator('body').textContent()).not.toContain(secret);
   const apiErrorMessage = await page.evaluate(async (sourceInput) => {
@@ -708,6 +792,80 @@ test('real media resolve failure exposes a safe code and request ID to the API c
   expect(failure.requestId).toMatch(/^[a-zA-Z0-9-]+$/);
   expect(failure.message).not.toContain(FIXTURE_ORIGIN);
 });
+
+for (const [label, url] of [
+  ['direct', 'https://abr-streaming.ondemandchina.com/v1/202503/korea/movies/ip-man-1/ip-man-1-2025-03-13-22-30-01.mp4/HLS/playlist_1080p.m3u8'],
+  ['page', 'https://www.ondemandchina.com/zh-Hans/watch/ip-man-1-main-1/movie-1'],
+]) {
+  test(`authorized real ODC ${label} preserves 1080p playback`, async ({ page }) => {
+    test.skip(process.env.TONGMU_REAL_MEDIA_SMOKE !== 'true', 'Explicit external-site smoke only');
+    test.setTimeout(180_000);
+    await loginAndCreateRoom(page);
+    await page.getByRole('tab', { name: '添加影片', exact: true }).click();
+    const panel = page.getByRole('tabpanel', { name: '添加影片' });
+    await page.getByPlaceholder(/影片网页、MP4\/MKV/).fill(url);
+    const responsePromise = page.waitForResponse(response => response.status() !== 403 && response.url().endsWith('/api/stream/media/resolve') && response.request().postDataJSON().input === url);
+    await panel.getByRole('button', { name: '解析', exact: true }).click();
+    const response = await responsePromise;
+    const result = await response.json();
+    console.log('[real ODC resolve]', JSON.stringify({ label, status: response.status(), code: result.code, resolver: result.descriptor?.resolver, container: result.descriptor?.container }));
+    expect(response.ok(), `Resolution failed: ${result.code ?? response.status()}`).toBe(true);
+    expect(result.descriptor.container).toBe('hls');
+    await panel.getByRole('button', { name: '添加', exact: true }).click();
+    await page.getByRole('tab', { name: '影片列表', exact: true }).click();
+    await page.getByRole('tabpanel', { name: '影片列表' }).getByRole('button', { name: '播放', exact: true }).last().click();
+    const video = page.locator('video').first();
+    await expect.poll(() => video.evaluate(async (element: HTMLVideoElement) => {
+      element.muted = true;
+      if (element.readyState && element.paused) await element.play().catch(() => undefined);
+      return element.videoHeight;
+    }), { timeout: 90_000 }).toBe(1080);
+    await expect.poll(() => video.evaluate((element: HTMLVideoElement) => element.currentTime), { timeout: 30_000 }).toBeGreaterThan(2);
+    expect(await video.evaluate((element: HTMLVideoElement) => element.videoHeight)).toBe(1080);
+    console.log('[real ODC decoded]', await video.evaluate((element: HTMLVideoElement) => ({ width: element.videoWidth, height: element.videoHeight, time: element.currentTime })));
+    await video.evaluate((element: HTMLVideoElement) => element.pause());
+  });
+}
+
+for (const [pathname, resolver] of [['static-video-page', 'generic-web'], ['dynamic-video-page', 'browser']]) {
+test(`one HTTP request resolves ${resolver} page into a playable movie`, async ({ page }) => {
+  test.setTimeout(60_000);
+  await loginAndCreateRoom(page);
+  if (resolver === 'browser') {
+    const disabled = await page.evaluate(async input => {
+    // @ts-ignore Vite integration entry.
+    const { resolveMediaInput } = await import('/src/modules/media/mediaApi.ts');
+    try { await resolveMediaInput(input, { browserSniff: false }); return 'unexpected success'; }
+    catch (error) { return (error as { code?: string }).code; }
+  }, `${FIXTURE_ORIGIN}/dynamic-video-page`);
+    expect(disabled).toBe('NO_MEDIA_FOUND');
+  }
+    await page.getByRole('tab', { name: '添加影片', exact: true }).click();
+    const panel = page.getByRole('tabpanel', { name: '添加影片' });
+    const input = page.getByPlaceholder(/影片网页、MP4\/MKV/);
+    await input.fill(`${FIXTURE_ORIGIN}/${pathname}`);
+    const responsePromise = page.waitForResponse(response => response.ok() && response.url().endsWith('/api/stream/media/resolve') && response.request().postDataJSON().input === `${FIXTURE_ORIGIN}/${pathname}`);
+    await panel.getByRole('button', { name: '解析', exact: true }).click();
+    const response = await responsePromise;
+    const result = await response.json();
+    expect(response.ok(), JSON.stringify(result)).toBe(true);
+    expect(result.descriptor.resolver).toBe(resolver);
+    await panel.getByRole('button', { name: '添加', exact: true }).click();
+    await expect(input).toHaveValue('');
+    await page.getByRole('tab', { name: '影片列表', exact: true }).click();
+    const video = page.locator('video').first();
+    await page.getByRole('tabpanel', { name: '影片列表' }).getByRole('button', { name: '播放', exact: true }).last().click();
+    await expect.poll(() => video.evaluate((element: HTMLVideoElement) => element.readyState), { timeout: 30_000 }).toBeGreaterThanOrEqual(1);
+    await expect.poll(() => video.evaluate(async (element: HTMLVideoElement) => {
+      element.muted = true;
+      if (element.paused) {
+        try { await element.play(); }
+        catch (error) { if ((error as Error).name === 'AbortError') return 0; throw error; }
+      }
+      return element.currentTime;
+    })).toBeGreaterThan(0);
+});
+}
 
 test("real MP4 and extensionless sources load, play, and seek directly without gateway bytes", async ({
   page,
@@ -978,8 +1136,8 @@ test('movie workspace remains usable across phone widths and landscape', async (
     await input.fill(`${FIXTURE_ORIGIN}/normal.mp4`);
     await input.focus();
     await expect(input).toBeFocused();
-    await panel.getByRole('button', { name: '添加', exact: true }).scrollIntoViewIfNeeded();
-    await expect(panel.getByRole('button', { name: '添加', exact: true })).toBeInViewport();
+    await panel.getByRole('button', { name: '解析', exact: true }).scrollIntoViewIfNeeded();
+    await expect(panel.getByRole('button', { name: '解析', exact: true })).toBeInViewport();
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(viewport.width);
     await page.screenshot({ path: testInfo.outputPath(`movie-workspace-${viewport.width}x${viewport.height}.png`), fullPage: true });
   }
@@ -1135,11 +1293,12 @@ test('private source token stays out of media resolve and Socket movie-list; hos
   );
   await page.getByRole("tab", { name: "添加影片", exact: true }).click();
   await page.getByPlaceholder(/影片网页、MP4\/MKV/).last().fill(`${FIXTURE_ORIGIN}/normal.mp4?token=private-source-secret`);
-  await page.getByRole('button', { name: '添加', exact: true }).last().click();
+  await page.getByRole('button', { name: '解析', exact: true }).last().click();
   const response = await responsePromise;
   const payload = await response.json();
   expect(response.ok(), JSON.stringify(payload)).toBe(true);
   expect(JSON.stringify(payload)).not.toContain('private-source-secret');
+  await page.getByRole('button', { name: '添加', exact: true }).last().click();
   await expect.poll(() => lists.some(value => value.includes('media-movie:'))).toBe(true);
   expect(lists.join('')).not.toContain('private-source-secret');
   await expect.poll(() => persistedMovieContains('private-source-secret')).toBe(false);
