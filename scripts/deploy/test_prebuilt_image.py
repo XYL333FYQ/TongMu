@@ -24,6 +24,10 @@ class PrebuiltDeploymentTest(unittest.TestCase):
         self.git('-C', str(self.root), 'config', 'user.email', 'test@example.invalid')
         (self.root / 'docker-compose.yml').write_text('services: {}\n')
         (self.root / 'docker-compose.deploy.yml').write_text('services: {}\n')
+        deployment_support = self.root / 'scripts' / 'deploy'
+        deployment_support.mkdir(parents=True)
+        for helper in ('image_identity.py', 'retained-release-images.py'):
+            (deployment_support / helper).write_bytes(SCRIPT.with_name(helper).read_bytes())
         self.git('-C', str(self.root), 'add', '.')
         self.git('-C', str(self.root), 'commit', '-m', 'fixture')
         self.git('-C', str(self.root), 'push', 'origin', 'main')
@@ -38,11 +42,22 @@ import json, os, sys
 a = sys.argv[1:]
 with open(os.environ['FAKE_CALLS'], 'a') as f: f.write(json.dumps(a) + '\\n')
 if a[0] == 'info': print(os.environ['FAKE_DOCKER_ROOT'])
+elif a[:2] == ['image', 'ls']:
+    for image in json.loads(os.environ.get('FAKE_RELEASES', '[]')):
+        image_id = image['Id']
+        for tag in image.get('RepoTags') or []:
+            repository, version = tag.rsplit(':', 1)
+            print(f"{image_id}\\t{repository}\\t{version}")
+elif a[:2] == ['image', 'inspect'] and len(a) > 3 and a[2] != '--format':
+    print(os.environ.get('FAKE_RELEASES', '[]'))
 elif a[:2] == ['image', 'inspect']:
     if len(a) == 3:
         print(json.dumps([{'Os': 'linux', 'Architecture': 'amd64', 'Config': {'Env': ['TONGMU_BUILD_SHA=' + os.environ['FAKE_IMAGE_SHA']]}, 'RootFS': {'Layers': ['sha256:' + os.environ.get('FAKE_LAYER', 'c' * 64)]}}]))
     elif '.Config.Env' in a[3]: print('TONGMU_BUILD_SHA=' + os.environ['FAKE_IMAGE_SHA'])
     else: print('sha256:' + os.environ.get('FAKE_IMAGE_ID', 'a' * 64))
+elif a[:2] == ['image', 'rm']: pass
+elif a[:2] == ['system', 'df']: pass
+elif a[0] in ('pull', 'tag', 'logout'): pass
 elif a[0] == 'load': pass
 elif a[0] == 'compose' and a[5] in ('config', 'up', 'ps'): pass
 else: sys.exit(42)
@@ -57,6 +72,19 @@ print('Avail')
 print(os.environ.get('FAKE_FREE_BYTES', '9000000000'))
 ''')
         self.executable(bin_directory / 'sleep', '#!/bin/sh\nexit 0\n')
+        self.executable(bin_directory / 'pgrep', '''#!/usr/bin/env python3
+import os
+import sys
+pattern = sys.argv[-1]
+active = os.environ.get('FAKE_PROCESS_ARGS', '')
+if ('sftp-server' in pattern or 'scp -t' in pattern) and ('sftp-server' in active or 'scp -t' in active):
+    print(active)
+    raise SystemExit(0)
+if pattern in active:
+    print(active)
+    raise SystemExit(0)
+raise SystemExit(1)
+''')
         self.env = dict(os.environ, PATH=str(bin_directory) + ':' + os.environ['PATH'],
                         TONGMU_DEPLOY_ROOT=str(self.root), FAKE_CALLS=str(self.calls),
                         FAKE_DOCKER_ROOT=str(self.directory), FAKE_IMAGE_SHA=self.sha,
@@ -74,6 +102,21 @@ print(os.environ.get('FAKE_FREE_BYTES', '9000000000'))
         result = subprocess.run(['bash', str(SCRIPT), phase, sha, sha + '-1-1', '100', '200'],
                                 env=self.env, capture_output=True, text=True, timeout=15)
         return result
+
+    def run_registry_phase(self, phase):
+        digest = 'sha256:' + 'd' * 64
+        content = image_identity({'Os': 'linux', 'Architecture': 'amd64', 'Config': {'Env': ['TONGMU_BUILD_SHA=' + self.sha]}, 'RootFS': {'Layers': ['sha256:' + 'c' * 64]}})
+        arguments = ['bash', str(SCRIPT), phase, self.sha, self.identifier]
+        if phase == 'prepare-registry':
+            arguments.append('200')
+            env = self.env
+        else:
+            arguments.extend(['ghcr.io/example/tongmu', digest, content])
+            docker_auth = self.staging / 'docker-auth'
+            docker_auth.mkdir(mode=0o700, exist_ok=True)
+            (docker_auth / 'config.json').write_text('{"auths":{"ghcr.io":{}}}')
+            env = dict(self.env, DOCKER_CONFIG=str(docker_auth))
+        return subprocess.run(arguments, env=env, capture_output=True, text=True, timeout=15)
 
     def prepare_payload(self):
         result = self.run_phase('prepare')
@@ -153,6 +196,109 @@ print(os.environ.get('FAKE_FREE_BYTES', '9000000000'))
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn('deployment verified', result.stdout)
         self.assertFalse(any('down' in call or 'prune' in call for call in self.docker_calls()))
+
+    def test_registry_preflight_reserves_space_before_creating_staging(self):
+        result = self.run_registry_phase('prepare-registry')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Registry pull preflight passed', result.stdout)
+        self.assertTrue(self.staging.is_dir())
+
+        low_space = dict(self.env, FAKE_FREE_BYTES='100')
+        self.env = low_space
+        self.assertNotEqual(self.run_registry_phase('prepare-registry').returncode, 0)
+
+    def test_registry_preflight_cleans_only_inactive_deployment_staging(self):
+        old_id = 'b' * 40 + '-7-1'
+        old_stage = self.staging.parent / old_id
+        old_stage.mkdir(parents=True)
+        (old_stage / 'image.tar.gz').write_bytes(b'abandoned TongMu archive')
+        unrelated = self.staging.parent / 'keep-this-directory'
+        unrelated.mkdir()
+
+        result = self.run_registry_phase('prepare-registry')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(old_stage.exists())
+        self.assertTrue(unrelated.is_dir())
+        self.assertIn('Removed abandoned TongMu transfer staging', result.stdout)
+
+    def test_registry_preflight_keeps_staging_with_an_active_scp_receiver(self):
+        old_id = 'b' * 40 + '-7-1'
+        old_stage = self.staging.parent / old_id
+        old_stage.mkdir(parents=True)
+        self.env['FAKE_PROCESS_ARGS'] = f"scp -t {old_stage}/"
+
+        result = self.run_registry_phase('prepare-registry')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(old_stage.is_dir())
+        self.assertIn('Keeping active TongMu staging transfer', result.stdout)
+
+    def test_registry_preflight_keeps_staging_with_an_active_registry_deploy(self):
+        old_sha = 'b' * 40
+        old_id = old_sha + '-7-1'
+        old_stage = self.staging.parent / old_id
+        old_stage.mkdir(parents=True)
+        self.env['FAKE_PROCESS_ARGS'] = f"bash -se -- deploy-registry {old_sha} {old_id} ghcr.io/example/tongmu"
+
+        result = self.run_registry_phase('prepare-registry')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(old_stage.is_dir())
+        self.assertIn('Keeping active TongMu staging transfer', result.stdout)
+
+    def test_registry_deploy_pulls_by_immutable_digest_without_building(self):
+        prepared = self.run_registry_phase('prepare-registry')
+        self.assertEqual(prepared.returncode, 0, prepared.stderr)
+        result = self.run_registry_phase('deploy-registry')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.docker_calls()
+        self.assertIn(['pull', 'ghcr.io/example/tongmu@sha256:' + 'd' * 64], calls)
+        self.assertIn(['tag', 'ghcr.io/example/tongmu@sha256:' + 'd' * 64, 'tongmu-release:' + self.sha], calls)
+        start = next(call for call in calls if 'up' in call)
+        self.assertIn('--no-build', start)
+        self.assertEqual(start[start.index('--pull') + 1], 'never')
+        self.assertFalse(self.staging.exists())
+
+    def test_registry_deploy_rejects_wrong_content_before_restart(self):
+        self.run_registry_phase('prepare-registry')
+        self.env['FAKE_LAYER'] = 'b' * 64
+        result = self.run_registry_phase('deploy-registry')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any('up' in call for call in self.docker_calls()))
+
+    def test_registry_cleanup_removes_only_its_temporary_auth_and_staging(self):
+        self.run_registry_phase('prepare-registry')
+        docker_auth = self.staging / 'docker-auth'
+        docker_auth.mkdir(mode=0o700)
+        (docker_auth / 'config.json').write_text('{"auths":{"ghcr.io":{}}}')
+        other = self.staging.parent / 'another-deployment'
+        other.mkdir()
+
+        result = self.run_phase('cleanup')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.staging.exists())
+        self.assertTrue(other.is_dir())
+
+    def test_registry_deploy_prunes_only_old_tongmu_release_tags(self):
+        self.run_registry_phase('prepare-registry')
+        prior = 'b' * 40
+        oldest = 'c' * 40
+        self.env['FAKE_RELEASES'] = json.dumps([
+            {'Id': 'sha256:' + '1' * 64, 'Created': '2026-10-03T14:00:00Z', 'RepoTags': ['tongmu-release:' + self.sha]},
+            {'Id': 'sha256:' + '2' * 64, 'Created': '2026-10-03T13:00:00Z', 'RepoTags': ['tongmu-release:' + prior]},
+            {'Id': 'sha256:' + '3' * 64, 'Created': '2026-10-02T13:00:00Z', 'RepoTags': ['tongmu-release:' + oldest]},
+            {'Id': 'sha256:' + '4' * 64, 'Created': '2026-10-01T13:00:00Z', 'RepoTags': ['other-app:old']},
+        ])
+        result = self.run_registry_phase('deploy-registry')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        removals = [call[-1] for call in self.docker_calls() if call[:2] == ['image', 'rm']]
+        self.assertEqual(removals, ['tongmu-release:' + oldest], f"stdout={result.stdout}\\ncalls={self.docker_calls()}")
+
+    def test_registry_checkout_changes_abort_before_pull(self):
+        self.run_registry_phase('prepare-registry')
+        (self.root / 'unrelated-change.txt').write_text('preserve')
+        result = self.run_registry_phase('deploy-registry')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any(call[0] == 'pull' for call in self.docker_calls()))
+        self.assertEqual((self.root / 'unrelated-change.txt').read_text(), 'preserve')
 
 
 if __name__ == '__main__':

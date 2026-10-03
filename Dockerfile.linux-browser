@@ -31,6 +31,8 @@ RUN npm run build --workspace=backend \
 
 ARG TONGMU_BUILD_SHA=development
 ENV TONGMU_BUILD_SHA=${TONGMU_BUILD_SHA}
+LABEL org.opencontainers.image.source="https://github.com/XYL333FYQ/TongMu" \
+      org.opencontainers.image.revision="${TONGMU_BUILD_SHA}"
 
 EXPOSE 3333 3334
 

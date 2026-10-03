@@ -15,7 +15,10 @@ jobs:
     name: Build and verify on GitHub
     uses: ./.github/workflows/docker.yml
     with:
-      export_image: true
+      publish_image: true
+    permissions:
+      contents: read
+      packages: write
 
   deploy:
     name: Deploy verified image to VPS
@@ -23,14 +26,11 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 75
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v5
-
-      - name: Download the verified image
-        uses: actions/download-artifact@v4
-        with:
-          name: tongmu-image-${{ github.sha }}
-          path: image
 
       - name: Prepare SSH
         shell: bash
@@ -46,7 +46,7 @@ jobs:
           ssh-keyscan -p "$VPS_PORT" -H "$VPS_HOST" >> ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
-      - name: Transfer and start the verified image
+      - name: Pull incremental image layers and start the verified image
         shell: bash
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
@@ -54,22 +54,34 @@ jobs:
           VPS_PORT: ${{ secrets.VPS_PORT }}
           DEPLOY_SHA: ${{ github.sha }}
           DEPLOY_ID: ${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          IMAGE_REGISTRY: ghcr.io/${{ github.repository }}
+          IMAGE_DIGEST: ${{ needs.image.outputs.registry_digest }}
+          IMAGE_CONTENT_SHA: ${{ needs.image.outputs.image_content_sha }}
+          IMAGE_SIZE: ${{ needs.image.outputs.image_size }}
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -Eeuo pipefail
           [[ "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$DEPLOY_ID" =~ ^[0-9a-f]{40}-[0-9]+-[0-9]+$ ]]
-          archive_bytes="$(stat -c %s image/image.tar.gz)"
-          image_bytes="$(cat image/image-size.txt)"
-          [[ "$archive_bytes" =~ ^[0-9]+$ && "$image_bytes" =~ ^[0-9]+$ ]]
+          registry="${IMAGE_REGISTRY,,}"
+          registry_digest="$IMAGE_DIGEST"
+          image_content_sha="$IMAGE_CONTENT_SHA"
+          image_bytes="$IMAGE_SIZE"
+          [[ "$registry" =~ ^ghcr\.io/[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9._-]*$ ]]
+          [[ "$registry_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$image_content_sha" =~ ^[0-9a-f]{64}$ && "$image_bytes" =~ ^[0-9]{1,12}$ ]]
           ssh_options=(-i ~/.ssh/tongmu_actions -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 -p "$VPS_PORT")
           staging="/opt/TongMu.deploy/$DEPLOY_ID"
           ssh "${ssh_options[@]}" "$VPS_USER@$VPS_HOST" \
-            "bash -se -- prepare '$DEPLOY_SHA' '$DEPLOY_ID' '$archive_bytes' '$image_bytes'" < scripts/deploy/prebuilt-image.sh
+            "bash -se -- prepare-registry '$DEPLOY_SHA' '$DEPLOY_ID' '$image_bytes'" < scripts/deploy/prebuilt-image.sh
           cleanup_remote() {
             ssh "${ssh_options[@]}" "$VPS_USER@$VPS_HOST" \
               "bash -se -- cleanup '$DEPLOY_SHA' '$DEPLOY_ID'" < scripts/deploy/prebuilt-image.sh || true
           }
           trap cleanup_remote EXIT
-          bash scripts/deploy/transfer-image.sh "$DEPLOY_ID" "$archive_bytes"
+          [[ "$GHCR_USERNAME" =~ ^[A-Za-z0-9-]+$ && -n "$GHCR_TOKEN" ]]
+          printf '%s\n' "$GHCR_TOKEN" | ssh "${ssh_options[@]}" "$VPS_USER@$VPS_HOST" \
+            "install -d -m 700 '$staging/docker-auth' && DOCKER_CONFIG='$staging/docker-auth' docker login ghcr.io -u '$GHCR_USERNAME' --password-stdin"
           ssh "${ssh_options[@]}" "$VPS_USER@$VPS_HOST" \
-            "bash -se -- deploy '$DEPLOY_SHA' '$DEPLOY_ID'" < scripts/deploy/prebuilt-image.sh
+            "DOCKER_CONFIG='$staging/docker-auth' bash -se -- deploy-registry '$DEPLOY_SHA' '$DEPLOY_ID' '$registry' '$registry_digest' '$image_content_sha'" < scripts/deploy/prebuilt-image.sh

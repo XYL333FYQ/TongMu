@@ -4,9 +4,19 @@ on:
   workflow_dispatch:
   workflow_call:
     inputs:
-      export_image:
+      publish_image:
         type: boolean
         default: false
+    outputs:
+      registry_digest:
+        description: Immutable digest of the verified TongMu image.
+        value: ${{ jobs.smoke.outputs.registry_digest }}
+      image_content_sha:
+        description: Portable identity of the verified image layers and startup configuration.
+        value: ${{ jobs.smoke.outputs.image_content_sha }}
+      image_size:
+        description: Uncompressed image size in bytes.
+        value: ${{ jobs.smoke.outputs.image_size }}
 
 concurrency:
   group: tongmu-docker-${{ github.workflow }}-${{ github.ref }}
@@ -19,6 +29,13 @@ jobs:
   smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      registry_digest: ${{ steps.publish.outputs.registry_digest }}
+      image_content_sha: ${{ steps.publish.outputs.image_content_sha }}
+      image_size: ${{ steps.publish.outputs.image_size }}
     env:
       COMPOSE_PROJECT_NAME: tongmu-smoke
       TONGMU_BUILD_SHA: ${{ github.sha }}
@@ -29,7 +46,7 @@ jobs:
       - name: Deployment safeguards
         run: |
           python3 scripts/deploy/test_prebuilt_image.py
-          bash scripts/deploy/test_transfer_image.sh
+          python3 scripts/deploy/test_retained_release_images.py
 
       - name: Prepare isolated Compose configuration
         run: cp .env.example .env
@@ -115,31 +132,28 @@ jobs:
           '
           node -e 'const h = require("./health.json"); if (h.status !== "ok" || h.commitSha !== process.env.TONGMU_BUILD_SHA) process.exit(1)'
 
-      - name: Export the verified production image
-        if: inputs.export_image
+      - name: Publish the verified image layers to GitHub Container Registry
+        if: inputs.publish_image
         shell: bash
+        id: publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -Eeuo pipefail
           image="$(docker compose images -q tongmu)"
-          docker tag "$image" "tongmu-release:$TONGMU_BUILD_SHA"
-          mkdir -p "$RUNNER_TEMP/tongmu-image"
-          docker image inspect --format '{{.Id}}' "$image" > "$RUNNER_TEMP/tongmu-image/image-id.txt"
-          docker image inspect "$image" | python3 scripts/deploy/image_identity.py > "$RUNNER_TEMP/tongmu-image/image-content.sha256"
-          cp scripts/deploy/image_identity.py "$RUNNER_TEMP/tongmu-image/image_identity.py"
-          docker image inspect --format '{{.Size}}' "$image" > "$RUNNER_TEMP/tongmu-image/image-size.txt"
-          docker save "tongmu-release:$TONGMU_BUILD_SHA" | gzip -6 > "$RUNNER_TEMP/tongmu-image/image.tar.gz"
-          cd "$RUNNER_TEMP/tongmu-image"
-          sha256sum image.tar.gz > image.sha256
-
-      - name: Upload the verified image
-        if: inputs.export_image
-        uses: actions/upload-artifact@v4
-        with:
-          name: tongmu-image-${{ github.sha }}
-          path: ${{ runner.temp }}/tongmu-image/
-          compression-level: 0
-          retention-days: 1
-          if-no-files-found: error
+          registry_image="ghcr.io/${GITHUB_REPOSITORY,,}:$TONGMU_BUILD_SHA"
+          printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker tag "$image" "$registry_image"
+          content_sha="$(docker image inspect "$image" | python3 scripts/deploy/image_identity.py)"
+          image_size="$(docker image inspect --format '{{.Size}}' "$image")"
+          [[ "$content_sha" =~ ^[0-9a-f]{64}$ && "$image_size" =~ ^[0-9]{1,12}$ ]]
+          push_log="$RUNNER_TEMP/tongmu-image-push.log"
+          docker push "$registry_image" 2>&1 | tee "$push_log"
+          digest="$(grep -oE 'sha256:[0-9a-f]{64}' "$push_log" | tail -n 1)"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          printf 'registry_digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+          printf 'image_content_sha=%s\n' "$content_sha" >> "$GITHUB_OUTPUT"
+          printf 'image_size=%s\n' "$image_size" >> "$GITHUB_OUTPUT"
 
       - name: Failure diagnostics
         if: failure()
