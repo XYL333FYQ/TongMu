@@ -5,11 +5,9 @@ import type {
   MusicCatalogCommentPage,
   MusicCatalogLyrics,
   MusicCatalogPage,
-  MusicCatalogPlaylist,
   MusicCatalogPlaylistDetail,
   MusicCatalogSearchItem,
   MusicCatalogSearchType,
-  MusicCatalogTrack,
 } from './catalog-types'
 
 export type NcmCatalogView =
@@ -22,8 +20,8 @@ export interface NcmCatalogStoreState {
   searchType: MusicCatalogSearchType
   searchQuery: string
   searchResults: MusicCatalogPage<MusicCatalogSearchItem> | null
-  privateItems: Array<MusicCatalogTrack | MusicCatalogPlaylist>
-  privatePage: MusicCatalogPage<MusicCatalogTrack | MusicCatalogPlaylist> | null
+  privateItems: MusicCatalogSearchItem[]
+  privatePage: MusicCatalogPage<MusicCatalogSearchItem> | null
   playlistDetail: MusicCatalogPlaylistDetail | null
   albumDetail: MusicCatalogAlbum | null
   artistDetail: MusicCatalogArtistDetail | null
@@ -41,7 +39,7 @@ export interface NcmCatalogStoreState {
     results: MusicCatalogPage<MusicCatalogSearchItem> | null
   ) => void
   setPrivatePage: (
-    page: MusicCatalogPage<MusicCatalogTrack | MusicCatalogPlaylist> | null
+    page: MusicCatalogPage<MusicCatalogSearchItem> | null
   ) => void
   setPlaylistDetail: (detail: MusicCatalogPlaylistDetail | null) => void
   setAlbumDetail: (detail: MusicCatalogAlbum | null) => void
@@ -54,10 +52,8 @@ export interface NcmCatalogStoreState {
 
 function emptyPrivateState() {
   return {
-    privateItems: [] as Array<MusicCatalogTrack | MusicCatalogPlaylist>,
-    privatePage: null as MusicCatalogPage<
-      MusicCatalogTrack | MusicCatalogPlaylist
-    > | null,
+    privateItems: [] as MusicCatalogSearchItem[],
+    privatePage: null as MusicCatalogPage<MusicCatalogSearchItem> | null,
   }
 }
 

@@ -572,6 +572,22 @@ export class NcmCatalogService {
     return pageResult(raw.map((item) => normalizePlaylist(item)), page, totalFrom(root, 'playlistCount', 'total'));
   }
 
+  async getSubscribedAlbums(userId: number, input: NcmCatalogPageInput = {}, signal?: AbortSignal): Promise<MusicCatalogPage<MusicCatalogAlbumSummary>> {
+    const own = await this.ownCredential(userId);
+    const page = pageInput(input);
+    const body = checkResponse(await this.client.getSubscribedAlbums(page, own.credential, signal), '收藏专辑');
+    if (!Array.isArray(body.data)) throw invalidResponse('收藏专辑列表结构无效');
+    return pageResult(body.data.map(normalizeAlbumSummary), page, totalFrom(body, 'count', 'total'));
+  }
+
+  async getSubscribedArtists(userId: number, input: NcmCatalogPageInput = {}, signal?: AbortSignal): Promise<MusicCatalogPage<MusicCatalogArtist>> {
+    const own = await this.ownCredential(userId);
+    const page = pageInput(input);
+    const body = checkResponse(await this.client.getSubscribedArtists(page, own.credential, signal), '收藏歌手');
+    if (!Array.isArray(body.data)) throw invalidResponse('收藏歌手列表结构无效');
+    return pageResult(body.data.map(item => normalizeArtist(item, [], [])), page, totalFrom(body, 'count', 'total'));
+  }
+
   async getLiked(userId: number, input: NcmCatalogPageInput = {}, signal?: AbortSignal): Promise<MusicCatalogPage<MusicCatalogTrack>> {
     const own = await this.ownCredential(userId);
     const page = pageInput(input);

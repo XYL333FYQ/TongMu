@@ -3,6 +3,44 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const { NcmApiClient } = require('../dist/modules/music/ncm/ncm-client');
 
+test('legacy audio fallback proves bitrate and never invents requested quality', async () => {
+  const requests = [];
+  let bitrate = 320000;
+  const server = http.createServer((req, res) => {
+    const url = new URL(req.url, 'http://fixture');
+    requests.push({ path: url.pathname, br: url.searchParams.get('br') });
+    assert.equal(req.headers.cookie, 'MUSIC_U=fixture-only');
+    res.setHeader('Content-Type', 'application/json');
+    if (url.pathname === '/song/url/v1') {
+      res.statusCode = 404;
+      res.end(JSON.stringify({ code: 404 }));
+    } else {
+      res.end(JSON.stringify({ code: 200, data: [{ id: 101, url: 'https://m7.music.126.net/fixture.mp3', type: 'mp3', br: bitrate, level: 'exhigh' }] }));
+    }
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const previous = process.env.NCM_API_BASE_URL;
+  process.env.NCM_API_BASE_URL = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const client = new NcmApiClient();
+    const credential = { cookieHeader: 'MUSIC_U=fixture-only' };
+    assert.equal((await client.resolveTrack('101', 'exhigh', credential)).actualQuality, 'exhigh');
+    bitrate = 128000;
+    assert.equal((await client.resolveTrack('101', 'exhigh', credential)).actualQuality, 'standard');
+    bitrate = undefined;
+    assert.equal((await client.resolveTrack('101', 'exhigh', credential)).actualQuality, null);
+    const legacyCount = requests.filter(row => row.path === '/song/url').length;
+    await assert.rejects(() => client.resolveTrack('101', 'lossless', credential), error => error.code === 'NCM_UPSTREAM_ERROR');
+    assert.equal(requests.filter(row => row.path === '/song/url').length, legacyCount);
+    assert.ok(requests.filter(row => row.path === '/song/url').every(row => row.br === '320000'));
+  } finally {
+    if (previous === undefined) delete process.env.NCM_API_BASE_URL;
+    else process.env.NCM_API_BASE_URL = previous;
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
 test('QR polls bypass URL cache and observe phone authorization', async () => {
   const cache = new Map();
   const requests = [];

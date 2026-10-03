@@ -87,8 +87,8 @@ const navOptions: Array<{
 }> = [
   { value: 'search', label: 'Search', icon: Search },
   { value: 'playlists', label: 'Playlists', icon: ListMusic, private: true },
-  { value: 'albums', label: 'Albums', icon: ListMusic },
-  { value: 'artists', label: 'Artist', icon: ListMusic },
+  { value: 'albums', label: 'Saved albums', icon: ListMusic, private: true },
+  { value: 'artists', label: 'Saved artists', icon: ListMusic, private: true },
   { value: 'liked', label: 'Liked', icon: Heart, private: true },
   { value: 'fm', label: 'Personal FM', icon: Radio, private: true },
   { value: 'cloud', label: 'Cloud music', icon: Cloud, private: true },
@@ -283,7 +283,7 @@ export function NcmCatalogPanel({
 
   useEffect(() => {
     const view = catalog.view
-    if (!['playlists', 'liked', 'fm', 'cloud'].includes(view)) return
+    if (!['playlists', 'albums', 'artists', 'liked', 'fm', 'cloud'].includes(view)) return
     if (!loggedIn || !accountId) {
       setError(t('Connect your NetEase Music account first.'))
       return
@@ -291,14 +291,17 @@ export function NcmCatalogPanel({
     const controller = new AbortController()
     const generation = useNcmCatalogStore.getState().generation
     useNcmCatalogStore.getState().setLoading(true)
-    const path =
-      view === 'playlists'
-        ? '/api/music/ncm/playlists'
-        : view === 'liked'
-          ? '/api/music/ncm/liked'
-          : view === 'cloud'
-            ? '/api/music/ncm/cloud'
-            : '/api/music/ncm/fm'
+    const path = view === 'albums'
+      ? '/api/music/ncm/subscribed-albums'
+      : view === 'artists'
+        ? '/api/music/ncm/subscribed-artists'
+        : view === 'playlists'
+          ? '/api/music/ncm/playlists'
+          : view === 'liked'
+            ? '/api/music/ncm/liked'
+            : view === 'cloud'
+              ? '/api/music/ncm/cloud'
+              : '/api/music/ncm/fm'
     const params = view === 'fm' ? '' : `?offset=${privateOffset}&pageSize=20`
     void apiGet<CatalogApiBody>(`${path}${params}`, {
       signal: controller.signal,
@@ -313,7 +316,7 @@ export function NcmCatalogPanel({
           setError(errorFrom(result))
           return
         }
-        const page = pageFrom<MusicCatalogTrack | MusicCatalogPlaylist>(
+        const page = pageFrom<MusicCatalogSearchItem>(
           result.data
         )
         if (!page) {
@@ -512,12 +515,8 @@ export function NcmCatalogPanel({
       setDetailTarget(null)
       setAuxiliaryTarget(null)
       setPrivateOffset(0)
-      if (view === 'albums' || view === 'artists') {
-        catalog.setSearchType(view === 'albums' ? 'album' : 'artist')
-        catalog.setView('search')
-      } else {
-        catalog.setView(view)
-      }
+      catalog.setPrivatePage(null)
+      catalog.setView(view)
     },
     [catalog]
   )
@@ -974,6 +973,8 @@ export function NcmCatalogPanel({
 
   const showPrivate =
     catalog.view === 'playlists' ||
+    catalog.view === 'albums' ||
+    catalog.view === 'artists' ||
     catalog.view === 'liked' ||
     catalog.view === 'fm' ||
     catalog.view === 'cloud'
@@ -1038,12 +1039,7 @@ export function NcmCatalogPanel({
       >
         {navOptions.map((option) => {
           const Icon = option.icon
-          const selected =
-            option.value === 'albums'
-              ? catalog.view === 'search' && catalog.searchType === 'album'
-              : option.value === 'artists'
-                ? catalog.view === 'search' && catalog.searchType === 'artist'
-                : catalog.view === option.value
+          const selected = catalog.view === option.value
           return (
             <button
               key={option.value}
@@ -1136,10 +1132,8 @@ export function NcmCatalogPanel({
             </div>
           ) : showPrivate ? (
             <div className="mt-2 space-y-1.5">
-              {catalog.view === 'playlists'
-                ? (catalog.privateItems as MusicCatalogPlaylist[]).map(
-                    renderPlaylist
-                  )
+              {['playlists', 'albums', 'artists'].includes(catalog.view)
+                ? catalog.privateItems.map(renderSearchItem)
                 : privateTracks.map((track, index) => (
                     <div key={`${track.trackId}-${index}`}>
                       {catalog.view === 'fm' && (
@@ -1171,6 +1165,10 @@ export function NcmCatalogPanel({
                       {renderTrack(track)}
                     </div>
                   ))}
+              {catalog.loading && <p role="status" className="text-[10px]">{t('Loading……')}</p>}
+              {!catalog.loading && !catalog.error && privatePage?.items.length === 0 && (
+                <p role="status" className="text-[10px]">{t('Your collection is empty.')}</p>
+              )}
             </div>
           ) : (
             <div className="mt-2 space-y-1.5">

@@ -204,6 +204,22 @@ export function createNcmCatalogRouter(catalog: NcmCatalogService = ncmCatalogSe
     }
   });
 
+  router.get('/ncm/subscribed-albums', authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+      sendData(res, await withRequestSignal(req, (signal) => catalog.getSubscribedAlbums(userIdOf(req), parsePage(req), signal)) as unknown as Record<string, unknown>);
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.get('/ncm/subscribed-artists', authenticateToken, async (req: AuthenticatedRequest, res) => {
+    try {
+      sendData(res, await withRequestSignal(req, (signal) => catalog.getSubscribedArtists(userIdOf(req), parsePage(req), signal)) as unknown as Record<string, unknown>);
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
   router.get('/ncm/liked', authenticateToken, async (req: AuthenticatedRequest, res) => {
     try {
       sendData(res, await withRequestSignal(req, (signal) => catalog.getLiked(userIdOf(req), parsePage(req), signal)) as unknown as Record<string, unknown>);

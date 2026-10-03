@@ -38,6 +38,7 @@ const ALLOWED_ENDPOINTS = new Set([
   '/user/account',
   '/logout',
   '/song/url/v1',
+  '/song/url',
   '/search',
   '/playlist/detail',
   '/playlist/track/all',
@@ -48,6 +49,8 @@ const ALLOWED_ENDPOINTS = new Set([
   '/artist/songs',
   '/artist/album',
   '/user/playlist',
+  '/album/sublist',
+  '/artist/sublist',
   '/likelist',
   '/personal_fm',
   '/fm_trash',
@@ -469,12 +472,18 @@ export class NcmApiClient implements NcmClient {
     credential: NcmCredentialSecrets,
     signal?: AbortSignal,
   ): Promise<NcmTrackResolution> {
-    const result = await fetchJson(
-      '/song/url/v1',
-      { id: trackId, level: requestedQuality },
-      credential,
-      signal,
-    );
+    let result: Awaited<ReturnType<typeof fetchJson>>;
+    let usedLegacy = false;
+    const legacyBitrate = { standard: 128000, higher: 192000, exhigh: 320000 }[requestedQuality as 'standard' | 'higher' | 'exhigh'];
+    try {
+      result = await fetchJson('/song/url/v1', { id: trackId, level: requestedQuality }, credential, signal);
+    } catch (error) {
+      // The reference client also supports the older endpoint. Only request an
+      // equivalent MP3 bitrate; advanced formats have no exact legacy mapping.
+      if (!(error instanceof NcmProviderError) || error.code !== 'NCM_UPSTREAM_ERROR' || !legacyBitrate || signal?.aborted) throw error;
+      result = await fetchJson('/song/url', { id: trackId, br: String(legacyBitrate) }, credential, signal);
+      usedLegacy = true;
+    }
     if (result.body.code === 301 || result.body.code === 401) {
       throw new NcmProviderError('NCM_CREDENTIAL_INVALID', '网易云登录凭据已失效', 401);
     }
@@ -490,7 +499,12 @@ export class NcmApiClient implements NcmClient {
     const media = codecFrom(row.type ?? row.mime ?? row.mimetype);
     const rawAvailable = row.availableQualities ?? row.availableLevels ?? row.qualities;
     const availableQualities = qualityList(rawAvailable);
-    const actualQuality = isMusicQuality(row.level ?? row.quality) ? (row.level ?? row.quality) as MusicQuality : null;
+    const legacyQuality = usedLegacy && media.codec === 'mp3'
+      ? ({ 128000: 'standard', 192000: 'higher', 320000: 'exhigh' } as Record<number, MusicQuality>)[Number(row.br)]
+      : undefined;
+    const actualQuality = usedLegacy
+      ? legacyQuality ?? null
+      : isMusicQuality(row.level ?? row.quality) ? (row.level ?? row.quality) as MusicQuality : null;
     if (actualQuality && !availableQualities.includes(actualQuality)) availableQualities.push(actualQuality);
     const availableMaximum = availableQualities.length > 0
       ? availableQualities.reduce<MusicQuality>((best, value) =>
@@ -621,6 +635,14 @@ export class NcmApiClient implements NcmClient {
       limit: String(params.limit),
       offset: String(params.offset),
     }, credential, signal);
+  }
+
+  async getSubscribedAlbums(params: NcmPageRequest, credential: NcmCredentialSecrets, signal?: AbortSignal): Promise<NcmUpstreamResponse> {
+    return this.catalogRequest('/album/sublist', { limit: String(params.limit), offset: String(params.offset) }, credential, signal);
+  }
+
+  async getSubscribedArtists(params: NcmPageRequest, credential: NcmCredentialSecrets, signal?: AbortSignal): Promise<NcmUpstreamResponse> {
+    return this.catalogRequest('/artist/sublist', { limit: String(params.limit), offset: String(params.offset) }, credential, signal);
   }
 
   async getLikedSongs(

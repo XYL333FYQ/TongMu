@@ -67,7 +67,7 @@ export function JoinRoomForm(props: JoinRoomFormProps): JSX.Element {
         </div>
         <Title level={3}>{t('Join a room')}</Title>
         {hideRoomId && roomName && <Text type="secondary">{roomName}</Text>}
-        {(joinStatus === 'rejected' || joinStatus === 'closed') && (
+        {!error && (joinStatus === 'rejected' || joinStatus === 'closed') && (
           <div
             className="mb-3 rounded px-3 py-2 text-sm"
             style={{

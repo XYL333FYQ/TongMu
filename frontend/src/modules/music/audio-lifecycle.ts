@@ -1,3 +1,10 @@
+export function classifyMusicPlaybackError(error: unknown): 'blocked' | 'aborted' | 'unavailable' {
+  const name = error && typeof error === 'object' && 'name' in error ? error.name : null
+  if (name === 'NotAllowedError') return 'blocked'
+  if (name === 'AbortError') return 'aborted'
+  return 'unavailable'
+}
+
 export interface MusicAudioLike {
   src: string
   currentTime: number

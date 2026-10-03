@@ -120,6 +120,8 @@ export interface NcmClient {
   getArtistSongs(params: NcmPageRequest & { artistId: string }, signal?: AbortSignal): Promise<NcmUpstreamResponse>;
   getArtistAlbums(params: NcmPageRequest & { artistId: string }, signal?: AbortSignal): Promise<NcmUpstreamResponse>;
   getUserPlaylists(params: NcmPageRequest & { accountId: string }, credential: NcmCredentialSecrets, signal?: AbortSignal): Promise<NcmUpstreamResponse>;
+  getSubscribedAlbums(params: NcmPageRequest, credential: NcmCredentialSecrets, signal?: AbortSignal): Promise<NcmUpstreamResponse>;
+  getSubscribedArtists(params: NcmPageRequest, credential: NcmCredentialSecrets, signal?: AbortSignal): Promise<NcmUpstreamResponse>;
   getLikedSongs(accountId: string, credential: NcmCredentialSecrets, signal?: AbortSignal): Promise<NcmUpstreamResponse>;
   getPersonalFm(credential: NcmCredentialSecrets, signal?: AbortSignal): Promise<NcmUpstreamResponse>;
   trashFm(trackId: string, credential: NcmCredentialSecrets, signal?: AbortSignal): Promise<NcmUpstreamResponse>;

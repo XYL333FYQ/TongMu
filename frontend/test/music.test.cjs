@@ -37,6 +37,10 @@ const i18n = {
 }
 const domain = load('src/modules/music/domain.ts', { '@/i18n': i18n })
 const lifecycle = load('src/modules/music/audio-lifecycle.ts')
+const { useMusicStore } = load('src/modules/music/store.ts', {
+  zustand: require('zustand'),
+  './realtime-version': versions,
+})
 const { updateArtLocale } = load('src/modules/art-player/artLocale.ts')
 
 test('module translation switches music controls and keeps user template values intact', () => {
@@ -195,6 +199,33 @@ class FakeAudio {
       listener(new Event(type))
   }
 }
+
+test('playback errors distinguish browser permission, interrupted playback and unavailable media', () => {
+  assert.equal(lifecycle.classifyMusicPlaybackError({ name: 'NotAllowedError' }), 'blocked')
+  assert.equal(lifecycle.classifyMusicPlaybackError({ name: 'AbortError' }), 'aborted')
+  assert.equal(lifecycle.classifyMusicPlaybackError({ name: 'NotSupportedError' }), 'unavailable')
+  assert.equal(lifecycle.classifyMusicPlaybackError(new Error('upstream failed')), 'unavailable')
+})
+
+test('room heartbeats and unchanged control snapshots preserve a track load error', () => {
+  useMusicStore.getState().reset('fixture-room')
+  const snapshot = {
+    roomId: 'fixture-room', session: { sessionId: 'fixture-session' },
+    queue: [], currentItem: null, currentQueueItemId: 1, currentIndex: 0,
+    currentSourceRef: 'music://ncm/track/101', isPlaying: false,
+    positionSec: 0, playbackRate: 1, playMode: 'sequential',
+    musicGeneration: 1, version: 1, serverTimestamp: 100,
+    host: { socketId: 'host', userId: 1, online: true }, hostOffline: false,
+  }
+  useMusicStore.getState().applySnapshot(snapshot, true)
+  useMusicStore.getState().setError('Track request failed')
+  useMusicStore.getState().applyHeartbeat({ ...snapshot, serverTimestamp: 200 })
+  assert.equal(useMusicStore.getState().error, 'Track request failed')
+  useMusicStore.getState().applySnapshot({ ...snapshot, version: 2 })
+  assert.equal(useMusicStore.getState().error, 'Track request failed')
+  useMusicStore.getState().applySnapshot({ ...snapshot, version: 3, musicGeneration: 2, currentSourceRef: 'music://ncm/track/102' })
+  assert.equal(useMusicStore.getState().error, null)
+})
 
 test('audio lifecycle unloads sources idempotently and ignores stale callbacks', () => {
   const audio = new FakeAudio()

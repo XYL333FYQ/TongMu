@@ -236,6 +236,9 @@ export const modulesZh: Record<string, string> = {
   'Search for music, then choose a track and quality. Unavailable quality options stay disabled.':
     '搜索音乐，然后选择歌曲和音质。不可用的音质无法选择。',
   'Loading……': '加载中…',
+  'Saved albums': '收藏专辑',
+  'Saved artists': '收藏歌手',
+  'Your collection is empty.': '这里还没有收藏内容。',
   'Default quality:': '当前默认音质为',
   options: '种',
   'This music source could not be opened.': '当前音乐来源无法解析',

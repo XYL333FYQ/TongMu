@@ -4,7 +4,7 @@ import type { RefObject } from 'react'
 import { useSocket } from '@/hooks/useSocket'
 import { useRoomExperienceStore } from '@/store/roomExperienceStore'
 import { englishErrorMessage } from '@/lib/errorMessage'
-import { MusicAudioLifecycle } from './audio-lifecycle'
+import { MusicAudioLifecycle, classifyMusicPlaybackError } from './audio-lifecycle'
 import {
   ROOM_MEDIA_TEARDOWN_EVENT,
   type RoomMediaTeardownDetail,
@@ -95,6 +95,7 @@ export function useMusicSync({
   const resolveEpochRef = useRef(0)
   const snapshotInitializedRef = useRef(false)
   const ackedTrackRef = useRef<string | null>(null)
+  const [resolutionAttempt, setResolutionAttempt] = useState(0)
   const [qualityFactsState, setQualityFacts] = useState<{
     sourceRef: string
     generation: number
@@ -109,6 +110,16 @@ export function useMusicSync({
   const setError = useCallback((message: string | null) => {
     useMusicStore.getState().setError(message)
   }, [])
+
+  const setPlaybackError = useCallback((error: unknown) => {
+    const kind = classifyMusicPlaybackError(error)
+    if (kind === 'aborted') return
+    if (kind === 'blocked') {
+      setError(t('Your browser blocked autoplay. Press Play to continue.'))
+    } else if (!useMusicStore.getState().error) {
+      setError(t('Unable to load this track. Check the media connection or choose a supported audio format.'))
+    }
+  }, [setError])
 
   const applySnapshot = useCallback(
     (value: unknown, force = false) => {
@@ -302,6 +313,7 @@ export function useMusicSync({
     lifecycle.unload()
     attachedSourceRef.current = null
     attachedGenerationRef.current = null
+    setError(null)
     const requestedQuality = isMusicQuality(
       state.currentItem?.metadata?.requestedQuality
     )
@@ -365,6 +377,7 @@ export function useMusicSync({
             return
           audio.currentTime = Math.max(0, current.positionSec)
           sendTrackAck(true)
+          if (active && current.isPlaying) void audio.play().catch(setPlaybackError)
         },
         onError: () =>
           setError(
@@ -394,11 +407,14 @@ export function useMusicSync({
       cancelled = true
     }
   }, [
+    active,
     audioRef,
     isHost,
     roomId,
+    resolutionAttempt,
     sendTrackAck,
     setError,
+    setPlaybackError,
     socket,
     store.currentSourceRef,
     store.musicGeneration,
@@ -416,13 +432,11 @@ export function useMusicSync({
     }
     void audio
       .play()
-      .catch(() =>
-        setError(t('Your browser blocked autoplay. Press Play to continue.'))
-      )
+      .catch(setPlaybackError)
   }, [
     active,
     audioRef,
-    setError,
+    setPlaybackError,
     store.isPlaying,
     store.musicGeneration,
     store.playbackRate,
@@ -501,15 +515,13 @@ export function useMusicSync({
       if (!audio || !useMusicStore.getState().isPlaying) return
       void audio
         .play()
-        .catch(() =>
-          setError(t('Your browser blocked autoplay. Press Play to continue.'))
-        )
+        .catch(setPlaybackError)
     }
     socket.on('connect', handleReconnect)
     return () => {
       socket.off('connect', handleReconnect)
     }
-  }, [audioRef, setError, socket])
+  }, [audioRef, setPlaybackError, socket])
 
   const emitHostMutation = useCallback(
     (event: string, payload: Record<string, unknown> = {}) => {
@@ -607,15 +619,17 @@ export function useMusicSync({
   const play = useCallback(() => {
     const audio = audioRef.current
     if (canControl) {
-      if (audio)
+      if (store.isPlaying) return emitHostMutation('music:pause')
+      if (audio?.getAttribute('src') && !audio.error)
         void audio
           .play()
-          .catch(() =>
-            setError(
-              t('Your browser blocked playback. Press Play again to continue.')
-            )
-          )
-      return emitHostMutation(store.isPlaying ? 'music:pause' : 'music:play')
+          .catch(setPlaybackError)
+      else {
+        attachedSourceRef.current = null
+        attachedGenerationRef.current = null
+        setResolutionAttempt(attempt => attempt + 1)
+      }
+      return emitHostMutation('music:play')
     }
     return requestControl(store.isPlaying ? 'pause' : 'play')
   }, [
@@ -623,7 +637,7 @@ export function useMusicSync({
     emitHostMutation,
     canControl,
     requestControl,
-    setError,
+    setPlaybackError,
     store.isPlaying,
   ])
 

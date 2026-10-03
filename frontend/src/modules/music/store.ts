@@ -125,6 +125,7 @@ export const useMusicStore = create<MusicStoreState>()((set, get) => ({
       return false
     set({
       ...snapshotValues(snapshot),
+      error: current.currentSourceRef === snapshot.currentSourceRef && current.musicGeneration === snapshot.musicGeneration ? current.error : null,
       pendingControlRequests: force ? [] : current.pendingControlRequests,
       pendingHostRequests: force ? [] : current.pendingHostRequests,
     })
@@ -139,6 +140,7 @@ export const useMusicStore = create<MusicStoreState>()((set, get) => ({
       return false
     set({
       ...snapshotValues(snapshot),
+      error: current.currentSourceRef === snapshot.currentSourceRef && current.musicGeneration === snapshot.musicGeneration ? current.error : null,
       pendingControlRequests: current.pendingControlRequests,
       pendingHostRequests: current.pendingHostRequests,
     })

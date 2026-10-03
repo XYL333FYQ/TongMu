@@ -187,6 +187,32 @@ function credentialsForOwnerOne() {
   };
 }
 
+test("private saved albums and artists use the caller credential and bounded pages", async () => {
+  const client = new FakeCatalogClient();
+  const calls = [];
+  client.getSubscribedAlbums = async (page, credential) => {
+    calls.push({ page, credential });
+    return { code: 200, count: 21, data: [{ id: 501, name: 'Saved album', artists: [{ name: 'Artist' }], size: 8, cookie: 'must-not-leak' }] };
+  };
+  client.getSubscribedArtists = async (page, credential) => {
+    calls.push({ page, credential });
+    return { code: 200, count: 1, data: [{ id: 601, name: 'Saved artist', albumSize: 2, musicSize: 8, cookie: 'must-not-leak' }] };
+  };
+  const catalog = new NcmCatalogService(client, credentialsForOwnerOne());
+  const albums = await catalog.getSubscribedAlbums(1, { offset: 0, limit: 20 });
+  const artists = await catalog.getSubscribedArtists(1, { offset: 0, limit: 20 });
+  assert.equal(albums.items[0].albumId, '501');
+  assert.equal(albums.items[0].artist, 'Artist');
+  assert.equal(albums.hasMore, true);
+  assert.equal(artists.items[0].artistId, '601');
+  assert.equal(artists.hasMore, false);
+  assert.ok(calls.every(call => call.page.limit === 20 && call.credential.cookieHeader === 'MUSIC_U=server-only'));
+  assert.equal(JSON.stringify([albums, artists]).includes('must-not-leak'), false);
+  await assert.rejects(() => catalog.getSubscribedAlbums(2), error => error.code === 'NCM_NOT_LOGGED_IN');
+  client.getSubscribedArtists = async () => ({ code: 200, data: null });
+  await assert.rejects(() => catalog.getSubscribedArtists(1), error => error.code === 'NCM_INVALID_RESPONSE');
+});
+
 test("NCM catalog search validates bounds, keeps provider-neutral stable refs, and rejects malformed lists", async () => {
   const client = new FakeCatalogClient();
   const catalog = new NcmCatalogService(client, credentialsForOwnerOne());
@@ -267,10 +293,12 @@ test("private catalog is current-owner only and does not accept an alternate own
   app.use(createNcmCatalogRouter(catalog));
   const server = http.createServer(app);
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const response = await fetch(
-    `http://127.0.0.1:${server.address().port}/ncm/liked?ownerId=1`,
-  );
-  assert.equal(response.status, 401);
+  for (const endpoint of ['liked', 'subscribed-albums', 'subscribed-artists']) {
+    const response = await fetch(
+      `http://127.0.0.1:${server.address().port}/ncm/${endpoint}?ownerId=1`,
+    );
+    assert.equal(response.status, 401);
+  }
   await server.close();
 });
 

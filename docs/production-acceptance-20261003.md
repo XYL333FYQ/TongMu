@@ -1,6 +1,22 @@
-# TongMu 线上验收记录（2026-10-03，待登录后继续）
+# TongMu 线上验收记录（2026-10-03，持续验收中）
 
-线上地址：https://tongmu.eren.cc.cd/ 。正式界面测试仅在确认新版部署成功后执行；当前应用版本 `659b06884a9103fa1c21ecc10859ad3e41a34a20`。
+## 网易云登录后读取失败：新增复核
+
+用户已通过手机授权，线上界面显示已连接；实际私人歌单请求返回 `NCM_PRIVATE_ACCOUNT_DATA`，并非正常的空歌单。公共搜索可返回结果，不代表私人账号功能可用。
+
+只读对照 `references/ZViewer-main/backend/src/routes/music.ts` 与 `frontend/src/modules/music/pages/MusicMyPage.tsx`：参考项目在二维码授权或旧凭据缺少资料时通过 `/user/account` 补全身份，然后读取用户歌单和收藏。TongMu 原实现保存凭据却可能没有保存用户编号，导致私人目录不能读取。
+
+提交 `a8cae32` 补齐账号身份查询，并让已保存的旧凭据在读取私人目录时按需补全，无需要求用户重新扫码。[部署 37119251905 成功](https://github.com/XYL333FYQ/TongMu/actions/runs/37119251905)，[CI 37119249531 成功](https://github.com/XYL333FYQ/TongMu/actions/runs/37119249531)。公共健康接口确认应用 SHA 为 `a8cae32`。真实 Windows 内置浏览器使用既有账号、无需再次扫码：私人歌单及喜欢歌曲接口均返回 200，列表实际显示，喜欢歌曲加入房间待播成功。证明截图保存在本机临时目录，未上传私人库截图到 GitHub。
+
+提交 `676b2c9` 修复二维码接口被内置服务缓存的问题，以及前端过期反馈和专门的刷新二维码入口；已包含在 `a8cae32` 中。前端相关测试 8 项及构建通过，真实手机扫码、过期和刷新流程尚未重新验收。
+
+整合缺口已进入下一批修复：参考项目有收藏专辑、收藏歌手接口；此前对应标签只是搜索入口。现已实现私人收藏列表与现有详情入口、登录限制、空状态和加载提示，本地后端鉴权/分页/归一化测试通过；上线和真实收藏验收仍待执行。
+
+真实音频尚未通过：`晴天(深情版)`（Lucky小爱）和 `Falling Down (feat. James Delaney)`（Wild Cards / James Delaney）进入待播；切歌可以更新当前歌曲，但播放解析出现 `502 / NCM_UPSTREAM_ERROR`，音频元素没有来源。已确认普通同步心跳会错误清除媒体失败提示，下一批修复保留错误、支持重新解析，并仅把 `NotAllowedError` 分类为浏览器播放限制。采用 ZViewer 的旧歌曲地址接口回退能力，但仅请求相同 MP3 码率，并以返回码率验证真实音质，不采用参考项目的降音质链或按请求值伪造实际音质。下一批相关后端测试 17 项、前端音乐/翻译测试 10 项及前后端构建通过；真实播放未验收，不得标为成功。
+
+另一条真实失败：Bilibili 大雄兔 `BV15z4y1U7HS` 在 `d998f15` 房间解析成功（854×480），添加成功；DASH init segment 502，video readyState 0、分辨率 0×0、时间 0，房间实际播放未通过。
+
+线上地址：https://tongmu.eren.cc.cd/ 。正式界面测试仅在确认新版部署成功后执行；本次记录已确认应用版本 `a8cae3203d2377b43ddb45b4350d3309da646281`。下面早期媒体测试另有各自版本与验证边界。
 
 [部署成功](https://github.com/XYL333FYQ/TongMu/actions/runs/37116448535)，[CI 与 Docker 验证成功](https://github.com/XYL333FYQ/TongMu/actions/runs/37116448010)。数据库卷、BrowserResolver 与原端口保留。文档提交不触发 VPS 部署。
 
