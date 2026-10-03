@@ -22,6 +22,7 @@ import { isBoundedIdentifier } from '../../realtime-sync-core';
 import { roomPermissionService } from '../room-permission.service';
 import { roomExperienceService } from '../room-experience.service';
 import { validateRoomPolicy } from '../room-policy';
+import { getRoomCover } from '../room-cover';
 import { realtimeSyncCore } from '../../realtime-sync-core';
 
 /** update-room-name 事件 payload */
@@ -179,7 +180,11 @@ export class RoomSettingsHandler implements SocketEventHandler {
           if (typeof payload.requireApproval === 'boolean') {
             room.requireApproval = payload.requireApproval;
           }
-          if (payload.policy !== undefined) room.policyJson = JSON.stringify(validateRoomPolicy(payload.policy));
+          if (payload.policy !== undefined) room.policyJson = JSON.stringify({
+            ...validateRoomPolicy(payload.policy),
+            // Covers are changed by the upload endpoint, never by a stale draft.
+            coverUrl: getRoomCover(room.policyJson),
+          });
           await roomRepo.save(room);
           if (payload.name !== undefined) io.to(payload.roomId).emit('room-name-updated', { roomId: payload.roomId, name: room.name });
           roomPermissionService.invalidatePermissionCache(undefined, payload.roomId);

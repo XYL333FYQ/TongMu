@@ -54,6 +54,7 @@ import statsRoutes from './routes/stats';
 import clientLogsRoutes from './routes/client-logs';
 import cliRoutes from './routes/cli';
 import { createRoomsRouter } from './routes/rooms';
+import { getRoomCover, removeStoredRoomCover } from './modules/room/room-cover';
 import { authenticateToken, requireRoot, verifyAccessToken } from './middleware/auth';
 import { cleanupStaleRoomSessions } from './services/media/room-access';
 import {
@@ -104,6 +105,7 @@ import { createMusicRouter, MusicSyncHandler, musicSyncService, stopNcmApiServic
 import { ensureUploadsRoot } from './services/server-files/pathResolver';
 import {
   AVATARS_DIR,
+  ROOM_COVERS_DIR,
   ensureDataDirs,
   migrateLegacyDataIfNeeded,
 } from './services/paths';
@@ -133,6 +135,7 @@ export async function deleteRoomAndRelations(
   const movieRepo = AppDataSource.getRepository(MovieEntity);
   const commentRepo = AppDataSource.getRepository(Comment);
   const playbackStateRepo = AppDataSource.getRepository(PlaybackState);
+  const storedCover = getRoomCover((await roomRepo.findOneBy({ roomId }))?.policyJson);
 
   // 清理运行时状态（通过 RoomStateService 而非直接操作全局 Map）
   roomStateService.delete(roomId);
@@ -154,6 +157,7 @@ export async function deleteRoomAndRelations(
 
   // 删除房间
   await roomRepo.delete({ roomId });
+  await removeStoredRoomCover(storedCover);
 
   // 可选：断开仍在房间内的 socket
   if (io) {
@@ -329,6 +333,11 @@ async function bootstrap() {
   app.use('/uploads/avatars', express.static(AVATARS_DIR, {
     maxAge: '7d',
     immutable: true,
+  }));
+  app.use('/uploads/room-covers', express.static(ROOM_COVERS_DIR, {
+    maxAge: '7d',
+    immutable: true,
+    setHeaders: res => res.setHeader('X-Content-Type-Options', 'nosniff'),
   }));
   app.use('/api/auth', authRoutes);
   app.use('/api/admin', adminRoutes);

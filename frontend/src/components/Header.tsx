@@ -299,7 +299,7 @@ export function Header() {
               <img
                 src="/tongmu-mark.png"
                 alt="TongMu"
-                className="tongmu-header__mark w-8 h-8 shrink-0 rounded-[var(--md-sys-shape-corner)] object-cover"
+                className="tongmu-header__mark w-9 h-9 shrink-0 object-contain"
               />
               <span className="hidden md:inline font-semibold text-base text-[var(--md-sys-color-on-surface)]">
                 TongMu

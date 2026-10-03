@@ -1,4 +1,19 @@
 export const coreZh: Record<string, string> = {
+  'Room cover': '房间封面',
+  'Upload cover': '上传封面',
+  'Use default cover': '恢复默认封面',
+  'Choose a room cover image': '选择房间封面图片',
+  'Choose an image for your room card. JPG, PNG or WebP, up to 5 MB.':
+    '选择一张图片展示在房间卡片上。支持 JPG、PNG、WebP，最大 5 MB。',
+  'Cover changes are saved immediately.': '封面更改会立即保存。',
+  'Room cover saved.': '房间封面已保存。',
+  'The cover request timed out. Check the preview, then try again.':
+    '封面请求超时，请查看预览状态后重试。',
+  'Use a JPG, PNG or WebP image.': '请使用 JPG、PNG 或 WebP 图片。',
+  'Use a valid JPG, PNG or WebP image.': '请使用有效的 JPG、PNG 或 WebP 图片。',
+  'You do not have permission to change the room cover.':
+    '你没有修改房间封面的权限。',
+  'Could not update the room cover. Try again.': '房间封面保存失败，请重试。',
   'Unable to complete this action. Please try again.': '操作未完成，请重试。',
   'Unable to complete this action. Check the room rules and your connection, then try again.':
     '操作未完成，请检查房间规则和网络连接后重试。',

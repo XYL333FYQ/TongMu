@@ -27,6 +27,7 @@ export const defaultRoomPolicy: RoomPolicy = {
 export interface RoomExperience {
   roomId: string
   name: string | null
+  coverUrl?: string | null
   activity: RoomActivity
   policy: RoomPolicy
   hasPassword: boolean

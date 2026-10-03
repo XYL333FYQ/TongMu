@@ -6,13 +6,13 @@
 
 使用内置 **imagegen** 图像生成工具生成透明背景位图，原图保存在 [tongmu-mark-source.png](tongmu-mark-source.png)。产品使用 256px 标识、64px favicon 和 180px Apple 图标；这些文件仅从生成原图缩放导出，没有用代码绘制替代图案。
 
-最终生成方向：单个简洁的深蓝色圆角 T 字母，顶部左右两块有很小的分隔，表达同步参与。参考实际界面的浅蓝灰背景、细边框、蓝色线条图标；避免人物、播放三角、圆形徽章、厚重立体效果、装饰文字和多方案拼图。图形占方形画布约 82%，保留透明边距，确保在实际网页图标和导航尺寸上清晰。
+2026-10-03 按用户提供的 [品牌参考图](tongmu-brand-reference.png) 更新：两片相对的圆角玻璃面板，左侧青蓝到紫色，右侧蜜桃、粉色到紫色，中间为白色播放符号。保留参考中的柔和高光与轻微立体感，输出单个透明图形，适配实际导航和网页图标尺寸。TongMu 文字仍由界面显示，不把整张品牌展示板塞进导航。深色主题不再对白色和渐变图标套用旧 T 图标的提亮去色滤镜。
 
 用于生成的英文提示内容：
 
-> Create one minimal architectural rounded T monogram for TongMu. Dark navy blue #315F78. The top bar consists of two rounded pill blocks with a small central separation, suggesting synchronized participants. Quiet pale ice-blue #E6EDF7 interface, thin borders and simple blue line icons. Flat, clean, restrained. One centered mark occupying about 82% of a square transparent canvas. No humans, no play triangle, no circular badge, no 3D, no shadow, no wordmark, no multiple variants.
+> Use case: logo-brand. The input is the user's authoritative visual reference. Create one standalone TongMu brand icon matching its symbol: two opposing softly beveled rounded glass panels, left cyan through cobalt blue to violet, right pale golden peach through pink to violet. A white translucent right-pointing play triangle bridges the central gap. Preserve the friendly rounded proportions, smooth glossy highlights and gentle depth. Center the icon on a transparent square canvas with about 8 percent margins. No words, lettering, container tile, floor, cast shadow, mockup or multiple variations. Keep a legible silhouette at 32 and 64 pixels; do not replace it with a T monogram.
 
-第一版人物与渐变方案已弃用。验收应看完整界面中实际尺寸的标识，而不是单独放大的图片。
+此前的 T 标识由本次参考方案替换。验收应看完整界面中实际尺寸的标识，而不是单独放大的图片。房间封面和本次验证见 [封面整改记录](room-cover-refresh.md)。
 
 ## 共用的交互节奏
 

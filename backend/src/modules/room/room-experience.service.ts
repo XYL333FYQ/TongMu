@@ -19,6 +19,7 @@ import { roomPermissionService } from './room-permission.service';
 import { roomStateService } from './room-state.service';
 import { canPerformRoomAction, type RoomRoleFacts, type RoomPermissionAction } from './permission-core';
 import { ActivityPoll, selectDelegate } from './activity-poll';
+import { getRoomCover } from './room-cover';
 import { DELEGATE_GRACE_MS, isRoomActivity, parseRoomPolicy, roomDelegates, roomScreenPresenters, type RoomActivity } from './room-policy';
 
 interface ActivityRequest { id: string; activity: RoomActivity; identity: string; socketId: string; username: string; createdAt: number; }
@@ -53,6 +54,7 @@ export class RoomExperienceService {
     const ownVote = poll?.votes.get(this.identity(socket));
     return {
       roomId, name: room.name, activity: room.activity, mode: room.mode,
+      coverUrl: getRoomCover(room.policyJson),
       policy: parseRoomPolicy(room.policyJson), hasPassword: !!room.password,
       maxViewers: room.maxViewers, requireApproval: room.requireApproval,
       permissions, isDelegate: !!facts.isDelegate, host,

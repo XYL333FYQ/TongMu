@@ -2,6 +2,7 @@ export interface RoomListItem {
   id: number
   roomId: string
   name: string | null
+  coverUrl?: string | null
   status: 'active' | 'closed'
   requireApproval: boolean
   maxViewers: number

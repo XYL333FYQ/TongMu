@@ -104,6 +104,14 @@ new Function('require', 'module', 'exports', output)(
     if (name === '@/components/ui/Spinner') return { Spinner: () => null }
     if (name === '@/components/JoinRoomDialog')
       return { JoinRoomDialog: () => null }
+    if (name === '@/components/RoomCoverImage')
+      return {
+        RoomCoverImage: ({ coverUrl }) =>
+          React.createElement('img', {
+            src: coverUrl || '/room-covers/cinema.webp',
+            alt: '',
+          }),
+      }
     if (name === '@/lib/roomDirectory')
       return { roomPath: (id) => `/room/${encodeURIComponent(id)}` }
     throw new Error(`Unexpected import: ${name}`)

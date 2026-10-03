@@ -19,6 +19,7 @@ import { useRoomDirectory } from '@/hooks/useRoomDirectory'
 import { Button } from '@/components/ui/Button'
 import { Spinner } from '@/components/ui/Spinner'
 import { JoinRoomDialog } from '@/components/JoinRoomDialog'
+import { RoomCoverImage } from '@/components/RoomCoverImage'
 import { roomPath } from '@/lib/roomDirectory'
 
 /** The old home and discovery URLs share one directory and one set of actions. */
@@ -183,38 +184,49 @@ export default function HallPage() {
               room.activity ??
               (room.mode === 'screen-share' ? 'screen' : 'watch')
             const Icon = icons[kind]
+            const accessLabel = room.requireApproval
+              ? t('Approval required')
+              : room.allowGuests === false
+                ? t('Members only')
+                : room.hasPassword
+                  ? t('Password protected')
+                  : null
+            const roomName =
+              room.name || t('Room {value1}', { value1: room.roomId })
             return (
               <article className="tm-room-card" key={room.roomId}>
                 <div className={`tm-room-art tm-room-art--${kind}`}>
-                  <Icon size={36} strokeWidth={1.4} />
+                  <RoomCoverImage
+                    roomId={room.roomId}
+                    coverUrl={room.coverUrl}
+                  />
                   <span className="tm-room-presence">
                     <span data-online={room.sharerOnline} />
                     {room.sharerOnline ? t('Host online') : t('Host away')}
                   </span>
+                  <div className="tm-room-card-type">
+                    <Icon size={15} strokeWidth={1.7} aria-hidden="true" />
+                    {labels[kind]}
+                  </div>
+                  {accessLabel && (
+                    <span className="tm-room-access">
+                      {room.hasPassword && (
+                        <Lock size={12} aria-label={t('Password protected')} />
+                      )}
+                      {accessLabel}
+                    </span>
+                  )}
                 </div>
                 <div className="tm-room-card-body">
-                  <div className="tm-room-card-type">
-                    {labels[kind]}
-                    {room.hasPassword && (
-                      <Lock size={13} aria-label={t('Password protected')} />
-                    )}
-                  </div>
-                  <h2>
-                    {room.name || t('Room {value1}', { value1: room.roomId })}
-                  </h2>
-                  <p className="tm-room-card-meta">
-                    <Users size={15} />
-                    {room.viewerCount} / {room.maxViewers}
-                    <span>#{room.roomId}</span>
-                  </p>
+                  <h2 title={roomName}>{roomName}</h2>
                   <div className="tm-room-card-footer">
-                    <span>
-                      {room.requireApproval
-                        ? t('Approval required')
-                        : room.allowGuests === false
-                          ? t('Members only')
-                          : t('Guests welcome')}
-                    </span>
+                    <div className="tm-room-card-details">
+                      <p className="tm-room-card-meta">
+                        <Users size={14} aria-hidden="true" />
+                        {room.viewerCount} / {room.maxViewers}
+                      </p>
+                      <small>#{room.roomId}</small>
+                    </div>
                     <Button
                       variant="secondary"
                       size="sm"

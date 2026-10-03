@@ -7,6 +7,7 @@ import { useSocket } from '@/hooks/useSocket'
 import { useRoomExperienceStore } from '@/store/roomExperienceStore'
 import { defaultRoomPolicy, type RoomPolicy } from '../roomExperience'
 import { roomErrorMessage } from '../roomErrors'
+import { RoomCoverEditor } from './RoomCoverEditor'
 
 export function RoomPolicySettings({
   roomId,
@@ -28,6 +29,7 @@ export function RoomPolicySettings({
   const [approval, setApproval] = useState(false)
   const [limit, setLimit] = useState(10)
   const [busy, setBusy] = useState(false)
+  const [coverBusy, setCoverBusy] = useState(false)
   const [error, setError] = useState('')
   // Opening creates a draft; incoming snapshots must not overwrite edits.
   /* eslint-disable react-hooks/exhaustive-deps, react-hooks/set-state-in-effect -- Create a new draft on open without overwriting edits on incoming room snapshots. */
@@ -44,7 +46,7 @@ export function RoomPolicySettings({
   }, [open])
   /* eslint-enable react-hooks/exhaustive-deps, react-hooks/set-state-in-effect */
   const save = () => {
-    if (!socket || busy || !snapshot?.permissions.settings) return
+    if (!socket || busy || coverBusy || !snapshot?.permissions.settings) return
     if (!name.trim()) {
       setError(t('Enter a room name.'))
       return
@@ -96,15 +98,15 @@ export function RoomPolicySettings({
   return (
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={coverBusy ? () => {} : onClose}
       title={t('Room settings')}
       footer={
         <>
-          <Button variant="secondary" onClick={onClose}>
+          <Button variant="secondary" disabled={coverBusy} onClick={onClose}>
             {t('Cancel')}
           </Button>
           <Button
-            disabled={busy || !snapshot?.permissions.settings}
+            disabled={busy || coverBusy || !snapshot?.permissions.settings}
             onClick={save}
           >
             {busy ? t('Saving…') : t('Save settings')}
@@ -122,6 +124,7 @@ export function RoomPolicySettings({
         value={name}
         onChange={(e) => setName(e.target.value)}
       />
+      <RoomCoverEditor roomId={roomId} onBusyChange={setCoverBusy} />
       <div className="tm-room-settings">
         <fieldset>
           <legend>{t('Discovery')}</legend>

@@ -163,6 +163,118 @@ async function waitForMediaResolve(ready) {
   } finally { clearTimeout(timeout); }
 }
 
+const coverPng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==', 'base64');
+async function coverHttpFixture(t, io) {
+  const express = require('express');
+  const { generateTokens } = require('../dist/middleware/auth');
+  const { User } = require('../dist/entities/User');
+  const { ROOM_COVERS_DIR } = require('../dist/services/paths');
+  const users = AppDataSource.getRepository(User); const added = [];
+  t.after(() => added.length ? users.delete(added) : undefined);
+  const app = express(); app.use(express.json());
+  app.use('/api/rooms', require('../dist/routes/rooms').createRoomsRouter(io));
+  app.use('/uploads/room-covers', express.static(ROOM_COVERS_DIR));
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  t.after(() => { server.closeAllConnections(); return new Promise(resolve => server.close(resolve)); });
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const request = async (socket, roomId, method = 'POST', options = {}) => {
+    const actor = socket.data;
+    if (actor.userId > 0 && !(await users.findOneBy({ id: actor.userId }))) {
+      await users.save(users.create({ id: actor.userId, username: actor.username, passwordHash: 'fixture', role: actor.role, status: 'active' }));
+      added.push(actor.userId);
+    }
+    const token = generateTokens(actor.userId, actor.role, actor.username, actor.guestId).accessToken;
+    let body;
+    if (method === 'POST') {
+      body = new FormData();
+      body.append('cover', new Blob([options.buffer || coverPng], { type: options.mime || 'image/png' }), '../../unexpected.svg');
+    }
+    return fetch(`${origin}/api/rooms${roomId ? `/${roomId}/cover` : ''}`, {
+      method, headers: { Authorization: `Bearer ${token}` }, body,
+    });
+  };
+  return { request, origin, users, coverDir: ROOM_COVERS_DIR };
+}
+
+test('room cover upload persists, broadcasts and survives settings drafts without changing access rules', async t => {
+  const { io, host, guest, roomId } = await fixture(t, { collaboration: 'shared' });
+  await guest.invoke('request-join', { roomId, nickname: 'Cover viewer' });
+  const { request, origin, coverDir } = await coverHttpFixture(t, io);
+  const { getRoomCover } = require('../dist/modules/room/room-cover');
+  const uploaded = await request(host, roomId);
+  assert.equal(uploaded.status, 200);
+  const { coverUrl } = await uploaded.json();
+  assert.match(coverUrl, /^\/uploads\/room-covers\/[0-9a-f-]{36}\.png$/);
+  assert.deepEqual(fs.readFileSync(path.join(coverDir, path.basename(coverUrl))), coverPng);
+  const image = await fetch(`${origin}${coverUrl}`);
+  assert.equal(image.status, 200); assert.match(image.headers.get('content-type'), /image\/png/);
+  assert.deepEqual(Buffer.from(await image.arrayBuffer()), coverPng);
+  const directory = await request(guest, '', 'GET');
+  assert.equal((await directory.json()).rooms.find(room => room.roomId === roomId).coverUrl, coverUrl);
+  assert.equal((await guest.invoke('room:experience:get', { roomId })).data.coverUrl, coverUrl);
+  assert.ok(guest.events.some(event => event.event === 'room:experience' && event.payload.coverUrl === coverUrl));
+  const saved = await host.invoke('update-room-settings', { roomId, name: 'Kept room cover', policy: { collaboration: 'shared', coverUrl: 'https://private.example/token' } });
+  assert.equal(saved.success, true);
+  const stored = await AppDataSource.getRepository(Room).findOneBy({ roomId });
+  assert.equal(getRoomCover(stored.policyJson), coverUrl);
+  assert.equal(JSON.parse(stored.policyJson).collaboration, 'shared');
+  const replacement = await request(host, roomId);
+  assert.equal(replacement.status, 200);
+  const nextCover = (await replacement.json()).coverUrl;
+  assert.notEqual(nextCover, coverUrl);
+  assert.equal(fs.existsSync(path.join(coverDir, path.basename(coverUrl))), false);
+  const reset = await request(host, roomId, 'DELETE');
+  assert.equal(reset.status, 200); assert.equal((await reset.json()).coverUrl, null);
+  assert.equal(fs.existsSync(path.join(coverDir, path.basename(nextCover))), false);
+  assert.equal(getRoomCover((await AppDataSource.getRepository(Room).findOneBy({ roomId })).policyJson), null);
+});
+
+test('room covers reject guests, collaborators, forged images and oversize files while preserving the saved cover', async t => {
+  const { io, host, member, guest, roomId } = await fixture(t, { collaboration: 'shared', guestCollaboration: true });
+  await member.invoke('request-join', { roomId }); await guest.invoke('request-join', { roomId, nickname: 'Delegate' });
+  roomDelegates.set(roomId, guest.id);
+  const { request, coverDir } = await coverHttpFixture(t, io);
+  const uploaded = await request(host, roomId);
+  const coverUrl = (await uploaded.json()).coverUrl;
+  for (const actor of [member, guest]) for (const method of ['POST', 'DELETE']) assert.equal((await request(actor, roomId, method)).status, 403);
+  assert.equal((await request(host, roomId, 'POST', { buffer: Buffer.from('<svg onload="alert(1)"></svg>') })).status, 400);
+  assert.equal((await request(host, roomId, 'POST', { buffer: Buffer.alloc(5 * 1024 * 1024 + 1) })).status, 400);
+  assert.equal((await request(host, roomId, 'POST', { mime: 'image/svg+xml' })).status, 400);
+  const { getRoomCover } = require('../dist/modules/room/room-cover');
+  assert.equal(getRoomCover((await AppDataSource.getRepository(Room).findOneBy({ roomId })).policyJson), coverUrl);
+  assert.equal(fs.readdirSync(coverDir).length, 1, 'rejected uploads cannot create orphan files');
+  await request(host, roomId, 'DELETE');
+});
+
+test('queued cover writes recheck transferred ownership and revoked platform roles before writing any file', async t => {
+  const { io, host, member, roomId } = await fixture(t);
+  host.data.role = 'user';
+  const { request, users, coverDir } = await coverHttpFixture(t, io);
+  const rooms = AppDataSource.getRepository(Room);
+  // Initialize a real owner account and an empty cover directory.
+  assert.equal((await request(host, roomId, 'DELETE')).status, 200);
+  const originalLock = realtimeSyncCore.withRoomLock;
+  for (const kind of ['ownership', 'platform-role']) {
+    await rooms.update({ roomId }, { ownerUserId: kind === 'ownership' ? host.data.userId : member.data.userId });
+    await users.update({ id: host.data.userId }, { role: kind === 'ownership' ? 'user' : 'root' });
+    const queue = await holdRoomQueue(roomId);
+    let arrived; const queued = new Promise(resolve => { arrived = resolve; });
+    realtimeSyncCore.withRoomLock = function(id, operation) { if (id === roomId) arrived(); return originalLock.call(this, id, operation); };
+    const pending = request(host, roomId);
+    let timer;
+    try {
+      await Promise.race([queued, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('cover write did not reach room queue')), 2000); })]);
+      if (kind === 'ownership') await rooms.update({ roomId }, { ownerUserId: member.data.userId });
+      else await users.update({ id: host.data.userId }, { role: 'user' });
+    } finally {
+      clearTimeout(timer); realtimeSyncCore.withRoomLock = originalLock; queue.release(); await queue.held;
+    }
+    assert.equal((await pending).status, 403);
+    assert.equal(fs.existsSync(coverDir) ? fs.readdirSync(coverDir).length : 0, 0);
+  }
+});
+
 test('room media resolution follows select-content permissions and binds live grants to the authenticated actor', async t => {
   const { io, host, member, guest, roomId } = await fixture(t, { collaboration: 'shared' });
   await member.invoke('request-join', { roomId }); await guest.invoke('request-join', { roomId, nickname: 'Lee' });

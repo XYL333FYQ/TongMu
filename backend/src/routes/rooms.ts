@@ -6,6 +6,8 @@ import { Session } from '../entities/Session';
 import { DanmakuTrack } from '../entities/DanmakuTrack';
 import { IsNull, In } from 'typeorm';
 import { parseRoomPolicy, roomDelegates } from '../modules/room/room-policy';
+import { getRoomCover } from '../modules/room/room-cover';
+import { createRoomCoverRouter } from './room-covers';
 import {
   authenticateToken,
   AuthenticatedRequest,
@@ -69,6 +71,7 @@ export function createRoomsRouter(io: SocketIOServer): Router {
   const router = Router();
 
   router.use(authenticateToken);
+  router.use(createRoomCoverRouter(io));
 
   // GET /api/rooms - 获取房间列表
   router.get(
@@ -106,6 +109,7 @@ export function createRoomsRouter(io: SocketIOServer): Router {
               id: room.id,
               roomId: room.roomId,
               name: room.name,
+              coverUrl: getRoomCover(room.policyJson),
               status: room.status,
               requireApproval: room.requireApproval,
               maxViewers: room.maxViewers,

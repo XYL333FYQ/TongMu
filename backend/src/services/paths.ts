@@ -79,6 +79,9 @@ export const UPLOADS_DIR =
 export const AVATARS_DIR =
   process.env.AVATARS_DIR || path.join(UPLOADS_DIR, 'avatars');
 
+/** Room covers share the existing persistent uploads volume. */
+export const ROOM_COVERS_DIR = path.join(UPLOADS_DIR, 'room-covers');
+
 /** NMS 推流媒体临时目录。 */
 export const MEDIA_DIR =
   process.env.MEDIA_DIR || path.join(CONFIG_DIR, 'media');
