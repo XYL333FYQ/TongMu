@@ -12,7 +12,7 @@
 1. 仍仅由 `Deploy TongMu` 手动触发。
 2. GitHub 执行现有 Docker 构建、历史库迁移、Chromium/BrowserResolver/媒体 smoke、持久化验证，并新增 SIGKILL 后同容器 PID 1 恢复验证。
 3. 全部通过后才导出同一镜像，并通过 Actions artifact 传给部署任务（保留一天，不增加镜像仓库账号或 VPS 凭证）。
-4. 上传前拒绝脏工作目录、过期提交和磁盘空间不足。导入前验证压缩包 SHA-256，导入后验证镜像 ID 和构建提交。
+4. 上传前拒绝脏工作目录、过期提交和磁盘空间不足。导入前验证压缩包 SHA-256，导入后验证可跨 Docker 镜像存储实现的内容指纹（文件系统层与启动配置）和构建提交。镜像 ID 在 containerd 与传统存储之间可能不同，不能单独作为内容不一致的证据。
 5. 使用根 `docker-compose.yml` 加 `docker-compose.deploy.yml`，以 `--no-build --pull never` 启动。VPS 不再安装 npm 依赖或编译；端口、BrowserResolver、shared memory 和原数据卷保持原样。
 6. 健康接口同时满足 `status=ok` 和本次提交 SHA 才算部署成功。失败不自动降级数据库或删除旧镜像，临时上传文件正常退出时清理。
 
@@ -21,9 +21,11 @@
 ## 验证边界
 
 - Windows：后端构建、新增锁测试（3 通过，Linux 项跳过）、历史数据库迁移 34 项、更新器 16 项通过。
-- Ubuntu WSL：新增锁测试 4 项通过；真实 Bash 部署脚本对隔离 Git 仓库和模拟 Docker/HTTP 的 6 项测试通过，覆盖成功导入、损坏包、身份不符、脏目录、过期提交、磁盘不足及旧版本假健康。
+- Ubuntu WSL：新增锁测试 4 项通过；真实 Bash 部署脚本对隔离 Git 仓库和模拟 Docker/HTTP 的 8 项测试通过，覆盖成功导入、损坏包、身份不符、脏目录、过期提交、磁盘不足、旧版本假健康、存储 ID 差异和启动配置变化。
 - Bash 语法和 ShellCheck 已检查。WSL 验证不等同于实际 Docker 或 VPS 部署通过。
-- 本机没有 Docker；新增容器强杀恢复场景需要 GitHub Docker smoke 验证。本次修复尚未提交、推送或重新部署。
+- 本机没有 Docker；GitHub Docker smoke 已通过实际容器 SIGKILL 后同容器 PID 1 恢复场景。
+- 首次成功部署：[37114851448](https://github.com/XYL333FYQ/TongMu/actions/runs/37114851448)，应用版本 `aae6174`。后续 B 站自动画质修复部署：[37116448535](https://github.com/XYL333FYQ/TongMu/actions/runs/37116448535)，应用版本 `659b06884a9103fa1c21ecc10859ad3e41a34a20`；公网健康接口确认该版本、状态正常、重启次数 0。
+- `659b068` 的 [CI 与 Docker 验证](https://github.com/XYL333FYQ/TongMu/actions/runs/37116448010) 全部通过。浏览器验收在确认新版上线后进行，详细边界见 [线上验收记录](production-acceptance-20261003.md)。
 
 ## 运维入口
 
