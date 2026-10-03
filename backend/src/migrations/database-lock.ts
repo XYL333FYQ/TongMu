@@ -11,6 +11,40 @@ interface LockRecord {
   hostname: string;
   createdAt: string;
   nonce: string;
+  // Optional for compatibility with locks written by older releases.
+  processIdentity?: string;
+  processStartedAt?: number;
+}
+
+const PROCESS_STARTED_AT = Date.now() - process.uptime() * 1000;
+
+function linuxProcessIdentity(pid: number): string | undefined {
+  if (process.platform !== 'linux') return undefined;
+  try {
+    const boot = fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim();
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+    // comm may contain spaces or parentheses; starttime is field 22.
+    const start = stat.slice(stat.lastIndexOf(')') + 2).split(/\s+/)[19];
+    if (!boot || !/^\d+$/.test(start)) return undefined;
+    return `${boot}:${start}`;
+  } catch {
+    return undefined;
+  }
+}
+
+function lockOwnerIsAlive(record: LockRecord): boolean {
+  if (!processIsAlive(record.pid)) return false;
+  const identity = linuxProcessIdentity(record.pid);
+  if (record.processIdentity && identity) return record.processIdentity === identity;
+
+  // PID reuse also affects legacy Docker locks: the replacement process is
+  // itself PID 1. A lock predating this process cannot belong to this process.
+  // Keep a margin for startup timestamp rounding; ambiguous locks stay closed.
+  if (record.pid === process.pid) {
+    const started = record.processStartedAt ?? Date.parse(record.createdAt);
+    if (Number.isFinite(started) && started < PROCESS_STARTED_AT - 1000) return false;
+  }
+  return true;
 }
 
 export class DatabaseMigrationLockError extends Error {
@@ -46,7 +80,9 @@ function readLock(lockPath: string): LockRecord {
     !Number.isInteger(record.pid) ||
     typeof record.hostname !== 'string' ||
     typeof record.createdAt !== 'string' ||
-    typeof record.nonce !== 'string'
+    typeof record.nonce !== 'string' ||
+    (record.processIdentity !== undefined && typeof record.processIdentity !== 'string') ||
+    (record.processStartedAt !== undefined && !Number.isFinite(record.processStartedAt))
   ) {
     throw new DatabaseMigrationLockError(
       `数据库迁移锁格式无效：${lockPath}。为避免双迁移，启动已拒绝。`,
@@ -77,7 +113,7 @@ export function acquireDatabaseMigrationLock(configDir: string): DatabaseMigrati
         `数据库迁移锁来自另一主机 ${existing.hostname}（PID ${existing.pid}）。无法安全判断是否仍在运行，启动已拒绝。`,
       );
     }
-    if (processIsAlive(existing.pid)) {
+    if (lockOwnerIsAlive(existing)) {
       throw new DatabaseMigrationLockError(
         `另一个 TongMu 数据库初始化器仍在运行（PID ${existing.pid}），已阻止并发迁移。`,
       );
@@ -91,6 +127,8 @@ export function acquireDatabaseMigrationLock(configDir: string): DatabaseMigrati
     hostname: os.hostname(),
     createdAt: new Date().toISOString(),
     nonce: crypto.randomBytes(16).toString('hex'),
+    processIdentity: linuxProcessIdentity(process.pid),
+    processStartedAt: PROCESS_STARTED_AT,
   };
   try {
     const fd = fs.openSync(lockPath, 'wx', 0o600);

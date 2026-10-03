@@ -1,0 +1,4 @@
+# Merge with the root file to preserve ports, Chromium, shm, and the data volume.
+services:
+  tongmu:
+    image: "tongmu-release:${TONGMU_BUILD_SHA:?Set TONGMU_BUILD_SHA to the verified commit}"

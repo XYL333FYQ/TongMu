@@ -11,15 +11,27 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  image:
+    name: Build and verify on GitHub
+    uses: ./.github/workflows/docker.yml
+    with:
+      export_image: true
+
   deploy:
-    name: Deploy to VPS
-
+    name: Deploy verified image to VPS
+    needs: image
     if: github.event_name == 'workflow_dispatch'
-
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-
+    timeout-minutes: 45
     steps:
+      - uses: actions/checkout@v5
+
+      - name: Download the verified image
+        uses: actions/download-artifact@v4
+        with:
+          name: tongmu-image-${{ github.sha }}
+          path: image
+
       - name: Prepare SSH
         shell: bash
         env:
@@ -28,87 +40,38 @@ jobs:
           VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
         run: |
           set -Eeuo pipefail
-
           install -d -m 700 ~/.ssh
           printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/tongmu_actions
           chmod 600 ~/.ssh/tongmu_actions
-
           ssh-keyscan -p "$VPS_PORT" -H "$VPS_HOST" >> ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
-      - name: Resolve deployment commit
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-
-          if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            echo "DEPLOY_SHA=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_ENV"
-          else
-            echo "DEPLOY_SHA=${{ github.sha }}" >> "$GITHUB_ENV"
-          fi
-
-      - name: Deploy TongMu
+      - name: Transfer and start the verified image
         shell: bash
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
           VPS_PORT: ${{ secrets.VPS_PORT }}
+          DEPLOY_SHA: ${{ github.sha }}
+          DEPLOY_ID: ${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -Eeuo pipefail
-
-          ssh \
-             -i ~/.ssh/tongmu_actions \
-             -o ServerAliveInterval=30 \
-             -o ServerAliveCountMax=120 \
-             -o TCPKeepAlive=yes \
-             -p "$VPS_PORT" \
-             "$VPS_USER@$VPS_HOST" \
-            "bash -se -- '$DEPLOY_SHA'" <<'REMOTE'
-          set -Eeuo pipefail
-
-          EXPECTED_SHA="$1"
-
-          cd /opt/TongMu
-
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "Refusing to deploy: /opt/TongMu has local changes."
-            git status --short
-            exit 1
-          fi
-
-          git fetch origin main
-
-          REMOTE_SHA="$(git rev-parse origin/main)"
-
-          if [ "$REMOTE_SHA" != "$EXPECTED_SHA" ]; then
-            echo "Skipping stale deployment."
-            echo "CI commit:      $EXPECTED_SHA"
-            echo "Current main:   $REMOTE_SHA"
-            exit 0
-          fi
-
-          git checkout main
-          git pull --ff-only origin main
-
-          export TONGMU_BUILD_SHA="$(git rev-parse HEAD)"
-
-          docker compose config --quiet
-          docker compose up -d --build
-
-          for attempt in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:3333/health >/tmp/tongmu-health.json; then
-              cat /tmp/tongmu-health.json
-              echo
-              echo "TongMu deployment succeeded."
-              exit 0
-            fi
-
-            echo "Waiting for TongMu health check... ($attempt/30)"
-            sleep 2
-          done
-
-          echo "TongMu health check failed."
-          docker compose ps
-          docker compose logs --tail=150 tongmu
-          exit 1
-          REMOTE
+          [[ "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$DEPLOY_ID" =~ ^[0-9a-f]{40}-[0-9]+-[0-9]+$ ]]
+          archive_bytes="$(stat -c %s image/image.tar.gz)"
+          image_bytes="$(cat image/image-size.txt)"
+          [[ "$archive_bytes" =~ ^[0-9]+$ && "$image_bytes" =~ ^[0-9]+$ ]]
+          ssh_options=(-i ~/.ssh/tongmu_actions -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 -p "$VPS_PORT")
+          staging="/opt/TongMu.deploy/$DEPLOY_ID"
+          ssh "${ssh_options[@]}" "$VPS_USER@$VPS_HOST" \
+            "bash -se -- prepare '$DEPLOY_SHA' '$DEPLOY_ID' '$archive_bytes' '$image_bytes'" < scripts/deploy/prebuilt-image.sh
+          cleanup_remote() {
+            ssh "${ssh_options[@]}" "$VPS_USER@$VPS_HOST" \
+              "bash -se -- cleanup '$DEPLOY_SHA' '$DEPLOY_ID'" < scripts/deploy/prebuilt-image.sh || true
+          }
+          trap cleanup_remote EXIT
+          scp -i ~/.ssh/tongmu_actions -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 -P "$VPS_PORT" \
+            image/image.tar.gz image/image.sha256 image/image-id.txt \
+            "$VPS_USER@$VPS_HOST:$staging/"
+          ssh "${ssh_options[@]}" "$VPS_USER@$VPS_HOST" \
+            "bash -se -- deploy '$DEPLOY_SHA' '$DEPLOY_ID'" < scripts/deploy/prebuilt-image.sh

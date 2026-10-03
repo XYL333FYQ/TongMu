@@ -3,6 +3,10 @@ name: TongMu Docker browser smoke
 on:
   workflow_dispatch:
   workflow_call:
+    inputs:
+      export_image:
+        type: boolean
+        default: false
 
 concurrency:
   group: tongmu-docker-${{ github.workflow }}-${{ github.ref }}
@@ -21,6 +25,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      - name: Deployment safeguards
+        run: python3 scripts/deploy/test_prebuilt_image.py
 
       - name: Prepare isolated Compose configuration
         run: cp .env.example .env
@@ -87,6 +94,48 @@ jobs:
           done
           docker compose exec -T tongmu grep -qx persistence-ok /app/config/docker-persistence-marker
           docker compose exec -T tongmu test -f /app/config/secret-vault.json
+
+      - name: Recover after an unclean stop with a reused container PID
+        run: |
+          original="$(docker compose ps -q tongmu)"
+          docker compose kill -s SIGKILL tongmu
+          docker compose up -d --no-build
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --max-time 2 http://127.0.0.1:3333/health > health.json; then break; fi
+            sleep 2
+          done
+          test "$original" = "$(docker compose ps -q tongmu)"
+          docker compose exec -T tongmu node -e '
+            const fs = require("fs");
+            const lock = JSON.parse(fs.readFileSync("/app/config/database-migration.lock", "utf8"));
+            if (lock.pid !== 1 || !lock.processIdentity) throw new Error("missing PID 1 start identity");
+            if (!fs.readdirSync("/app/config").some(name => name.startsWith("database-migration.lock.stale-"))) throw new Error("old lock was not archived");
+          '
+          node -e 'const h = require("./health.json"); if (h.status !== "ok" || h.commitSha !== process.env.TONGMU_BUILD_SHA) process.exit(1)'
+
+      - name: Export the verified production image
+        if: inputs.export_image
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          image="$(docker compose images -q tongmu)"
+          docker tag "$image" "tongmu-release:$TONGMU_BUILD_SHA"
+          mkdir -p "$RUNNER_TEMP/tongmu-image"
+          docker image inspect --format '{{.Id}}' "$image" > "$RUNNER_TEMP/tongmu-image/image-id.txt"
+          docker image inspect --format '{{.Size}}' "$image" > "$RUNNER_TEMP/tongmu-image/image-size.txt"
+          docker save "tongmu-release:$TONGMU_BUILD_SHA" | gzip -1 > "$RUNNER_TEMP/tongmu-image/image.tar.gz"
+          cd "$RUNNER_TEMP/tongmu-image"
+          sha256sum image.tar.gz > image.sha256
+
+      - name: Upload the verified image
+        if: inputs.export_image
+        uses: actions/upload-artifact@v4
+        with:
+          name: tongmu-image-${{ github.sha }}
+          path: ${{ runner.temp }}/tongmu-image/
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
 
       - name: Failure diagnostics
         if: failure()
