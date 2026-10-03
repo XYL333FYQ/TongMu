@@ -27,7 +27,9 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Deployment safeguards
-        run: python3 scripts/deploy/test_prebuilt_image.py
+        run: |
+          python3 scripts/deploy/test_prebuilt_image.py
+          bash scripts/deploy/test_transfer_image.sh
 
       - name: Prepare isolated Compose configuration
         run: cp .env.example .env
@@ -125,7 +127,7 @@ jobs:
           docker image inspect "$image" | python3 scripts/deploy/image_identity.py > "$RUNNER_TEMP/tongmu-image/image-content.sha256"
           cp scripts/deploy/image_identity.py "$RUNNER_TEMP/tongmu-image/image_identity.py"
           docker image inspect --format '{{.Size}}' "$image" > "$RUNNER_TEMP/tongmu-image/image-size.txt"
-          docker save "tongmu-release:$TONGMU_BUILD_SHA" | gzip -1 > "$RUNNER_TEMP/tongmu-image/image.tar.gz"
+          docker save "tongmu-release:$TONGMU_BUILD_SHA" | gzip -6 > "$RUNNER_TEMP/tongmu-image/image.tar.gz"
           cd "$RUNNER_TEMP/tongmu-image"
           sha256sum image.tar.gz > image.sha256
 

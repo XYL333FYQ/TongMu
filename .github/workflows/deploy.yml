@@ -22,7 +22,7 @@ jobs:
     needs: image
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v5
 
@@ -70,8 +70,6 @@ jobs:
               "bash -se -- cleanup '$DEPLOY_SHA' '$DEPLOY_ID'" < scripts/deploy/prebuilt-image.sh || true
           }
           trap cleanup_remote EXIT
-          scp -i ~/.ssh/tongmu_actions -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 -P "$VPS_PORT" \
-            image/image.tar.gz image/image.sha256 image/image-id.txt image/image-content.sha256 image/image_identity.py \
-            "$VPS_USER@$VPS_HOST:$staging/"
+          bash scripts/deploy/transfer-image.sh "$DEPLOY_ID" "$archive_bytes"
           ssh "${ssh_options[@]}" "$VPS_USER@$VPS_HOST" \
             "bash -se -- deploy '$DEPLOY_SHA' '$DEPLOY_ID'" < scripts/deploy/prebuilt-image.sh
