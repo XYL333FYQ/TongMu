@@ -108,8 +108,8 @@ export class BrowserResolver implements SourceResolver {
 
   async resolve(input: string, context: ResolverContext): Promise<MediaDescriptor> {
     if (!context.browserSniff) throw new ResolverNotApplicableError('浏览器嗅探未请求');
-    if (context.signal?.aborted) throw new MediaResolutionError('CANCELLED');
     if (context.deadline !== undefined && Date.now() >= context.deadline) throw new MediaResolutionError('TIMEOUT');
+    if (context.signal?.aborted) throw new MediaResolutionError('CANCELLED');
     await assertPublicUrl(input);
     let playwright: { chromium: { launch(options: { headless: boolean; executablePath?: string; proxy?: { server: string }; args?: string[] }): Promise<any> } };
     try { playwright = this.runtime?.playwright ?? require('playwright') as typeof playwright; }

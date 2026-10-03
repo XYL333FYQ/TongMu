@@ -5,6 +5,7 @@ const { MediaProviderRegistry, providerContextFromResolverContext } = require('.
 const { LegacyResolverAdapter } = require('../dist/services/media/providers/legacy-resolver-adapter');
 const { GenericWebResolver } = require('../dist/services/media/resolvers/generic-web');
 const { DirectUrlResolver } = require('../dist/services/media/resolvers/direct-url');
+const { BrowserResolver } = require('../dist/services/media/resolvers/browser');
 const { ResolverNotApplicableError } = require('../dist/services/media/types');
 const { MediaResolutionError } = require('../dist/services/media/resolution-error');
 const { ProxyTargetError } = require('../dist/services/proxy/safe-fetch');
@@ -145,6 +146,23 @@ test('known access and safety failures stop fallback with stable codes', async (
       (error) => error instanceof MediaResolutionError && error.code === 'TARGET_BLOCKED' && !error.retryable);
     assert.equal(browserCalls, 0);
   });
+});
+
+test('the route deadline abort is reported as retryable timeout instead of user cancellation', async () => {
+  const controller = new AbortController();
+  controller.abort();
+  const deadline = Date.now() - 1;
+  let calls = 0;
+  const provider = adapter('generic-web', { name: 'generic-web', canHandle: () => true,
+    resolve: async () => { calls++; throw new Error('expired work must not start'); },
+  });
+  await assert.rejects(new MediaProviderRegistry([provider]).resolveProvider(
+    'https://example.com/page', context(true, { signal: controller.signal, deadline }), {},
+  ), (error) => error instanceof MediaResolutionError && error.code === 'TIMEOUT' && error.retryable);
+  await assert.rejects(new BrowserResolver().resolve('https://example.com/page', {
+    signal: controller.signal, deadline, browserSniff: true,
+  }), (error) => error instanceof MediaResolutionError && error.code === 'TIMEOUT' && error.retryable);
+  assert.equal(calls, 0);
 });
 
 test('existing direct media succeeds without invoking GenericWeb or Browser', async () => {

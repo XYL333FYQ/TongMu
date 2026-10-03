@@ -77,8 +77,8 @@ export class MediaProviderRegistry {
         if (!available.available) throw new Error(available.reason ?? 'provider unavailable');
         return await provider.resolve(context, normalized, privateContext);
       } catch (error) {
-        if (context.signal.aborted) throw new MediaResolutionError('CANCELLED');
         if (Date.now() >= context.deadline) throw new MediaResolutionError('TIMEOUT');
+        if (context.signal.aborted) throw new MediaResolutionError('CANCELLED');
         if (error instanceof ProxyTargetError) throw new MediaResolutionError('TARGET_BLOCKED');
         if (error instanceof MediaResolutionError) throw error;
         if (!(error instanceof ResolverNotApplicableError) && provider.id === 'bilibili') throw error;
