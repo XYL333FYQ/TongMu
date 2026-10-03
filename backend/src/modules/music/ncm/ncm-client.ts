@@ -35,6 +35,7 @@ const ALLOWED_ENDPOINTS = new Set([
   '/login/qr/create',
   '/login/qr/check',
   '/login/status',
+  '/user/account',
   '/logout',
   '/song/url/v1',
   '/search',
@@ -443,9 +444,18 @@ export class NcmApiClient implements NcmClient {
     signal?: AbortSignal,
   ): Promise<{ loggedIn: boolean; profile?: NcmProfileFacts }> {
     const result = await fetchJson('/login/status', {}, credential, signal);
+    const statusData = result.body.data && typeof result.body.data === 'object'
+      ? result.body.data as Record<string, unknown> : result.body;
+    let profile = profileFrom(statusData);
+    // QR authorization does not necessarily include user identity. As in the
+    // reference client, obtain account facts using the private saved cookie.
+    if (!profile?.accountId && result.body.code === 200) {
+      const account = await fetchJson('/user/account', {}, credential, signal);
+      profile = profileFrom(account.body.data ?? account.body);
+    }
     return {
-      loggedIn: result.body.code === 200,
-      profile: result.body.code === 200 ? profileFrom(result.body.data) : undefined,
+      loggedIn: result.body.code === 200 && Boolean(profile?.accountId),
+      profile,
     };
   }
 

@@ -147,12 +147,15 @@ export class NcmLoginService {
           session.status = 'failed';
           throw new NcmProviderError('NCM_CREDENTIAL_INVALID', '网易云登录未返回有效凭据', 502);
         }
+        if (!session.profile?.accountId) {
+          session.profile = (await this.client.getStatus({ cookieHeader: result.cookieHeader })).profile;
+        }
         try {
           await this.credentials.saveCredentialIfCurrent(
             userId,
             session.generation,
             { cookieHeader: result.cookieHeader },
-            result.profile,
+            session.profile,
           );
           session.status = 'logged-in';
         } catch {

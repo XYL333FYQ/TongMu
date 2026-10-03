@@ -557,8 +557,9 @@ export class NcmCatalogService {
     const credential = await this.credentials.getPrivateCredential(userId);
     if (!credential) throw new NcmProviderError('NCM_NOT_LOGGED_IN', '请先登录网易云音乐', 409);
     const status = await this.credentials.getStatus(userId);
-    if (!status.accountId) throw new NcmProviderError('NCM_PRIVATE_ACCOUNT_DATA', '网易云账号信息暂不可用', 502);
-    return { accountId: status.accountId, credential };
+    const accountId = status.accountId || (await this.client.getStatus(credential)).profile?.accountId;
+    if (!accountId) throw new NcmProviderError('NCM_PRIVATE_ACCOUNT_DATA', '网易云账号信息暂不可用', 502);
+    return { accountId, credential };
   }
 
   async getPlaylists(userId: number, input: NcmCatalogPageInput = {}, signal?: AbortSignal): Promise<MusicCatalogPage<MusicCatalogPlaylist>> {

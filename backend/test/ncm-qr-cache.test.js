@@ -37,3 +37,30 @@ test('QR polls bypass URL cache and observe phone authorization', async () => {
     await new Promise(resolve => server.close(resolve));
   }
 });
+
+test('authorized QR credentials recover account identity from user/account', async () => {
+  const paths = [];
+  const server = http.createServer((req, res) => {
+    const path = new URL(req.url, 'http://fixture').pathname;
+    paths.push(path);
+    assert.equal(req.headers.cookie, 'MUSIC_U=fixture-only');
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify(path === '/login/status'
+      ? { code: 200, data: { profile: null, account: null } }
+      : { code: 200, profile: { userId: 12345, nickname: 'Fixture' } }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const previous = process.env.NCM_API_BASE_URL;
+  process.env.NCM_API_BASE_URL = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const result = await new NcmApiClient().getStatus({ cookieHeader: 'MUSIC_U=fixture-only' });
+    assert.equal(result.loggedIn, true);
+    assert.equal(result.profile.accountId, '12345');
+    assert.deepEqual(paths, ['/login/status', '/user/account']);
+  } finally {
+    if (previous === undefined) delete process.env.NCM_API_BASE_URL;
+    else process.env.NCM_API_BASE_URL = previous;
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
+});
