@@ -71,7 +71,7 @@ jobs:
           }
           trap cleanup_remote EXIT
           scp -i ~/.ssh/tongmu_actions -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 -P "$VPS_PORT" \
-            image/image.tar.gz image/image.sha256 image/image-id.txt \
+            image/image.tar.gz image/image.sha256 image/image-id.txt image/image-content.sha256 image/image_identity.py \
             "$VPS_USER@$VPS_HOST:$staging/"
           ssh "${ssh_options[@]}" "$VPS_USER@$VPS_HOST" \
             "bash -se -- deploy '$DEPLOY_SHA' '$DEPLOY_ID'" < scripts/deploy/prebuilt-image.sh

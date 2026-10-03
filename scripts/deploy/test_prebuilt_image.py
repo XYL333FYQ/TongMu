@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from image_identity import image_identity
 
 SCRIPT = Path(__file__).with_name('prebuilt-image.sh').resolve()
 
@@ -38,7 +39,9 @@ a = sys.argv[1:]
 with open(os.environ['FAKE_CALLS'], 'a') as f: f.write(json.dumps(a) + '\\n')
 if a[0] == 'info': print(os.environ['FAKE_DOCKER_ROOT'])
 elif a[:2] == ['image', 'inspect']:
-    if '.Config.Env' in a[3]: print('TONGMU_BUILD_SHA=' + os.environ['FAKE_IMAGE_SHA'])
+    if len(a) == 3:
+        print(json.dumps([{'Os': 'linux', 'Architecture': 'amd64', 'Config': {'Env': ['TONGMU_BUILD_SHA=' + os.environ['FAKE_IMAGE_SHA']]}, 'RootFS': {'Layers': ['sha256:' + os.environ.get('FAKE_LAYER', 'c' * 64)]}}]))
+    elif '.Config.Env' in a[3]: print('TONGMU_BUILD_SHA=' + os.environ['FAKE_IMAGE_SHA'])
     else: print('sha256:' + os.environ.get('FAKE_IMAGE_ID', 'a' * 64))
 elif a[0] == 'load': pass
 elif a[0] == 'compose' and a[5] in ('config', 'up', 'ps'): pass
@@ -79,6 +82,9 @@ print(os.environ.get('FAKE_FREE_BYTES', '9000000000'))
         (self.staging / 'image.tar.gz').write_bytes(payload)
         (self.staging / 'image.sha256').write_text(hashlib.sha256(payload).hexdigest() + '  image.tar.gz\n')
         (self.staging / 'image-id.txt').write_text('sha256:' + 'a' * 64 + '\n')
+        metadata = {'Os': 'linux', 'Architecture': 'amd64', 'Config': {'Env': ['TONGMU_BUILD_SHA=' + self.sha]}, 'RootFS': {'Layers': ['sha256:' + 'c' * 64]}}
+        (self.staging / 'image-content.sha256').write_text(image_identity(metadata) + '\n')
+        (self.staging / 'image_identity.py').write_bytes(SCRIPT.with_name('image_identity.py').read_bytes())
 
     def docker_calls(self):
         return [json.loads(line) for line in self.calls.read_text().splitlines()] if self.calls.exists() else []
@@ -113,15 +119,32 @@ print(os.environ.get('FAKE_FREE_BYTES', '9000000000'))
         self.assertFalse(any(call[0] == 'load' for call in self.docker_calls()))
         self.assertFalse(self.staging.exists())
 
-    def test_wrong_image_id_or_build_identity_never_restarts_application(self):
-        for variable in ('FAKE_IMAGE_ID', 'FAKE_IMAGE_SHA'):
+    def test_wrong_filesystem_or_build_identity_never_restarts_application(self):
+        for variable in ('FAKE_LAYER', 'FAKE_IMAGE_SHA'):
             with self.subTest(variable=variable):
                 self.prepare_payload()
-                self.env[variable] = 'b' * (64 if variable == 'FAKE_IMAGE_ID' else 40)
+                self.env[variable] = 'b' * (64 if variable == 'FAKE_LAYER' else 40)
                 self.assertNotEqual(self.run_phase('deploy').returncode, 0)
                 self.assertFalse(any('up' in call for call in self.docker_calls()))
                 del self.env[variable]
                 if variable == 'FAKE_IMAGE_SHA': self.env[variable] = self.sha
+
+    def test_different_store_ids_with_identical_content_are_accepted(self):
+        self.prepare_payload()
+        self.env['FAKE_IMAGE_ID'] = 'b' * 64
+        result = self.run_phase('deploy')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('checking portable content identity', result.stdout)
+
+    def test_portable_identity_protects_startup_configuration(self):
+        from copy import deepcopy
+        original = {'Os': 'linux', 'Architecture': 'amd64', 'Config': {'Env': ['A=1'], 'Cmd': ['node', 'index.js']}, 'RootFS': {'Layers': ['sha256:' + 'c' * 64]}}
+        copied = deepcopy(original)
+        copied['Id'] = 'different store id'
+        copied['Config']['Hostname'] = 'deprecated engine metadata'
+        self.assertEqual(image_identity(original), image_identity(copied))
+        copied['Config']['Cmd'] = ['different executable']
+        self.assertNotEqual(image_identity(original), image_identity(copied))
 
     def test_old_healthy_version_is_not_accepted_as_success(self):
         self.prepare_payload()

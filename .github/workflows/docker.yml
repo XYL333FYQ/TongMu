@@ -122,6 +122,8 @@ jobs:
           docker tag "$image" "tongmu-release:$TONGMU_BUILD_SHA"
           mkdir -p "$RUNNER_TEMP/tongmu-image"
           docker image inspect --format '{{.Id}}' "$image" > "$RUNNER_TEMP/tongmu-image/image-id.txt"
+          docker image inspect "$image" | python3 scripts/deploy/image_identity.py > "$RUNNER_TEMP/tongmu-image/image-content.sha256"
+          cp scripts/deploy/image_identity.py "$RUNNER_TEMP/tongmu-image/image_identity.py"
           docker image inspect --format '{{.Size}}' "$image" > "$RUNNER_TEMP/tongmu-image/image-size.txt"
           docker save "tongmu-release:$TONGMU_BUILD_SHA" | gzip -1 > "$RUNNER_TEMP/tongmu-image/image.tar.gz"
           cd "$RUNNER_TEMP/tongmu-image"

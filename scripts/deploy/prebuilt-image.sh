@@ -15,7 +15,7 @@ staging="$staging_root/$deployment_id"
 cleanup() {
   # Only known payload files, never recursively remove deployment or data directories.
   if [[ -d "$staging" && ! -L "$staging" ]]; then
-    rm -f -- "$staging/image.tar.gz" "$staging/image.sha256" "$staging/image-id.txt" "$staging/health.json"
+    rm -f -- "$staging/image.tar.gz" "$staging/image.sha256" "$staging/image-id.txt" "$staging/image-content.sha256" "$staging/image_identity.py" "$staging/health.json"
     rmdir -- "$staging" 2>/dev/null || true
   fi
 }
@@ -70,7 +70,13 @@ nice -n 10 docker load --input "$staging/image.tar.gz"
 image="tongmu-release:$expected_sha"
 actual_image_id="$(docker image inspect --format '{{.Id}}' "$image")"
 if [[ "$actual_image_id" != "$expected_image_id" ]]; then
-  printf 'Image identity mismatch: expected %s, loaded %s.\n' "$expected_image_id" "$actual_image_id" >&2
+  printf '%s\n' 'Docker image-store IDs differ; checking portable content identity.'
+fi
+expected_content="$(cat "$staging/image-content.sha256")"
+[[ "$expected_content" =~ ^[0-9a-f]{64}$ ]]
+actual_content="$(docker image inspect "$image" | python3 "$staging/image_identity.py")"
+if [[ "$actual_content" != "$expected_content" ]]; then
+  printf '%s\n' 'Loaded image filesystem or startup configuration does not match the verified image.' >&2
   exit 1
 fi
 if ! docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$image" |
