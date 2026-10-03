@@ -253,6 +253,7 @@ export const modulesZh: Record<string, string> = {
   Disconnect: '断开连接',
   'Connect with QR': '扫码登录',
   'NetEase Music sign-in code': '网易云登录二维码',
+  'Refresh QR code': '刷新二维码',
   'Scanned. Confirm in the app.': '已扫码，请确认登录',
   'Scan with the NetEase Music app.': '请使用网易云手机客户端扫码',
   'Your next song starts here': '尚未选择歌曲',

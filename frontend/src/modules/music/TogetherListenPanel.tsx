@@ -99,12 +99,25 @@ export function TogetherListenPanel({
 
   useEffect(() => {
     const sessionId = ncmQr?.sessionId
-    if (!sessionId || ncmQr?.status === 'logged-in') return
+    if (!sessionId || ['logged-in', 'expired', 'failed'].includes(ncmQr?.status ?? '')) return
+    let cancelled = false
+    let polling = false
     const poll = async () => {
+      if (polling || cancelled) return
+      if (ncmQr?.expiresAt && ncmQr.expiresAt <= Date.now()) {
+        setNcmQr(previous => previous ? { ...previous, status: 'expired', qrImageDataUrl: undefined } : previous)
+        return
+      }
+      polling = true
       const result = await apiGet<NcmQrResponse>(
         `/api/music/ncm/login/qr/${encodeURIComponent(sessionId)}`
       )
-      if (!result.ok || !result.data) return
+      polling = false
+      if (cancelled) return
+      if (!result.ok || !result.data) {
+        setNcmQr(previous => previous ? { ...previous, status: 'failed', qrImageDataUrl: undefined } : previous)
+        return
+      }
       setNcmQr(result.data)
       if (result.data.status === 'logged-in') {
         const current = await apiGet<NcmStatusResponse>('/api/music/ncm/status')
@@ -114,8 +127,8 @@ export function TogetherListenPanel({
     const timer = window.setInterval(() => {
       void poll()
     }, 1500)
-    return () => window.clearInterval(timer)
-  }, [ncmQr?.sessionId, ncmQr?.status])
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [ncmQr?.sessionId, ncmQr?.status, ncmQr?.expiresAt])
 
   const startNcmLogin = async () => {
     setNcmBusy(true)
@@ -237,18 +250,28 @@ export function TogetherListenPanel({
               void (ncmStatus?.loggedIn ? logoutNcm() : startNcmLogin())
             }
           >
-            {ncmStatus?.loggedIn ? t('Disconnect') : t('Connect with QR')}
+            {ncmStatus?.loggedIn ? t('Disconnect') : ncmQr ? t('Refresh QR code') : t('Connect with QR')}
           </Button>
         )}
       </div>
-      {canSelect && ncmQr?.qrImageDataUrl && ncmQr.status !== 'logged-in' && (
+      {ncmQr?.status === 'expired' && (
+        <p role="status" className="mt-2 text-sm text-[var(--md-sys-color-on-surface-variant)]">
+          {t('This code expired. Generate a new one.')}
+        </p>
+      )}
+      {ncmQr?.status === 'failed' && (
+        <p role="alert" className="mt-2 text-sm text-[var(--md-sys-color-error)]">
+          {t('Connection failed')} · {t('Refresh QR code')}
+        </p>
+      )}
+      {canSelect && ncmQr?.qrImageDataUrl && !['logged-in', 'expired', 'failed'].includes(ncmQr.status ?? '') && (
         <div className="mt-2 flex items-center gap-2 rounded-lg border border-[var(--md-sys-color-outline-variant)] p-2">
           <img
             src={ncmQr.qrImageDataUrl}
             alt={t('NetEase Music sign-in code')}
             className="h-20 w-20 rounded bg-white p-1"
           />
-          <span className="text-[11px] text-[var(--md-sys-color-on-surface-variant)]">
+          <span role="status" className="text-[11px] text-[var(--md-sys-color-on-surface-variant)]">
             {ncmQr.status === 'scanned'
               ? t('Scanned. Confirm in the app.')
               : t('Scan with the NetEase Music app.')}

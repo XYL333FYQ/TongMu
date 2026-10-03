@@ -344,7 +344,11 @@ async function fetchJson(
   // The bundled NCM server caches by URL and intentionally does not include
   // Cookie in its cache key. Private account requests therefore get a bounded
   // per-request key so one account cannot receive another account's response.
-  if (credential) url.searchParams.set('_tongmu_cache_bust', `${Date.now()}-${++privateRequestSequence}`);
+  // QR state changes after the phone authorizes it. Caching the initial 801
+  // response for two minutes can outlive the whole QR session.
+  if (credential || path.startsWith('/login/qr/')) {
+    url.searchParams.set('_tongmu_cache_bust', `${Date.now()}-${++privateRequestSequence}`);
+  }
   const timeoutValue = Number(process.env.NCM_REQUEST_TIMEOUT_MS);
   const timeoutMs = Number.isSafeInteger(timeoutValue) && timeoutValue >= 1000 && timeoutValue <= 60_000
     ? timeoutValue
