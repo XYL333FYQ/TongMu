@@ -68,9 +68,16 @@ expected_image_id="$(cat "$staging/image-id.txt")"
 # Import while the existing application keeps running. Never build on the VPS.
 nice -n 10 docker load --input "$staging/image.tar.gz"
 image="tongmu-release:$expected_sha"
-[[ "$(docker image inspect --format '{{.Id}}' "$image")" = "$expected_image_id" ]]
-docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$image" |
-  grep -Fx "TONGMU_BUILD_SHA=$expected_sha" > /dev/null
+actual_image_id="$(docker image inspect --format '{{.Id}}' "$image")"
+if [[ "$actual_image_id" != "$expected_image_id" ]]; then
+  printf 'Image identity mismatch: expected %s, loaded %s.\n' "$expected_image_id" "$actual_image_id" >&2
+  exit 1
+fi
+if ! docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$image" |
+  grep -Fx "TONGMU_BUILD_SHA=$expected_sha" > /dev/null; then
+  printf '%s\n' 'Loaded image is missing the expected build commit.' >&2
+  exit 1
+fi
 check_checkout
 git checkout main
 git merge --ff-only origin/main
