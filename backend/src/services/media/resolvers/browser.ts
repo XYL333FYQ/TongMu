@@ -54,6 +54,30 @@ interface BrowserCookieContext {
   cookies(url: string): Promise<BrowserCookie[]>;
 }
 
+/** Start only recognized media-player controls; never arbitrary page buttons. */
+export async function startEmbeddedPlayback(page: any): Promise<boolean> {
+  if (typeof page.locator !== 'function') return false;
+  const controls = page.locator([
+    '.video-js .vjs-big-play-button',
+    '.art-video-player .art-state',
+    '.dplayer.dplayer-paused .dplayer-play-icon',
+    '.plyr .plyr__control--overlaid',
+    '.jwplayer.jw-state-idle .jw-display-icon-container .jw-icon-display',
+  ].join(', '));
+  // A page may contain unrelated players. Bound interactions and retain the
+  // normal visibility/overlay checks; do not force through a consent dialog.
+  const count = Math.min(await controls.count(), 4);
+  for (let index = 0; index < count; index++) {
+    const control = controls.nth(index);
+    try {
+      if (!(await control.isVisible())) continue;
+      await control.click({ timeout: 700 });
+      return true;
+    } catch { /* A blocked or detached control is not permission to bypass it. */ }
+  }
+  return false;
+}
+
 /**
  * A URL discovered inside an API JSON response is a new browser destination.
  * Ask Chromium which cookies match that exact URL instead of copying the API
@@ -176,6 +200,7 @@ export class BrowserResolver implements SourceResolver {
       });
       await page.goto(input, { waitUntil: 'domcontentloaded', timeout: 20_000 });
       await page.waitForTimeout(5_000);
+      if (!controller.signal.aborted) await startEmbeddedPlayback(page);
       await Promise.allSettled([...pendingResponses]);
       // A SPA can load its playback API after the initial observation window.
       // Extend only an empty result, within the existing request deadline.

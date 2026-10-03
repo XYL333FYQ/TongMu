@@ -5,7 +5,7 @@ const { toPublicDescriptor, rewriteManifest } = require('../dist/routes/stream/m
 const { issueRoomMediaGrant, resolveRoomMediaGrant } = require('../dist/services/media/handles');
 const { authorizeRoomMediaGrant } = require('../dist/services/media/room-access');
 const { BilibiliResolver } = require('../dist/services/media/resolvers/bilibili');
-const { BrowserResolver } = require('../dist/services/media/resolvers/browser');
+const { BrowserResolver, startEmbeddedPlayback } = require('../dist/services/media/resolvers/browser');
 const { normalizePlayUrlData } = require('../dist/services/bilibili/playurl');
 const { videoIdentityParams } = require('../dist/services/bilibili/video');
 const { extractBvid, resolveBilibiliVideo } = require('../dist/services/bilibili/resolver');
@@ -136,6 +136,39 @@ test('BrowserResolver entire captured-response -> probe -> descriptor chain pres
   assert.equal(result.headers.Cookie, undefined);
   assert.equal(result.headers.Authorization, undefined);
   assert.deepEqual(result.credentialOrigins, []);
+});
+
+test('BrowserResolver captures a media request that starts only after a visible player control is clicked', async t => {
+  let listener;
+  let clicks = 0;
+  const page = {
+    route: async () => {}, on: (_event, callback) => { listener = callback; }, goto: async () => {},
+    waitForTimeout: async () => {}, url: () => 'https://8.8.8.8/page',
+    locator: (selector) => {
+      assert.match(selector, /\.video-js \.vjs-big-play-button/);
+      assert.equal(selector.includes('button'), true);
+      return { count: async () => 1, nth: () => ({ isVisible: async () => true, click: async options => {
+        assert.equal(options.force, undefined);
+        clicks++;
+        listener({ url: () => 'https://8.8.8.8/selected.mp4', headers: () => ({ 'content-type': 'video/mp4' }), request: () => ({ allHeaders: async () => ({}) }) });
+      } }) };
+    },
+  };
+  const context = { newPage: async () => page, close: async () => {} };
+  const runtime = { playwright: { chromium: { launch: async () => ({ newContext: async () => context, close: async () => {} }) } }, createProxy: async () => ({ url: 'http://unused', close: async () => {} }) };
+  t.mock.method(require('undici'), 'fetch', async (_url, options) => new Response(options.method === 'HEAD' ? null : Buffer.concat([Buffer.alloc(4), Buffer.from('ftypisom')]), { status: 200, headers: { 'content-type': 'video/mp4' } }));
+  const result = await new BrowserResolver(runtime).resolve('https://8.8.8.8/page', { userId: '1', browserSniff: true });
+  assert.equal(result.finalUrl, 'https://8.8.8.8/selected.mp4');
+  assert.equal(clicks, 1);
+});
+
+test('embedded playback does not force past an overlay or click a hidden control', async () => {
+  let clicks = 0;
+  assert.equal(await startEmbeddedPlayback({ locator: () => ({ count: async () => 2, nth: index => ({
+    isVisible: async () => index === 1,
+    click: async options => { clicks++; assert.equal(options.force, undefined); throw new Error('overlay intercepts pointer'); },
+  }) }) }), false);
+  assert.equal(clicks, 1);
 });
 
 test('BrowserResolver waits for a delayed SPA media response within its deadline', async t => {
