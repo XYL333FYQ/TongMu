@@ -17,25 +17,25 @@ import type {
  * 用于发送弹幕、加载时间轴、清空、跳转、同步时间等操作。
  */
 export interface DanmakuLayerHandle {
-  /** 立即发送一条弹幕到舞台 */
+  /** 立即Send一 comments到舞台 */
   sendDanmaku: (text: string, options?: SendDanmakuOptions) => void
-  /** 批量加载时间轴弹幕（B站格式，内部转换为 danmaku.js comment 格式并过滤） */
+  /** 批量加载时间轴On-screen comments（B站格式，内部转换为 danmaku.js comment 格式并过滤） */
   loadTimelineDanmaku: (danmakuList: DanmakuItem[]) => void
-  /** 加载一条弹幕轨道 */
+  /** 加载一 commentsComment tracks */
   loadDanmakuTrack: (
     trackId: string,
     danmakuList: DanmakuItem[],
     offset?: number
   ) => void
-  /** 移除一条弹幕轨道 */
+  /** Remove一 commentsComment tracks */
   removeDanmakuTrack: (trackId: string) => void
-  /** 更新轨道时间偏移 */
+  /** 更新轨道Time offset */
   updateTrackOffset: (trackId: string, offset: number) => void
-  /** 清空当前舞台上的所有弹幕 */
+  /** 清空Current舞台上的all On-screen comments */
   clear: () => void
   /** 跳转时间轴（单位：秒，与 video.currentTime 一致） */
   seek: (time: number) => void
-  /** 同步当前时间（单位：秒，与 video.currentTime 一致） */
+  /** 同步Current时间（单位：秒，与 video.currentTime 一致） */
   syncTime: (time: number) => void
   /**
    * @deprecated 旧版本兼容：通过 B站 弹幕项发送弹幕。
@@ -47,33 +47,33 @@ export interface DanmakuLayerHandle {
 export interface DanmakuLayerProps {
   /** 视频元素，传入后会自动跟随 video 时间轴（timeupdate / seeked） */
   videoElement?: HTMLVideoElement | null
-  /** 是否启用弹幕（默认 true） */
+  /** 是否EnableOn-screen comments（Default true） */
   enabled?: boolean
-  /** 整体透明度 0-1（默认 1） */
+  /** 整体Opacity 0-1（Default 1） */
   opacity?: number
-  /** 显示区域比例 0-1（默认 1，占满整个容器顶部） */
+  /** 显示区域比例 0-1（Default 1，占满整个容器Top） */
   displayArea?: number
-  /** 弹幕密度 0-1（默认 1，全部显示） */
+  /** On-screen comments密度 0-1（Default 1，全部显示） */
   density?: number
-  /** 弹幕运动速度倍率（默认 1） */
+  /** On-screen comments运动Speed倍率（Default 1） */
   speed?: number
-  /** 是否根据容器宽度缩放字号 */
+  /** 是否根据容器宽度缩放Font size */
   scaleWithScreen?: boolean
   /** 类型过滤 */
   filters?: DanmakuTypeFilters
   /** 高级样式 */
   advancedStyle?: Partial<DanmakuAdvancedStyle>
-  /** 屏蔽关键词列表 */
+  /** 屏蔽Search queryList */
   blockKeywords?: string[]
-  /** 屏蔽的弹幕类型（如 [5] 屏蔽所有顶部弹幕） */
+  /** 屏蔽的On-screen comments类型（如 [5] 屏蔽all TopOn-screen comments） */
   blockModes?: number[]
-  /** 字号（像素），以 25px 为基准缩放 */
+  /** Font size（像素），以 25px 为基准缩放 */
   fontSize?: number
-  /** 弹幕点击回调。提供后弹幕元素可接收点击事件 */
+  /** On-screen comments点击回调。提供后On-screen comments元素可接收点击事件 */
   onDanmakuClick?: (text: string) => void
   /** @deprecated 旧版本兼容：socket 监听 'danmaku' 事件 */
   socket?: Socket | null
-  /** @deprecated 旧版本兼容：速度（不再使用） */
+  /** @deprecated 旧版本兼容：Speed（不再使用） */
   rawSpeed?: number
 }
 
@@ -120,7 +120,7 @@ export const DanmakuLayer = forwardRef<DanmakuLayerHandle, DanmakuLayerProps>(
       onDanmakuClickRef.current = onDanmakuClick
     }, [onDanmakuClick])
 
-    /** 发送或暂存一条实时弹幕 */
+    /** Send或暂存一 comments */
     const sendOrEnqueue = (text: string, options?: SendDanmakuOptions) => {
       if (engineRef.current) {
         engineRef.current.sendDanmaku(text, options)
@@ -129,7 +129,7 @@ export const DanmakuLayer = forwardRef<DanmakuLayerHandle, DanmakuLayerProps>(
       }
     }
 
-    /** 消费暂存队列 */
+    /** 消费暂存Queue */
     const flushPending = () => {
       const pending = pendingDanmakuRef.current
       pendingDanmakuRef.current = []

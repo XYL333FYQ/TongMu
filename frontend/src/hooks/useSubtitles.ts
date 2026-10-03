@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { t, useTranslation } from '@/i18n'
+import { englishErrorMessage } from '@/lib/errorMessage'
 import { useSocket } from '@/hooks/useSocket'
 import { apiFetch } from '@/lib/api'
 import {
@@ -77,7 +79,7 @@ function embeddedTrackLabel(track: {
   language?: string | null
   index: number
 }): string {
-  return track.title || track.language || `轨道 ${track.index}`
+  return track.title || track.language || `Track ${track.index}`
 }
 
 export interface SubtitleState {
@@ -152,6 +154,7 @@ export function useSubtitles({
   isHost,
   sourceGeneration,
 }: UseSubtitlesOptions) {
+  const { locale } = useTranslation()
   const { socket } = useSocket()
   const [state, setState] = useState<SubtitleState>(() => ({
     ...DEFAULT_SUBTITLE_STATE,
@@ -222,7 +225,9 @@ export function useSubtitles({
       if (!socket || !isHost) return
       const payload: SubtitleBroadcastPayload = {
         version: useRoomStore.getState().watchTogether.version,
-        sourceGeneration: next.sourceGeneration ?? useRoomStore.getState().watchTogether.sourceGeneration,
+        sourceGeneration:
+          next.sourceGeneration ??
+          useRoomStore.getState().watchTogether.sourceGeneration,
         enabled: next.subtitleEnabled,
         tracks: next.subtitleTracks,
         activeIndex: next.activeTrackIndex,
@@ -234,24 +239,35 @@ export function useSubtitles({
         shadowBlur: next.subtitleShadowBlur,
         fontFamily: next.subtitleFontFamily,
       }
-      socket.emit('subtitle-update', {
-        roomId,
-        ...payload,
-        baseVersion: useRoomStore.getState().watchTogether.version,
-        mutationId: typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-          ? crypto.randomUUID()
-          : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        clientTimestamp: Date.now(),
-      }, (response: { success?: boolean; data?: SubtitleBroadcastPayload }) => {
-        if (!response?.success || response.data?.version === undefined || response.data.sourceGeneration === undefined) return
-        const current = useRoomStore.getState().watchTogether
-        useRoomStore.getState().setWatchTogether({
-          ...current,
-          version: response.data.version,
-          sourceGeneration: response.data.sourceGeneration,
-          serverTimestamp: response.data.serverTimestamp,
-        })
-      })
+      socket.emit(
+        'subtitle-update',
+        {
+          roomId,
+          ...payload,
+          baseVersion: useRoomStore.getState().watchTogether.version,
+          mutationId:
+            typeof crypto !== 'undefined' &&
+            typeof crypto.randomUUID === 'function'
+              ? crypto.randomUUID()
+              : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          clientTimestamp: Date.now(),
+        },
+        (response: { success?: boolean; data?: SubtitleBroadcastPayload }) => {
+          if (
+            !response?.success ||
+            response.data?.version === undefined ||
+            response.data.sourceGeneration === undefined
+          )
+            return
+          const current = useRoomStore.getState().watchTogether
+          useRoomStore.getState().setWatchTogether({
+            ...current,
+            version: response.data.version,
+            sourceGeneration: response.data.sourceGeneration,
+            serverTimestamp: response.data.serverTimestamp,
+          })
+        }
+      )
     },
     [socket, roomId, isHost]
   )
@@ -310,7 +326,7 @@ export function useSubtitles({
       setState((prev) => {
         const track: SubtitleTrack = {
           cues: dedupeSubtitleCues(cues, `external:${filename}:${format}`),
-          label: label || `字幕 ${prev.subtitleTracks.length + 1}`,
+          label: label || `Subtitles ${prev.subtitleTracks.length + 1}`,
           lang: lang?.trim() || undefined,
           id: `external:${filename}:${format}`,
         }
@@ -360,7 +376,8 @@ export function useSubtitles({
         setState((prev) => {
           const track: SubtitleTrack = {
             cues: [],
-            label: label?.trim() || `字幕 ${prev.subtitleTracks.length + 1}`,
+            label:
+              label?.trim() || `Subtitles ${prev.subtitleTracks.length + 1}`,
             lang: lang?.trim() || undefined,
             id: `external:${trimmedUrl}`,
           }
@@ -542,10 +559,7 @@ export function useSubtitles({
                 if (existing >= 0) {
                   trackIndex = existing
                   const merged = dedupeSubtitleCues(
-                    [
-                      ...prev.subtitleTracks[existing]!.cues,
-                      ...cues,
-                    ],
+                    [...prev.subtitleTracks[existing]!.cues, ...cues],
                     trackId
                   )
                   if (
@@ -574,7 +588,9 @@ export function useSubtitles({
                     },
                   ],
                   subtitleEnabled: true,
-                  activeTrackIndex: activate ? trackIndex : prev.activeTrackIndex,
+                  activeTrackIndex: activate
+                    ? trackIndex
+                    : prev.activeTrackIndex,
                 }
                 return next
               }
@@ -585,10 +601,7 @@ export function useSubtitles({
                     ? {
                         ...t,
                         id: t.id || trackId,
-                        cues: dedupeSubtitleCues(
-                          [...t.cues, ...cues],
-                          trackId
-                        ),
+                        cues: dedupeSubtitleCues([...t.cues, ...cues], trackId),
                       }
                     : t
                 ),
@@ -607,7 +620,7 @@ export function useSubtitles({
             if (!settled) {
               settled = true
               if (sourceGenerationRef.current === generation) {
-                reject(new Error('字幕轨为空'))
+                reject(new Error(t('This subtitle track is empty.')))
               } else {
                 resolve()
               }
@@ -671,7 +684,9 @@ export function useSubtitles({
       // mkv-embedded 的 fetch 无法携带 Authorization 头，
       // 本站 /api/ URL 必须附加 token query（与播放引擎 appendAuthToken 一致），
       // 否则 401 → 探测失败显示「未检测到内嵌字幕」。直链 URL 原样返回。
-      const url = appendAuthToken(sourceUrl ?? buildServerFileProxyUrl(filePath))
+      const url = appendAuthToken(
+        sourceUrl ?? buildServerFileProxyUrl(filePath)
+      )
       const generation = sourceGenerationRef.current
 
       // 防并行重入：同一 URL 加载中（首路还在探测）或已完成时，
@@ -809,7 +824,12 @@ export function useSubtitles({
           message?: string
         }
         if (!res.ok || !data.success || !data.tracks) {
-          throw new Error(data.message || '获取内嵌字幕轨道失败')
+          throw new Error(
+            englishErrorMessage(
+              data.message,
+              'Unable to load embedded subtitle tracks.'
+            )
+          )
         }
         return data.tracks
       } catch (err) {
@@ -882,7 +902,12 @@ export function useSubtitles({
           message?: string
         }
         if (!res.ok || !data.success || !data.content) {
-          throw new Error(data.message || '提取内嵌字幕失败')
+          throw new Error(
+            englishErrorMessage(
+              data.message,
+              'Unable to extract embedded subtitles.'
+            )
+          )
         }
         const cues = parseSubtitle(
           data.content,
@@ -983,7 +1008,10 @@ export function useSubtitles({
       // 观众本地调描边：标记偏好，后续房主广播不覆盖此选择
       if (!isHost) viewerPrefTouchedRef.current = true
       setState((prev) => {
-        const next: SubtitleState = { ...prev, subtitleStrokeWidth: strokeWidth }
+        const next: SubtitleState = {
+          ...prev,
+          subtitleStrokeWidth: strokeWidth,
+        }
         broadcast(next)
         return next
       })
@@ -1043,7 +1071,10 @@ export function useSubtitles({
       // 观众改过本地偏好（开关/轨道/字号/偏移）后，房主广播只更新轨道
       // 数据；偏好字段保持观众本地选择。未改过则全量跟随房主。
       const touched = viewerPrefTouchedRef.current
-      if (payload.version !== undefined && payload.sourceGeneration !== undefined) {
+      if (
+        payload.version !== undefined &&
+        payload.sourceGeneration !== undefined
+      ) {
         useRoomStore.getState().setWatchTogether({
           ...authority,
           version: payload.version,
@@ -1056,7 +1087,7 @@ export function useSubtitles({
         sourceGeneration: payload.sourceGeneration ?? prev.sourceGeneration,
         subtitleEnabled: touched
           ? prev.subtitleEnabled
-          : payload.enabled ?? prev.subtitleEnabled,
+          : (payload.enabled ?? prev.subtitleEnabled),
         // 轨道数据：以房主广播为基准（数量/顺序/新增/清空均跟随房主，
         // 房主手动上传的轨道由此同步给观众）；仅当本地同索引轨道 label
         // 一致且 cues 更多（观众本地流式提取进度领先房主快照）时保留
@@ -1074,28 +1105,28 @@ export function useSubtitles({
           : prev.subtitleTracks,
         activeTrackIndex: touched
           ? prev.activeTrackIndex
-          : payload.activeIndex ?? prev.activeTrackIndex,
+          : (payload.activeIndex ?? prev.activeTrackIndex),
         subtitleFontSize: touched
           ? prev.subtitleFontSize
-          : payload.fontSize ?? prev.subtitleFontSize,
+          : (payload.fontSize ?? prev.subtitleFontSize),
         subtitleOffset: touched
           ? prev.subtitleOffset
-          : payload.offset ?? prev.subtitleOffset,
+          : (payload.offset ?? prev.subtitleOffset),
         subtitleShiftX: touched
           ? prev.subtitleShiftX
-          : payload.shiftX ?? prev.subtitleShiftX,
+          : (payload.shiftX ?? prev.subtitleShiftX),
         subtitleShiftY: touched
           ? prev.subtitleShiftY
-          : payload.shiftY ?? prev.subtitleShiftY,
+          : (payload.shiftY ?? prev.subtitleShiftY),
         subtitleStrokeWidth: touched
           ? prev.subtitleStrokeWidth
-          : payload.strokeWidth ?? prev.subtitleStrokeWidth,
+          : (payload.strokeWidth ?? prev.subtitleStrokeWidth),
         subtitleShadowBlur: touched
           ? prev.subtitleShadowBlur
-          : payload.shadowBlur ?? prev.subtitleShadowBlur,
+          : (payload.shadowBlur ?? prev.subtitleShadowBlur),
         subtitleFontFamily: touched
           ? prev.subtitleFontFamily
-          : payload.fontFamily ?? prev.subtitleFontFamily,
+          : (payload.fontFamily ?? prev.subtitleFontFamily),
       }))
     }
     socket.on('subtitle-update', handler)
@@ -1108,8 +1139,30 @@ export function useSubtitles({
     }
   }, [socket, isHost, roomId])
 
+  // Generated labels are local display copy. Keep the stored/broadcast track
+  // and cue identities unchanged when the viewer switches language.
+  const displayedTracks = useMemo(
+    () =>
+      state.subtitleTracks.map((track) => {
+        const generated = /^(Track|Subtitles) (\d+)$/.exec(track.label)
+        return generated && locale === 'zh'
+          ? {
+              ...track,
+              label: t(
+                generated[1] === 'Track'
+                  ? 'Track {count}'
+                  : 'Subtitles {count}',
+                { count: generated[2] }
+              ),
+            }
+          : track
+      }),
+    [state.subtitleTracks, locale]
+  )
+
   return {
     ...state,
+    subtitleTracks: displayedTracks,
     setEnabled,
     setActiveTrack,
     addTrackFromUrl,

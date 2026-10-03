@@ -10,6 +10,7 @@ const source = (relative) =>
   fs.readFileSync(path.join(__dirname, '../src', relative), 'utf8')
 
 let currentUser
+let locale = 'en'
 
 function icon() {
   return React.createElement('svg', { 'aria-hidden': 'true' })
@@ -58,6 +59,14 @@ function loadComponent(relative, extraImports = {}) {
         return extraImports[name] || require('react-router-dom')
       }
       if (name === 'lucide-react') return icons
+      if (name === '@/i18n')
+        return {
+          t: (copy, params) => translateMessage(locale, copy, zh, params),
+          canonicalProductMessage: (copy) => translateMessage('en', copy, zh),
+          getLocale: () => locale,
+          useTranslation: () => ({ locale }),
+        }
+      if (name === '@/i18n/core.zh') return { coreZh }
       if (name === '@/components/ui/Button') return { Button }
       if (name === '@/components/ui/Avatar') return { Avatar }
       if (name === '@/components/ui/Input') return { Input }
@@ -97,9 +106,10 @@ function loadComponent(relative, extraImports = {}) {
       }
       if (name === '@/modules/server-files/ServerFileManager') {
         return {
-          default: () =>
+          default: ({ showHeading = true }) =>
             React.createElement('div', {
               'data-testid': 'server-file-manager',
+              'data-show-heading': String(showHeading),
             }),
         }
       }
@@ -114,6 +124,12 @@ function loadComponent(relative, extraImports = {}) {
       if (name === '@/lib/api')
         return { apiFetch: async () => ({ json: async () => ({}) }) }
       if (name === './avatarUrl') return { buildAvatarUrl: () => undefined }
+      if (name === '@/lib/errorMessage')
+        return loadComponent('lib/errorMessage.ts', {
+          '@/modules/player/services/media-redaction': loadComponent(
+            'modules/player/services/media-redaction.ts'
+          ),
+        })
       if (name in extraImports) return extraImports[name]
       throw new Error(`Unexpected import: ${name}`)
     },
@@ -122,6 +138,13 @@ function loadComponent(relative, extraImports = {}) {
   )
   return loaded.exports
 }
+
+const { translateMessage } = loadComponent('i18n/translation.ts')
+const { coreZh } = loadComponent('i18n/core.zh.ts')
+const { pagesZh } = loadComponent('i18n/pages.zh.ts')
+const { componentsZh } = loadComponent('i18n/components.zh.ts')
+const { modulesZh } = loadComponent('i18n/modules.zh.ts')
+const zh = { ...componentsZh, ...coreZh, ...modulesZh, ...pagesZh }
 
 const ProfilePage = loadComponent('pages/ProfilePage.tsx', {
   'react-router-dom': {
@@ -148,23 +171,24 @@ test('ordinary users and root retain account, media, and role-gated server-file 
   const rootHtml = renderProfile('root')
 
   for (const html of [userHtml, adminHtml, rootHtml]) {
-    assert.match(html, /我的空间/)
-    assert.match(html, /编辑资料与安全/)
-    assert.doesNotMatch(html, /外观设置/)
-    assert.match(html, /媒体资源/)
+    assert.match(html, /Your account/)
+    assert.match(html, /Edit profile &amp; security/)
+    assert.doesNotMatch(html, /Appearance/)
+    assert.match(html, /Your sources/)
     assert.match(html, /data-testid="mount-manager"/)
-    assert.match(html, /B站账号/)
+    assert.match(html, /Bilibili account/)
   }
   assert.doesNotMatch(
     userHtml,
-    /服务器文件管理|data-testid="server-file-manager"/
+    /Server files|data-testid="server-file-manager"/
   )
   assert.doesNotMatch(
     adminHtml,
-    /服务器文件管理|data-testid="server-file-manager"/
+    /Server files|data-testid="server-file-manager"/
   )
-  assert.match(rootHtml, /服务器文件管理/)
+  assert.match(rootHtml, /Server files/)
   assert.match(rootHtml, /data-testid="server-file-manager"/)
+  assert.match(rootHtml, /data-show-heading="false"/)
 })
 
 test('account editor keeps password security for users and username changes root-only', () => {
@@ -181,12 +205,65 @@ test('account editor keeps password security for users and username changes root
     React.createElement(AccountEditor, { user: currentUser, onClose() {} })
   )
 
-  assert.match(userHtml, /修改密码/)
-  assert.doesNotMatch(userHtml, /修改用户名/)
-  assert.match(adminHtml, /修改密码/)
-  assert.doesNotMatch(adminHtml, /修改用户名/)
-  assert.match(rootHtml, /修改密码/)
-  assert.match(rootHtml, /修改用户名/)
+  assert.match(userHtml, /Change password/)
+  assert.doesNotMatch(userHtml, /Change username/)
+  assert.match(adminHtml, /Change password/)
+  assert.doesNotMatch(adminHtml, /Change username/)
+  assert.match(rootHtml, /Change password/)
+  assert.match(rootHtml, /Change username/)
+})
+
+test('Chinese and English profile copy preserve account identity and role-gated sources', () => {
+  currentUser = { id: 'account-42', username: '朋友 Alice', role: 'user' }
+  try {
+    locale = 'zh'
+    const chinese = render(React.createElement(ProfilePage))
+    assert.match(chinese, /个人账号/)
+    assert.match(chinese, /用户编号：/)
+    assert.match(chinese, /朋友 Alice/)
+    assert.match(chinese, /account-42/)
+    assert.match(chinese, /编辑资料与安全/)
+    assert.match(chinese, /哔哩哔哩账号/)
+    assert.match(chinese, /正在加载…/)
+    assert.doesNotMatch(chinese, /Server files|服务器文件/)
+
+    locale = 'en'
+    const english = render(React.createElement(ProfilePage))
+    assert.match(english, /Your account/)
+    assert.match(english, /朋友 Alice/)
+    assert.match(english, /Bilibili account/)
+    assert.match(english, /Loading…/)
+    assert.doesNotMatch(english, /个人账号|正在加载…/)
+  } finally {
+    locale = 'en'
+  }
+})
+
+test('Chinese security modal localizes labels and placeholders without changing root-only controls', () => {
+  try {
+    locale = 'zh'
+    const user = { id: 'account-42', username: '朋友 Alice', role: 'user' }
+    const ordinary = render(
+      React.createElement(AccountEditor, { user, onClose() {} })
+    )
+    assert.match(ordinary, /aria-label="资料与安全"/)
+    assert.match(ordinary, /修改密码/)
+    assert.match(ordinary, /placeholder="当前密码"/)
+    assert.match(ordinary, /placeholder="至少 4 个字符"/)
+    assert.match(ordinary, /aria-label="朋友 Alice"/)
+    assert.doesNotMatch(ordinary, /修改用户名/)
+
+    const root = render(
+      React.createElement(AccountEditor, {
+        user: { ...user, role: 'root' },
+        onClose() {},
+      })
+    )
+    assert.match(root, /修改用户名/)
+    assert.match(root, /placeholder="请输入新用户名。"/)
+  } finally {
+    locale = 'en'
+  }
 })
 
 test('appearance remains one global menu with no duplicate profile control', () => {

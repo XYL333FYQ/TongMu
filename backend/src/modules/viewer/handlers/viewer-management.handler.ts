@@ -27,6 +27,9 @@ import type { ViewerJoinedPayload } from '../../shared';
 import { viewerListService } from '../viewer-list.service';
 import { viewerService } from '../viewer.service';
 import { createRoomMediaGrant } from '../../../services/media/room-access';
+import { parseRoomPolicy } from '../../room/room-policy';
+import { roomExperienceService } from '../../room/room-experience.service';
+import { realtimeSyncCore } from '../../realtime-sync-core';
 
 /** approve-join / reject-join 事件 payload */
 interface ViewerSocketPayload {
@@ -77,6 +80,7 @@ export class ViewerManagementHandler implements SocketEventHandler {
           if (!sharer) {
             return safeAck(callback, { success: false, message: '无权限确认' });
           }
+          return await realtimeSyncCore.withRoomLock(sharer.roomId, async () => {
           const permission = await roomPermissionService.canPerform(socket, sharer.roomId, 'viewer.approve');
           if (!permission.allowed) {
             return safeAck(callback, { success: false, message: permission.reason });
@@ -92,6 +96,15 @@ export class ViewerManagementHandler implements SocketEventHandler {
 
           const roomRepo = AppDataSource.getRepository(Room);
           const room = await roomRepo.findOneBy({ roomId: sharer.roomId });
+          if (!room || !viewerService.hasPendingRequest(sharer.roomId, viewerSocket.id)) {
+            return safeAck(callback, { success: false, message: '加入请求已失效，请重新申请' });
+          }
+          if (viewerSocket.data.role === 'guest' && !parseRoomPolicy(room.policyJson).allowGuests) {
+            return safeAck(callback, { success: false, message: '此房间需要登录后加入' });
+          }
+          if (await roomSessionService.getViewerCount(sharer.roomId) >= room.maxViewers) {
+            return safeAck(callback, { success: false, message: '房间观看人数已达上限' });
+          }
 
           // 调用 admitViewer 创建 viewer session + join 房间
           await roomSessionService.admitViewer(
@@ -100,11 +113,15 @@ export class ViewerManagementHandler implements SocketEventHandler {
             viewerSocket.data.userId ?? null,
           );
           const mediaGrant = createRoomMediaGrant(sharer.roomId, payload.viewerSocketId);
+          await roomExperienceService.memberJoined(io, sharer.roomId);
+          viewerService.removePendingRequest(sharer.roomId, payload.viewerSocketId);
+          await roomExperienceService.broadcast(io, sharer.roomId);
 
           // 推送房间信息给新观众
           io.to(payload.viewerSocketId).emit('join-approved', {
             roomId: sharer.roomId,
             mode: room?.mode ?? 'screen-share',
+            activity: room.activity,
             shareMethod: room?.shareMethod ?? 'webrtc',
             streamKey: room?.streamKey ?? null,
             name: room?.name ?? null,
@@ -139,7 +156,7 @@ export class ViewerManagementHandler implements SocketEventHandler {
 
           // 将观众 userId 加入持久化批准白名单，后续刷新/切换模式无需再次审批
           const approvedUserId: number | null = viewerSocket.data?.userId ?? null;
-          if (approvedUserId != null && room) {
+          if (approvedUserId != null && approvedUserId > 0 && room) {
             let approvedList: number[] = [];
             try {
               approvedList = JSON.parse(room.approvedViewers || '[]');
@@ -159,6 +176,7 @@ export class ViewerManagementHandler implements SocketEventHandler {
           );
 
           return safeAck(callback, { success: true });
+          });
         } catch (err) {
           console.error('[approve-join] error:', err);
           return safeAck(callback, { success: false, message: '确认失败' });
@@ -185,6 +203,8 @@ export class ViewerManagementHandler implements SocketEventHandler {
           io.to(payload.viewerSocketId).emit('join-rejected', {
             roomId: sharer.roomId,
           });
+          viewerService.removePendingRequest(sharer.roomId, payload.viewerSocketId);
+          await roomExperienceService.broadcast(io, sharer.roomId);
           return safeAck(callback, { success: true });
         } catch (err) {
           console.error('[reject-join] error:', err);
@@ -363,6 +383,7 @@ export class ViewerManagementHandler implements SocketEventHandler {
             oldHostSocketId: socket.id,
             newOwnerUserId,
           });
+          await roomExperienceService.broadcast(io, payload.roomId);
 
           return safeAck(callback, { success: true });
         } catch (err) {

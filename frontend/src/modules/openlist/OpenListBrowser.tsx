@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import MountBrowserBase from '@/modules/mounts/MountBrowserBase'
 import { browseOpenListMount } from './openlistApi'
 import type { OpenListDirectoryEntry } from './types'
@@ -16,9 +17,11 @@ export default function OpenListBrowser({
   onClose,
   onSelectFiles,
 }: OpenListBrowserProps) {
+  useTranslation()
+
   return (
     <MountBrowserBase<OpenListDirectoryEntry>
-      title="浏览 OpenList 目录"
+      title={t('Browse OpenList folders')}
       mountId={mountId}
       open={open}
       onClose={onClose}

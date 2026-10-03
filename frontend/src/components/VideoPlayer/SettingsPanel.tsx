@@ -1,3 +1,4 @@
+import { t, useTranslation, type TranslationParams } from '@/i18n'
 import { useRef, useState } from 'react'
 import {
   ChevronDown,
@@ -30,19 +31,24 @@ import type {
   DanmakuAdvancedStyle,
 } from '@/store/danmakuStore'
 
-/** 弹幕默认字体栈（FontPickerPanel 的「默认」项映射值） */
+/** On-screen commentsDefaultFont栈（FontPickerPanel 的「Default」 items映射值） */
 const DANMAKU_DEFAULT_FONT = DEFAULT_DANMAKU_STYLE.advanced.fontFamily
 
 /** 主面板宽度（固定，副面板据此定位） */
 const MAIN_PANEL_WIDTH = 260
 /** 副面板宽度 */
 const SIDE_PANEL_WIDTH = 200
-/** 字幕浏览面板宽度 */
+/** SubtitlesBrowse面板宽度 */
 const BROWSER_PANEL_WIDTH = 220
-/** 字体选择面板宽度 */
+/** Font选择面板宽度 */
 const FONT_PANEL_WIDTH = 220
 /** 副面板与主面板间距 */
 const PANEL_GAP = 8
+
+interface SubtitleNotice {
+  key: string
+  params?: TranslationParams
+}
 
 interface SettingsPanelProps {
   isHost: boolean
@@ -77,9 +83,9 @@ interface SettingsPanelProps {
   onAutoSearchSubtitles?: () => Promise<number>
   canAutoSearchSubtitles?: boolean
   canLoadEmbeddedSubtitles?: boolean
-  /** 列出视频文件的内嵌字幕轨道（仅探测，不提取）。 */
+  /** 列出视频文件的Embedded subtitle tracks（仅探测，不提取）。 */
   onListEmbeddedTracks?: () => Promise<EmbeddedTrackInfo[]>
-  /** 提取指定一条内嵌字幕轨道并加入播放。 */
+  /** 提取指定一 commentsEmbedded subtitle tracks并加入Play。 */
   onExtractEmbeddedTrack?: (track: EmbeddedTrackInfo) => Promise<number>
   onDanmakuStyleChange?: (updates: Partial<DanmakuStyleState>) => void
   onDanmakuFilterChange?: (updates: Partial<DanmakuTypeFilters>) => void
@@ -93,6 +99,8 @@ interface SettingsPanelProps {
  * 高级设置展开时向左延伸出独立面板，主面板高度保持不变。
  */
 export function SettingsPanel(props: SettingsPanelProps) {
+  useTranslation()
+
   const {
     isHost,
     danmakuStyle,
@@ -138,9 +146,11 @@ export function SettingsPanel(props: SettingsPanelProps) {
   const [showSubtitleLoader, setShowSubtitleLoader] = useState(false)
   const [subtitleUrlInput, setSubtitleUrlInput] = useState('')
   const [autoSearching, setAutoSearching] = useState(false)
-  const [autoSearchMsg, setAutoSearchMsg] = useState('')
+  const [autoSearchMsg, setAutoSearchMsg] = useState<SubtitleNotice | null>(
+    null
+  )
   const [embeddedLoading, setEmbeddedLoading] = useState(false)
-  const [embeddedMsg, setEmbeddedMsg] = useState('')
+  const [embeddedMsg, setEmbeddedMsg] = useState<SubtitleNotice | null>(null)
   const [embeddedTracks, setEmbeddedTracks] = useState<EmbeddedTrackInfo[]>([])
   const [embeddedListLoading, setEmbeddedListLoading] = useState(false)
   const [extractingIndex, setExtractingIndex] = useState<number | null>(null)
@@ -175,28 +185,33 @@ export function SettingsPanel(props: SettingsPanelProps) {
   const handleAutoSearch = async () => {
     if (autoSearching || !onAutoSearchSubtitles) return
     setAutoSearching(true)
-    setAutoSearchMsg('')
+    setAutoSearchMsg(null)
     try {
       const count = await onAutoSearchSubtitles()
-      setAutoSearchMsg(count > 0 ? `找到 ${count} 条字幕` : '未找到字幕')
+      setAutoSearchMsg(
+        count > 0
+          ? { key: 'Found {count} subtitle tracks', params: { count } }
+          : { key: 'No subtitles found.' }
+      )
     } catch {
-      setAutoSearchMsg('搜索失败')
+      setAutoSearchMsg({ key: 'Search failed.' })
     } finally {
       setAutoSearching(false)
-      setTimeout(() => setAutoSearchMsg(''), 3000)
+      setTimeout(() => setAutoSearchMsg(null), 3000)
     }
   }
 
   const handleListEmbedded = async () => {
     if (embeddedListLoading || !onListEmbeddedTracks) return
     setEmbeddedListLoading(true)
-    setEmbeddedMsg('')
+    setEmbeddedMsg(null)
     try {
       const tracks = await onListEmbeddedTracks()
       setEmbeddedTracks(tracks)
-      if (tracks.length === 0) setEmbeddedMsg('未检测到内嵌字幕')
+      if (tracks.length === 0)
+        setEmbeddedMsg({ key: 'No embedded subtitles were found.' })
     } catch {
-      setEmbeddedMsg('检测失败')
+      setEmbeddedMsg({ key: 'Detection failed.' })
     } finally {
       setEmbeddedListLoading(false)
     }
@@ -205,24 +220,31 @@ export function SettingsPanel(props: SettingsPanelProps) {
   const handleExtractEmbedded = async (track: EmbeddedTrackInfo) => {
     if (embeddedLoading || !onExtractEmbeddedTrack) return
     setEmbeddedLoading(true)
-    setEmbeddedMsg('')
+    setEmbeddedMsg(null)
     setExtractingIndex(track.index)
     try {
       const count = await onExtractEmbeddedTrack(track)
-      setEmbeddedMsg(count > 0 ? `已提取「${track.label}」` : '提取失败')
+      setEmbeddedMsg(
+        count > 0
+          ? {
+              key: 'Extracted subtitle track: {label}',
+              params: { label: track.label },
+            }
+          : { key: 'Extraction failed.' }
+      )
     } catch {
-      setEmbeddedMsg('提取失败')
+      setEmbeddedMsg({ key: 'Extraction failed.' })
     } finally {
       setEmbeddedLoading(false)
       setExtractingIndex(null)
-      setTimeout(() => setEmbeddedMsg(''), 3000)
+      setTimeout(() => setEmbeddedMsg(null), 3000)
     }
   }
 
   return (
     <div className="absolute bottom-full right-2 z-[200] mb-1">
-      {/* 延伸面板：高级设置（独立动画组件，absolute 定位不影响主面板）
-          弹幕与字幕各有独立的高级内容，复用同一个展开状态 */}
+      {/* 延伸面板：Advanced settings（独立动画组件，absolute 定位不影响主面板）
+          On-screen comments与Subtitles各有独立的高级内容，复用同一个展开状态 */}
       <AnimatedSidePanel
         open={showAdvancedPanel}
         width={SIDE_PANEL_WIDTH}
@@ -247,10 +269,10 @@ export function SettingsPanel(props: SettingsPanelProps) {
               className="text-xs font-semibold uppercase tracking-wide"
               style={{ color: 'var(--md-sys-color-on-surface)' }}
             >
-              高级设置
+              {t('Advanced settings')}
             </div>
             <Slider
-              label="字号"
+              label={t('Font size')}
               size="sm"
               value={subtitleFontSize ?? 20}
               min={12}
@@ -260,27 +282,27 @@ export function SettingsPanel(props: SettingsPanelProps) {
               onChange={(v) => onChangeSubtitleFontSize?.(v)}
             />
             <Slider
-              label="描边"
+              label={t('Outline')}
               size="sm"
               value={subtitleStrokeWidth ?? 0}
               min={0}
               max={4}
               step={0.5}
-              valueFormatter={(v) => (v > 0 ? `${v}px` : '无')}
+              valueFormatter={(v) => (v > 0 ? `${v}px` : t('None'))}
               onChange={(v) => onChangeSubtitleStrokeWidth?.(v)}
             />
             <Slider
-              label="阴影"
+              label={t('Shadow')}
               size="sm"
               value={subtitleShadowBlur ?? 4}
               min={0}
               max={12}
               step={1}
-              valueFormatter={(v) => (v > 0 ? `${v}px` : '无')}
+              valueFormatter={(v) => (v > 0 ? `${v}px` : t('None'))}
               onChange={(v) => onChangeSubtitleShadowBlur?.(v)}
             />
             <Slider
-              label="时间偏移"
+              label={t('Time offset')}
               size="sm"
               value={subtitleOffset ?? 0}
               min={-5}
@@ -292,26 +314,34 @@ export function SettingsPanel(props: SettingsPanelProps) {
               onChange={(v) => onChangeSubtitleOffset?.(v)}
             />
             <Slider
-              label="水平位移"
+              label={t('Horizontal offset')}
               size="sm"
               value={subtitleShiftX ?? 0}
               min={-50}
               max={50}
               step={1}
               valueFormatter={(v) =>
-                v > 0 ? `右移${v}%` : v < 0 ? `左移${-v}%` : '居中'
+                v > 0
+                  ? t('Right {amount}%', { amount: v })
+                  : v < 0
+                    ? t('Left {amount}%', { amount: -v })
+                    : t('Centered')
               }
               onChange={(v) => onChangeSubtitleShiftX?.(v)}
             />
             <Slider
-              label="垂直位移"
+              label={t('Vertical offset')}
               size="sm"
               value={subtitleShiftY ?? 0}
               min={-50}
               max={50}
               step={1}
               valueFormatter={(v) =>
-                v > 0 ? `下移${v}%` : v < 0 ? `上移${-v}%` : '原始'
+                v > 0
+                  ? t('Down {amount}%', { amount: v })
+                  : v < 0
+                    ? t('Up {amount}%', { amount: -v })
+                    : t('Original position')
               }
               onChange={(v) => onChangeSubtitleShiftY?.(v)}
             />
@@ -320,7 +350,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                 className="mb-1 text-[11px] font-medium uppercase tracking-wide"
                 style={{ color: 'var(--md-sys-color-on-surface-variant)' }}
               >
-                字体
+                {t('Font')}
               </div>
               <button
                 type="button"
@@ -335,9 +365,11 @@ export function SettingsPanel(props: SettingsPanelProps) {
                   style={{ fontFamily: subtitleFontFamily || undefined }}
                 >
                   {subtitleFontFamily
-                    ? subtitleFontFamily.replace(/["']/g, '').split(',')[0]?.trim() ||
-                      '自定义'
-                    : '默认'}
+                    ? subtitleFontFamily
+                        .replace(/["']/g, '')
+                        .split(',')[0]
+                        ?.trim() || t('Custom')
+                    : t('Default')}
                 </span>
                 <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[var(--md-sys-color-on-surface-variant)]" />
               </button>
@@ -346,7 +378,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
         )}
       </AnimatedSidePanel>
 
-      {/* 延伸面板：字体选择（字幕/弹幕 Tab 各自的内容） */}
+      {/* 延伸面板：Font选择（Subtitles/On-screen comments Tab 各自的内容） */}
       <AnimatedSidePanel
         open={showFontPanel}
         width={FONT_PANEL_WIDTH}
@@ -375,7 +407,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
         )}
       </AnimatedSidePanel>
 
-      {/* 延伸面板：字幕目录浏览 */}
+      {/* 延伸面板：Subtitles目录Browse */}
       <AnimatedSidePanel
         open={showBrowserPanel}
         width={BROWSER_PANEL_WIDTH}
@@ -393,7 +425,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
         )}
       </AnimatedSidePanel>
 
-      {/* 主面板（位置固定，不受副面板展开/收起影响） */}
+      {/* 主面板（位置固定，不受副面板展开/Collapse影响） */}
       <div
         className="glass-strong relative overflow-y-auto rounded-xl border border-[var(--glass-border)] p-2.5 shadow-lg"
         style={{
@@ -403,7 +435,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
             '0 8px 24px -8px color-mix(in srgb, var(--md-sys-color-shadow) 40%, transparent)',
         }}
       >
-        {/* Tab 切换（房主与观众均显示；观众同样有字幕设置 Tab） */}
+        {/* Tab 切换（房主与Members均显示；Members同样有SubtitlesSettings Tab） */}
         {danmakuStyle ? (
           <div
             className="mb-1.5 grid grid-cols-2 gap-1.5 rounded-lg border p-1"
@@ -431,7 +463,9 @@ export function SettingsPanel(props: SettingsPanelProps) {
                       : 'text-[var(--md-sys-color-on-surface-variant)] hover:bg-[var(--md-sys-color-surface-container-highest)] hover:text-[var(--md-sys-color-on-surface)]'
                   )}
                 >
-                  {tab === 'subtitle' ? '字幕' : '弹幕'}
+                  {tab === 'subtitle'
+                    ? t('Subtitles')
+                    : t('On-screen comments')}
                 </button>
               )
             })}
@@ -441,19 +475,19 @@ export function SettingsPanel(props: SettingsPanelProps) {
             className="mb-1.5 text-xs font-semibold"
             style={{ color: 'var(--md-sys-color-on-surface)' }}
           >
-            字幕
+            {t('Subtitles')}
           </div>
         )}
 
-        {/* 内容：房主与观众均显示字幕设置（观众少加载类功能） */}
-        {(settingsTab === 'subtitle' || !danmakuStyle) ? (
+        {/* 内容：房主与Members均显示SubtitlesSettings（Members少加载类功能） */}
+        {settingsTab === 'subtitle' || !danmakuStyle ? (
           <>
             <div className="flex items-center justify-between py-0.5">
               <span
                 className="text-xs"
                 style={{ color: 'var(--md-sys-color-on-surface-variant)' }}
               >
-                启用字幕
+                {t('Enable subtitles')}
               </span>
               <Switch
                 checked={!!subtitleEnabled}
@@ -466,7 +500,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                   className="mb-1 text-[11px] font-medium uppercase tracking-wide"
                   style={{ color: 'var(--md-sys-color-on-surface-variant)' }}
                 >
-                  字幕轨道
+                  {t('Subtitle track')}
                 </div>
                 <div className="flex flex-col gap-0.5">
                   {subtitleTracks.map((track, i) => {
@@ -493,118 +527,81 @@ export function SettingsPanel(props: SettingsPanelProps) {
             )}
             {subtitleEnabled && (
               <>
-                {/* 加载字幕（URL / 文件 / 自动识别 / 内嵌提取 / 目录浏览）：
-                    仅房主可见。观众的字幕数据来自房主广播，无需也无权加载，
-                    其中「浏览目录」明确不向观众开放 */}
+                {/* Load subtitles（URL / 文件 / 自动识别 / 内嵌提取 / 目录Browse）：
+                    仅房主可见。Members的Subtitles数据来自房主广播，无需也无权加载，
+                    其中「Browse folder」明确不向Members开放 */}
                 {isHost && (
-                <div
-                  className="mt-1 border-t pt-1"
-                  style={{
-                    borderColor:
-                      'color-mix(in srgb, var(--md-sys-color-outline) 30%, transparent)',
-                  }}
-                >
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowSubtitleLoader((v) => !v)
-                      setBrowserOpen(false)
+                  <div
+                    className="mt-1 border-t pt-1"
+                    style={{
+                      borderColor:
+                        'color-mix(in srgb, var(--md-sys-color-outline) 30%, transparent)',
                     }}
-                    className="flex w-full items-center justify-between rounded-md px-1 py-0.5 text-xs transition-colors hover:bg-[var(--md-sys-color-surface-container-highest)]"
-                    style={{ color: 'var(--md-sys-color-on-surface-variant)' }}
                   >
-                    <span>加载字幕</span>
-                    <ChevronDown
-                      className={cn(
-                        'h-3 w-3 transition-transform',
-                        showSubtitleLoader && 'rotate-180'
-                      )}
-                    />
-                  </button>
-                  {showSubtitleLoader && (
-                    <div className="mt-1 space-y-1">
-                      <div className="flex items-center gap-1">
-                        <Input
-                          size="sm"
-                          value={subtitleUrlInput}
-                          onChange={(e) => setSubtitleUrlInput(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault()
-                              handleAddSubtitleUrl()
-                            }
-                          }}
-                          placeholder="https://.../sub.vtt 或 .srt/.ass"
-                          className="flex-1"
-                        />
-                        <Button
-                          variant="primary"
-                          size="sm"
-                          className="h-7 w-7 shrink-0 p-0"
-                          disabled={!subtitleUrlInput.trim()}
-                          onClick={handleAddSubtitleUrl}
-                          icon={<Plus className="h-3.5 w-3.5" />}
-                        />
-                      </div>
-                      <input
-                        ref={subtitleFileInputRef}
-                        type="file"
-                        accept=".vtt,.srt,.ass,.ssa,.smi,.sami,.sub"
-                        className="hidden"
-                        onChange={handleSubtitleFileChange}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowSubtitleLoader((v) => !v)
+                        setBrowserOpen(false)
+                      }}
+                      className="flex w-full items-center justify-between rounded-md px-1 py-0.5 text-xs transition-colors hover:bg-[var(--md-sys-color-surface-container-highest)]"
+                      style={{
+                        color: 'var(--md-sys-color-on-surface-variant)',
+                      }}
+                    >
+                      <span>{t('Load subtitles')}</span>
+                      <ChevronDown
+                        className={cn(
+                          'h-3 w-3 transition-transform',
+                          showSubtitleLoader && 'rotate-180'
+                        )}
                       />
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        className="h-7 w-full justify-center gap-1 text-xs"
-                        icon={<Upload className="h-3 w-3" />}
-                        onClick={() => subtitleFileInputRef.current?.click()}
-                      >
-                        上传文件
-                      </Button>
-                      {canAutoSearchSubtitles && onAutoSearchSubtitles && (
-                        <>
-                          <div
-                            className="border-t pt-1"
-                            style={{
-                              borderColor:
-                                'color-mix(in srgb, var(--md-sys-color-outline) 20%, transparent)',
+                    </button>
+                    {showSubtitleLoader && (
+                      <div className="mt-1 space-y-1">
+                        <div className="flex items-center gap-1">
+                          <Input
+                            size="sm"
+                            value={subtitleUrlInput}
+                            onChange={(e) =>
+                              setSubtitleUrlInput(e.target.value)
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault()
+                                handleAddSubtitleUrl()
+                              }
                             }}
+                            placeholder={t('https://…/sub.vtt, .srt or .ass')}
+                            className="flex-1"
                           />
                           <Button
-                            variant="secondary"
+                            variant="primary"
                             size="sm"
-                            className="h-7 w-full justify-center gap-1 text-xs"
-                            disabled={autoSearching}
-                            icon={
-                              autoSearching ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                              ) : (
-                                <ScanSearch className="h-3 w-3" />
-                              )
-                            }
-                            onClick={handleAutoSearch}
-                          >
-                            {autoSearching ? '搜索中...' : '自动识别字幕'}
-                          </Button>
-                          {autoSearchMsg && (
-                            <div
-                              className="text-center text-[10px]"
-                              style={{
-                                color:
-                                  autoSearchMsg === '搜索失败'
-                                    ? 'var(--md-sys-color-error)'
-                                    : 'var(--md-sys-color-on-surface-variant)',
-                              }}
-                            >
-                              {autoSearchMsg}
-                            </div>
-                          )}
-                        </>
-                      )}
-                      {canLoadEmbeddedSubtitles &&
-                        onListEmbeddedTracks &&
-                        onExtractEmbeddedTrack && (
+                            className="h-7 w-7 shrink-0 p-0"
+                            disabled={!subtitleUrlInput.trim()}
+                            onClick={handleAddSubtitleUrl}
+                            aria-label={t('Add subtitle URL')}
+                            icon={<Plus className="h-3.5 w-3.5" />}
+                          />
+                        </div>
+                        <input
+                          ref={subtitleFileInputRef}
+                          type="file"
+                          accept=".vtt,.srt,.ass,.ssa,.smi,.sami,.sub"
+                          className="hidden"
+                          onChange={handleSubtitleFileChange}
+                        />
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          className="h-7 w-full justify-center gap-1 text-xs"
+                          icon={<Upload className="h-3 w-3" />}
+                          onClick={() => subtitleFileInputRef.current?.click()}
+                        >
+                          {t('Upload files')}
+                        </Button>
+                        {canAutoSearchSubtitles && onAutoSearchSubtitles && (
                           <>
                             <div
                               className="border-t pt-1"
@@ -617,96 +614,148 @@ export function SettingsPanel(props: SettingsPanelProps) {
                               variant="secondary"
                               size="sm"
                               className="h-7 w-full justify-center gap-1 text-xs"
-                              disabled={embeddedListLoading || embeddedLoading}
+                              disabled={autoSearching}
                               icon={
-                                embeddedListLoading ? (
+                                autoSearching ? (
                                   <Loader2 className="h-3 w-3 animate-spin" />
                                 ) : (
-                                  <FileText className="h-3 w-3" />
+                                  <ScanSearch className="h-3 w-3" />
                                 )
                               }
-                              onClick={handleListEmbedded}
+                              onClick={handleAutoSearch}
                             >
-                              {embeddedListLoading ? '检测中...' : '内嵌字幕轨道'}
+                              {autoSearching
+                                ? t('Searching…')
+                                : t('Find subtitles')}
                             </Button>
-                            {embeddedTracks.length > 0 && (
-                              <div className="mt-1 flex flex-col gap-0.5">
-                                <div
-                                  className="text-[11px] font-medium uppercase tracking-wide"
-                                  style={{
-                                    color:
-                                      'var(--md-sys-color-on-surface-variant)',
-                                  }}
-                                >
-                                  可提取轨道
-                                </div>
-                                {embeddedTracks.map((t) => {
-                                  const extracting = extractingIndex === t.index
-                                  return (
-                                    <button
-                                      key={t.index}
-                                      type="button"
-                                      disabled={embeddedLoading}
-                                      onClick={() => handleExtractEmbedded(t)}
-                                      className={cn(
-                                        'flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors',
-                                        extracting
-                                          ? 'bg-[var(--md-sys-color-primary-container)] text-[var(--md-sys-color-on-primary-container)]'
-                                          : 'text-[var(--md-sys-color-on-surface)] hover:bg-[var(--md-sys-color-surface-container-highest)]'
-                                      )}
-                                    >
-                                      <span className="truncate">
-                                        {t.label}
-                                      </span>
-                                      <span className="ml-auto shrink-0 text-[10px] text-[var(--md-sys-color-on-surface-variant)]">
-                                        {t.codecName}
-                                      </span>
-                                      {extracting && (
-                                        <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
-                                      )}
-                                    </button>
-                                  )
-                                })}
-                              </div>
-                            )}
-                            {embeddedMsg && (
+                            {autoSearchMsg && (
                               <div
                                 className="text-center text-[10px]"
                                 style={{
                                   color:
-                                    embeddedMsg === '提取失败' ||
-                                    embeddedMsg === '检测失败'
+                                    autoSearchMsg.key === 'Search failed.'
                                       ? 'var(--md-sys-color-error)'
                                       : 'var(--md-sys-color-on-surface-variant)',
                                 }}
                               >
-                                {embeddedMsg}
+                                {t(autoSearchMsg.key, autoSearchMsg.params)}
                               </div>
                             )}
                           </>
                         )}
-                      {canAutoSearchSubtitles &&
-                        browseMovieId != null &&
-                        onAddSubtitleContent && (
-                          <Button
-                            variant={browserOpen ? 'primary' : 'secondary'}
-                            size="sm"
-                            className="h-7 w-full justify-center gap-1 text-xs"
-                            icon={<FolderOpen className="h-3 w-3" />}
-                            onClick={() => {
-                              setBrowserOpen((v) => !v)
-                              setAdvancedOpen(false)
-                              setFontPanelOpen(false)
-                            }}
-                          >
-                            {browserOpen ? '关闭浏览' : '浏览目录'}
-                          </Button>
-                        )}
-                    </div>
-                  )}
-                </div>
+                        {canLoadEmbeddedSubtitles &&
+                          onListEmbeddedTracks &&
+                          onExtractEmbeddedTrack && (
+                            <>
+                              <div
+                                className="border-t pt-1"
+                                style={{
+                                  borderColor:
+                                    'color-mix(in srgb, var(--md-sys-color-outline) 20%, transparent)',
+                                }}
+                              />
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                className="h-7 w-full justify-center gap-1 text-xs"
+                                disabled={
+                                  embeddedListLoading || embeddedLoading
+                                }
+                                icon={
+                                  embeddedListLoading ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    <FileText className="h-3 w-3" />
+                                  )
+                                }
+                                onClick={handleListEmbedded}
+                              >
+                                {embeddedListLoading
+                                  ? t('Detecting…')
+                                  : t('Embedded subtitle tracks')}
+                              </Button>
+                              {embeddedTracks.length > 0 && (
+                                <div className="mt-1 flex flex-col gap-0.5">
+                                  <div
+                                    className="text-[11px] font-medium uppercase tracking-wide"
+                                    style={{
+                                      color:
+                                        'var(--md-sys-color-on-surface-variant)',
+                                    }}
+                                  >
+                                    {t('Available tracks')}
+                                  </div>
+                                  {embeddedTracks.map((t) => {
+                                    const extracting =
+                                      extractingIndex === t.index
+                                    return (
+                                      <button
+                                        key={t.index}
+                                        type="button"
+                                        disabled={embeddedLoading}
+                                        onClick={() => handleExtractEmbedded(t)}
+                                        className={cn(
+                                          'flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors',
+                                          extracting
+                                            ? 'bg-[var(--md-sys-color-primary-container)] text-[var(--md-sys-color-on-primary-container)]'
+                                            : 'text-[var(--md-sys-color-on-surface)] hover:bg-[var(--md-sys-color-surface-container-highest)]'
+                                        )}
+                                      >
+                                        <span className="truncate">
+                                          {t.label}
+                                        </span>
+                                        <span className="ml-auto shrink-0 text-[10px] text-[var(--md-sys-color-on-surface-variant)]">
+                                          {t.codecName}
+                                        </span>
+                                        {extracting && (
+                                          <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+                                        )}
+                                      </button>
+                                    )
+                                  })}
+                                </div>
+                              )}
+                              {embeddedMsg && (
+                                <div
+                                  className="text-center text-[10px]"
+                                  style={{
+                                    color:
+                                      embeddedMsg.key ===
+                                        'Extraction failed.' ||
+                                      embeddedMsg.key === 'Detection failed.'
+                                        ? 'var(--md-sys-color-error)'
+                                        : 'var(--md-sys-color-on-surface-variant)',
+                                  }}
+                                >
+                                  {t(embeddedMsg.key, embeddedMsg.params)}
+                                </div>
+                              )}
+                            </>
+                          )}
+                        {canAutoSearchSubtitles &&
+                          browseMovieId != null &&
+                          onAddSubtitleContent && (
+                            <Button
+                              variant={browserOpen ? 'primary' : 'secondary'}
+                              size="sm"
+                              className="h-7 w-full justify-center gap-1 text-xs"
+                              icon={<FolderOpen className="h-3 w-3" />}
+                              onClick={() => {
+                                setBrowserOpen((v) => !v)
+                                setAdvancedOpen(false)
+                                setFontPanelOpen(false)
+                              }}
+                            >
+                              {browserOpen
+                                ? t('Close browser')
+                                : t('Browse folder')}
+                            </Button>
+                          )}
+                      </div>
+                    )}
+                  </div>
                 )}
-                {/* 高级设置入口（字号 / 时间偏移 / 水平位移 / 字体在延伸面板中） */}
+                {/* Advanced settings入口（Font size / Time offset / Horizontal offset / Font在延伸面板中） */}
                 {(onChangeSubtitleFontSize ||
                   onChangeSubtitleOffset ||
                   onChangeSubtitleShiftX ||
@@ -726,7 +775,9 @@ export function SettingsPanel(props: SettingsPanelProps) {
                     )}
                     style={{ borderColor: 'var(--md-sys-color-outline)' }}
                   >
-                    {advancedOpen ? '收起高级设置' : '高级设置'}
+                    {advancedOpen
+                      ? t('Hide advanced settings')
+                      : t('Advanced settings')}
                     <ChevronRight
                       className={cn(
                         'h-3.5 w-3.5 transition-transform',

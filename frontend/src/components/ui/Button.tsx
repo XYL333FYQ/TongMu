@@ -29,6 +29,9 @@ export function Button({
   const buttonRef = useRef<HTMLButtonElement>(null)
 
   const handleClick = (e: React.MouseEvent<HTMLButtonElement>) => {
+    // WebKit does not always focus pointer-clicked buttons. Capture the actual
+    // opener before its callback mounts a dialog, so closing restores focus.
+    if (!disabled && !loading) e.currentTarget.focus({ preventScroll: true })
     if (disableAnimation || disabled || loading) {
       onClick?.(e)
       return
@@ -95,7 +98,7 @@ export function Button({
     ghost: {
       backgroundColor: 'transparent',
       color: 'var(--md-sys-color-on-surface)',
-      border: '1px solid transparent',
+      border: '1px solid var(--md-sys-color-outline-variant)',
       boxShadow: 'none',
     },
     danger: {
@@ -118,6 +121,8 @@ export function Button({
       ref={buttonRef}
       className={cn(
         baseStyles,
+        'tm-button',
+        variant === 'ghost' && 'tm-button--ghost',
         sizes[size],
         block && 'w-full',
         !disableAnimation && 'zen-btn',
@@ -128,6 +133,7 @@ export function Button({
         className
       )}
       disabled={disabled || loading}
+      aria-busy={loading || undefined}
       style={{ ...variants[variant], ...style }}
       onClick={handleClick}
       onMouseMove={handleMouseMove}

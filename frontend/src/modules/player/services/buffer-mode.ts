@@ -83,11 +83,11 @@ export async function fetchBlobsForBufferMode(
   const { state, bvid = '', title, onProgress, signal } = options
 
   if (!state.audioUrl || !state.cid) {
-    throw new Error('缓冲模式需要 DASH 源的 audioUrl 和 cid')
+    throw new Error('Buffer mode requires a DASH audio stream and content ID.')
   }
 
   const cacheKey = buildCacheKey(bvid, state.cid, state.currentQn)
-  const displayTitle = title || '当前视频'
+  const displayTitle = title || 'Current video'
 
   // 命中缓存：直接返回 Blob
   const cached = await getCacheEntry(cacheKey)
@@ -168,7 +168,7 @@ export async function fetchBlobsForBufferMode(
     // 超大小上限被中止 → 转为明确提示（调用方按 DownloadError 展示）
     if (overLimit && err instanceof DownloadAbortedError) {
       throw new DownloadError(
-        `视频过大（超过 ${Math.round(MAX_BUFFER_TOTAL_BYTES / 1024 / 1024)}MB），已取消缓冲下载；请关闭缓冲模式或切换更低清晰度`
+        `This video exceeds the buffer limit (${Math.round(MAX_BUFFER_TOTAL_BYTES / 1024 / 1024)} MB). Buffering was cancelled. Disable buffer mode or choose a smaller source.`
       )
     }
     // 仅当写入缓存的尝试失败时才清理（IndexedDB 单条 put 失败通常原子回滚，

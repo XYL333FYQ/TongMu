@@ -13,15 +13,28 @@ function isProvider(value: string): value is MediaServerProviderId {
   return value === 'emby' || value === 'jellyfin'
 }
 
-export function buildMediaServerReference(reference: MediaServerReference): string {
-  if (!isProvider(reference.provider) || !Number.isSafeInteger(reference.mountId) || reference.mountId <= 0) {
-    throw new Error('媒体服务器挂载引用无效')
+export function buildMediaServerReference(
+  reference: MediaServerReference
+): string {
+  if (
+    !isProvider(reference.provider) ||
+    !Number.isSafeInteger(reference.mountId) ||
+    reference.mountId <= 0
+  ) {
+    throw new Error('This media server source reference is invalid.')
   }
-  if (!SAFE_ID.test(reference.itemId) || (reference.mediaSourceId !== undefined && !SAFE_ID.test(reference.mediaSourceId))) {
-    throw new Error('媒体服务器条目引用无效')
+  if (
+    !SAFE_ID.test(reference.itemId) ||
+    (reference.mediaSourceId !== undefined &&
+      !SAFE_ID.test(reference.mediaSourceId))
+  ) {
+    throw new Error('This media server item reference is invalid.')
   }
-  const params = new URLSearchParams({ mountId: String(reference.mountId), itemId: reference.itemId })
-  if (reference.mediaSourceId) params.set('mediaSourceId', reference.mediaSourceId)
+  const params = new URLSearchParams({
+    mountId: String(reference.mountId),
+    itemId: reference.itemId,
+  })
+  if (reference.mediaSourceId)
+    params.set('mediaSourceId', reference.mediaSourceId)
   return `provider://${reference.provider}?${params.toString()}`
 }
-

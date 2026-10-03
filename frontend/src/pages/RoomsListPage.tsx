@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import { useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
@@ -41,6 +42,7 @@ export default function RoomsListPage({
 }: {
   directory: RoomDirectoryView
 }) {
+  useTranslation()
   useHideBodyScrollbar()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -55,12 +57,12 @@ export default function RoomsListPage({
     return saved === 'list' ? 'list' : 'tile'
   })
 
-  /** 创建时间：<24h 显示相对时间，≥24h 显示准确时间（公共 formatRecentTime） */
+  /** Create时间：<24h 显示相对时间，≥24h 显示准确时间（公Total: formatRecentTime） */
   const formatDate = formatRecentTime
 
   const getModeLabel = (mode: RoomListItem['mode']) => {
-    if (mode === 'watch-together') return '一起看'
-    return '屏幕共享'
+    if (mode === 'watch-together') return t('Watch together')
+    return t('Screen sharing')
   }
 
   const visibleRooms = rooms
@@ -88,9 +90,9 @@ export default function RoomsListPage({
     >
       <div className="tongmu-rooms-page__content">
         <header className="tongmu-hall__directory-head">
-          <p className="tongmu-home__section-kicker">TongMu 大厅</p>
-          <h1 id="hall-discover-title">发现房间</h1>
-          <p>浏览正在进行的房间，找到想一起看的伙伴。</p>
+          <p className="tongmu-home__section-kicker">{t('TongMu hall')}</p>
+          <h1 id="hall-discover-title">{t('Discover rooms')}</h1>
+          <p>{t('Browse active rooms and find people to watch with.')}</p>
         </header>
 
         <Fade delay={160}>
@@ -101,7 +103,7 @@ export default function RoomsListPage({
                 color: 'var(--md-sys-color-on-surface-variant)',
               }}
             >
-              <span>共</span>
+              <span>{t('Total')}</span>
               <span
                 className="min-w-[1.25rem] text-center font-semibold"
                 style={{ color: 'var(--md-sys-color-on-surface)' }}
@@ -109,8 +111,9 @@ export default function RoomsListPage({
                 {rooms.length}
               </span>
               <span>
-                个房间 · {rooms.filter((room) => room.sharerOnline).length}{' '}
-                个房主在线
+                {t('rooms ·')}
+                {rooms.filter((room) => room.sharerOnline).length}{' '}
+                {t('hosts online')}
               </span>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -135,11 +138,11 @@ export default function RoomsListPage({
                         ? 'var(--md-sys-color-on-primary-container)'
                         : 'var(--md-sys-color-on-surface)',
                   }}
-                  aria-label="列表视图"
-                  title="列表视图"
+                  aria-label={t('List view')}
+                  title={t('List view')}
                 >
                   <List className="h-4 w-4" />
-                  <span className="hidden sm:inline">列表</span>
+                  <span className="hidden sm:inline">{t('List')}</span>
                 </button>
                 <button
                   type="button"
@@ -158,11 +161,11 @@ export default function RoomsListPage({
                         ? 'var(--md-sys-color-on-primary-container)'
                         : 'var(--md-sys-color-on-surface)',
                   }}
-                  aria-label="平铺视图"
-                  title="平铺视图"
+                  aria-label={t('Grid view')}
+                  title={t('Grid view')}
                 >
                   <LayoutGrid className="h-4 w-4" />
-                  <span className="hidden sm:inline">平铺</span>
+                  <span className="hidden sm:inline">{t('Grid')}</span>
                 </button>
               </div>
               <Button
@@ -172,7 +175,7 @@ export default function RoomsListPage({
                 onClick={() => void loadData()}
                 disabled={loading}
               >
-                刷新
+                {t('Refresh')}
               </Button>
             </div>
           </div>
@@ -180,29 +183,30 @@ export default function RoomsListPage({
 
         <div className="tongmu-directory-filters">
           <select
-            aria-label="房间类型"
+            aria-label={t('Room activity')}
             className="hall-select"
             value={modeFilter}
             onChange={(event) => setModeFilter(event.target.value)}
           >
-            <option value="all">全部房间</option>
-            <option value="watch-together">一起看</option>
-            <option value="screen-share">屏幕共享</option>
+            <option value="all">{t('All rooms')}</option>
+            <option value="watch-together">{t('Watch together')}</option>
+            <option value="screen-share">{t('Screen sharing')}</option>
           </select>
           <details className="tongmu-directory-filters__more">
             <summary>
-              更多筛选{onlineOnly || sort !== 'recent' ? ' · 已设置' : ''}
+              {t('More filters')}
+              {onlineOnly || sort !== 'recent' ? t(' · Set') : ''}
             </summary>
             <div className="tongmu-directory-filters__advanced">
               <select
-                aria-label="房间排序"
+                aria-label={t('Sort rooms')}
                 className="hall-select"
                 value={sort}
                 onChange={(event) => setSort(event.target.value)}
               >
-                <option value="recent">最近活跃</option>
-                <option value="newest">最新创建</option>
-                <option value="viewers">观众最多</option>
+                <option value="recent">{t('Recently active')}</option>
+                <option value="newest">{t('Newest first')}</option>
+                <option value="viewers">{t('Most members')}</option>
               </select>
               <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-[var(--md-sys-color-on-surface-variant)]">
                 <input
@@ -211,7 +215,7 @@ export default function RoomsListPage({
                   onChange={(event) => setOnlineOnly(event.target.checked)}
                   className="h-4 w-4 accent-[var(--md-sys-color-primary)]"
                 />
-                仅看房主在线
+                {t('Only hosts online')}
               </label>
             </div>
           </details>
@@ -219,25 +223,30 @@ export default function RoomsListPage({
         <div className="tongmu-directory-results text-xs text-[var(--md-sys-color-on-surface-variant)]">
           {!loading && !error && (
             <span role="status">
-              显示 {visibleRooms.length} / {rooms.length} 个房间
+              {t('Showing {visible} / {total} rooms', {
+                visible: visibleRooms.length,
+                total: rooms.length,
+              })}
             </span>
           )}
         </div>
         {authResolved && !isAuthenticated ? (
           <div role="status" className="py-10 text-center">
-            连接不可用，请刷新页面或检查服务器地址。
+            {t(
+              'Connection unavailable. Refresh the page or check the server address.'
+            )}
           </div>
         ) : error ? (
           <div role="alert" className="py-10 text-center">
             <p>{error}</p>
             <Button className="mt-3" onClick={() => void loadData()}>
-              重试
+              {t('Try again')}
             </Button>
           </div>
         ) : loading ? (
           <Fade delay={200}>
             <div className="py-12">
-              <Spinner tip="加载中..." size={32} />
+              <Spinner tip={t('Loading…')} size={32} />
             </div>
           </Fade>
         ) : (
@@ -253,8 +262,10 @@ export default function RoomsListPage({
                 <div className="col-span-full py-12 text-center">
                   <Text type="secondary">
                     {rooms.length
-                      ? '没有匹配的房间，试试调整搜索或筛选条件。'
-                      : '暂时还没有房间，邀请朋友开启第一场放映吧。'}
+                      ? t('No matching rooms. Try another search or filter.')
+                      : t(
+                          'There are no rooms yet. Invite friends to start one.'
+                        )}
                   </Text>
                 </div>
               </Fade>
@@ -291,38 +302,38 @@ export default function RoomsListPage({
                         }
                       >
                         {room.status !== 'active'
-                          ? '已关闭'
+                          ? t('Closed')
                           : room.sharerOnline
-                            ? '房主在线'
-                            : '房主离线'}
+                            ? t('Host online')
+                            : t('Host is offline')}
                       </Tag>
                       {room.requireApproval ? (
-                        <Tag color="warning">需确认</Tag>
+                        <Tag color="warning">{t('Approval required')}</Tag>
                       ) : (
-                        <Tag color="default">直接加入</Tag>
+                        <Tag color="default">{t('Join immediately')}</Tag>
                       )}
                       {room.hasPassword ? (
                         <Tag color="purple">
                           <Lock className="mr-1 inline h-3 w-3" />
-                          有密码
+                          {t('Password protected')}
                         </Tag>
                       ) : (
                         <Tag color="default">
                           <Unlock className="mr-1 inline h-3 w-3" />
-                          无密码
+                          {t('No password')}
                         </Tag>
                       )}
                     </div>
                     <dl className="room-discovery-card__details">
-                      <dt>人数</dt>
+                      <dt>{t('Members')}</dt>
                       <dd className="room-discovery-card__count">
                         {room.viewerCount} / {room.maxViewers}
                       </dd>
-                      <dt>房间号</dt>
+                      <dt>{t('Room ID')}</dt>
                       <dd className="truncate text-right font-mono">
                         {room.roomId}
                       </dd>
-                      <dt>最近活跃</dt>
+                      <dt>{t('Recently active')}</dt>
                       <dd className="truncate text-right">
                         {formatDate(room.lastAccessedAt)}
                       </dd>
@@ -344,7 +355,7 @@ export default function RoomsListPage({
                     }
                     disabled={room.status !== 'active'}
                   >
-                    加入房间
+                    {t('Join room')}
                   </Button>
                 </div>
               ))

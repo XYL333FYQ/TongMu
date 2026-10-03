@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import { useEffect } from 'react'
 import type { Socket } from 'socket.io-client'
 import { useRoomStore, type ShareMethod } from '@/store/roomStore'
@@ -22,6 +23,8 @@ export function useShareMethod(
   roomId: string,
   isHost: boolean
 ) {
+  useTranslation()
+
   const shareMethod = useRoomStore((state) => state.shareMethod)
   const setShareMethod = useRoomStore((state) => state.setShareMethod)
   const setStreamKey = useRoomStore((state) => state.setStreamKey)
@@ -52,10 +55,18 @@ export function useShareMethod(
     method: ShareMethod
   ): Promise<{ success: boolean; message?: string }> => {
     if (!socket || !roomId) {
-      return { success: false, message: 'Socket 未连接' }
+      return {
+        success: false,
+        message: t(
+          'The room connection is unavailable. Reconnect and try again.'
+        ),
+      }
     }
     if (!isHost) {
-      return { success: false, message: '仅房主可切换子模式' }
+      return {
+        success: false,
+        message: t('Only the host can change the screen-sharing method.'),
+      }
     }
     return new Promise((resolve) => {
       socket.emit(

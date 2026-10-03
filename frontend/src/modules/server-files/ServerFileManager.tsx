@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 /**
  * 服务器文件管理面板（个人中心使用，仅 root 可见）。
  *
@@ -8,7 +9,7 @@
  *
  * 文件播放通过房间内 MoviePushPanel 的「服务器文件」源类型完成。
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   ChevronLeft,
@@ -25,6 +26,7 @@ import {
   X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
+import { useDisclosureMotion } from '@/components/ui/useDisclosureMotion'
 import { Input } from '@/components/ui/Input'
 import { Modal, ConfirmModal } from '@/components/ui/Modal'
 import { Spinner } from '@/components/ui/Spinner'
@@ -47,7 +49,12 @@ import type { ServerFileEntry, ServerFileRoot, SystemDirEntry } from './types'
 import { DirPickerSidePanel } from './DirPickerSidePanel'
 import { formatFileSize } from '@/lib/utils'
 
-export default function ServerFileManager() {
+export default function ServerFileManager({
+  showHeading = true,
+}: { showHeading?: boolean } = {}) {
+  useTranslation()
+  const addRootDialogId = useId()
+
   const [entries, setEntries] = useState<ServerFileEntry[]>([])
   const [currentPath, setCurrentPath] = useState<string>('uploads:/')
   const [loading, setLoading] = useState(false)
@@ -56,8 +63,21 @@ export default function ServerFileManager() {
   // 根目录列表
   const [roots, setRoots] = useState<ServerFileRoot[]>([])
   const [rootsLoading, setRootsLoading] = useState(false)
-  const [rootsMenuOpen, setRootsMenuOpen] = useState(false)
-  const [addRootModalOpen, setAddRootModalOpen] = useState(false)
+  const {
+    open: rootsMenuOpen,
+    closing: rootsMenuClosing,
+    show: showRootsMenu,
+    close: closeRootsMenu,
+  } = useDisclosureMotion()
+  const {
+    open: addRootModalOpen,
+    closing: addRootModalClosing,
+    show: showAddRootModal,
+    close: closeAddRootModal,
+  } = useDisclosureMotion()
+  const addRootDialogRef = useRef<HTMLDivElement>(null)
+  const addRootOpenerRef = useRef<HTMLElement | null>(null)
+  const addRootClosingRef = useRef(addRootModalClosing)
   const [newRootName, setNewRootName] = useState('')
   const [newRootPath, setNewRootPath] = useState('')
   const [newRootReadonly, setNewRootReadonly] = useState(false)
@@ -106,7 +126,9 @@ export default function ServerFileManager() {
       const list = await listServerRoots()
       setRoots(list)
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '加载根目录失败')
+      message.error(
+        err instanceof Error ? err.message : t('Could not load root folders.')
+      )
     } finally {
       setRootsLoading(false)
     }
@@ -121,7 +143,9 @@ export default function ServerFileManager() {
       setCurrentPath(data.currentPath)
       setCurrentReadonly(!!data.readonly)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载失败')
+      setError(
+        err instanceof Error ? err.message : t('Could not load this content.')
+      )
     } finally {
       setLoading(false)
     }
@@ -142,10 +166,80 @@ export default function ServerFileManager() {
   // 根目录变化时关闭下拉
   useEffect(() => {
     if (!rootsMenuOpen) return
-    const onClick = () => setRootsMenuOpen(false)
+    const onClick = () => closeRootsMenu()
     window.addEventListener('click', onClick)
     return () => window.removeEventListener('click', onClick)
-  }, [rootsMenuOpen])
+  }, [rootsMenuOpen, closeRootsMenu])
+
+  useEffect(() => {
+    addRootClosingRef.current = addRootModalClosing
+  }, [addRootModalClosing])
+
+  useEffect(() => {
+    if (!addRootModalOpen) return
+    const dialog = addRootDialogRef.current
+    if (!dialog) return
+    const focusableSelector =
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    const ownedMenus = () =>
+      Array.from(
+        document.querySelectorAll<HTMLElement>('[data-tongmu-modal-owner]')
+      ).filter((menu) => menu.dataset.tongmuModalOwner === addRootDialogId)
+    const containsFocus = () =>
+      dialog.contains(document.activeElement) ||
+      ownedMenus().some((menu) => menu.contains(document.activeElement))
+    const focusables = () =>
+      [
+        ...Array.from(dialog.querySelectorAll<HTMLElement>(focusableSelector)),
+        ...ownedMenus().flatMap((menu) =>
+          Array.from(menu.querySelectorAll<HTMLElement>(focusableSelector))
+        ),
+      ].filter(
+        (element) =>
+          element.getClientRects().length > 0 &&
+          !element.closest('[inert], [aria-hidden="true"]')
+      )
+    if (!containsFocus()) (focusables()[0] ?? dialog).focus()
+    const onKeyDown = (event: KeyboardEvent) => {
+      const dialogs = document.querySelectorAll('[data-tongmu-modal]')
+      if (dialogs[dialogs.length - 1] !== dialog || event.defaultPrevented)
+        return
+      if (event.key === 'Escape' && !addRootClosingRef.current) {
+        event.preventDefault()
+        event.stopPropagation()
+        closeAddRootModal()
+      }
+      if (event.key !== 'Tab') return
+      const items = focusables()
+      if (!items.length) {
+        event.preventDefault()
+        dialog.focus()
+        return
+      }
+      const first = items[0]
+      const last = items[items.length - 1]
+      if (
+        event.shiftKey &&
+        (document.activeElement === first || !containsFocus())
+      ) {
+        event.preventDefault()
+        last.focus()
+      } else if (
+        !event.shiftKey &&
+        (document.activeElement === last || !containsFocus())
+      ) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      if (addRootOpenerRef.current?.isConnected)
+        addRootOpenerRef.current.focus()
+      addRootOpenerRef.current = null
+    }
+  }, [addRootModalOpen, addRootDialogId, closeAddRootModal])
 
   const handleEntryClick = (entry: ServerFileEntry) => {
     if (entry.type === 'directory') {
@@ -165,10 +259,10 @@ export default function ServerFileManager() {
   }
 
   const handleSwitchRoot = (root: ServerFileRoot) => {
-    setRootsMenuOpen(false)
+    closeRootsMenu()
     if (root.key === currentRootKey) return
     if (!root.exists) {
-      message.warning('该目录在服务器上不存在')
+      message.warning(t('This folder does not exist on the server.'))
       return
     }
     void load(`${root.key}:/`)
@@ -176,12 +270,17 @@ export default function ServerFileManager() {
 
   // ============ 添加根目录 ============
   const openAddRootModal = () => {
+    if (!addRootModalOpen) {
+      const opener = document.activeElement as HTMLElement | null
+      addRootOpenerRef.current =
+        opener && typeof opener.focus === 'function' ? opener : null
+    }
     setNewRootName('')
     setNewRootPath('')
     setNewRootReadonly(false)
     setDirPickerOpen(false)
     setDirPickerError('')
-    setAddRootModalOpen(true)
+    showAddRootModal()
   }
 
   // 目录选取器：加载指定路径下的子目录
@@ -195,7 +294,9 @@ export default function ServerFileManager() {
       setDirPickerParent(result.parentPath)
       setDirPickerIsRoot(result.isRoot)
     } catch (err) {
-      setDirPickerError(err instanceof Error ? err.message : '加载失败')
+      setDirPickerError(
+        err instanceof Error ? err.message : t('Could not load this content.')
+      )
       setDirPickerEntries([])
     } finally {
       setDirPickerLoading(false)
@@ -248,23 +349,27 @@ export default function ServerFileManager() {
     const name = newRootName.trim()
     const absPath = newRootPath.trim()
     if (!name) {
-      message.warning('请输入名称')
+      message.warning(t('Enter a name.'))
       return
     }
     if (!absPath) {
-      message.warning('请选择服务器目录')
+      message.warning(t('Choose a server folder.'))
       return
     }
     setAddingRoot(true)
     try {
       const added = await addServerRoot(name, absPath, newRootReadonly)
-      message.success(`已添加根目录「${added.name}」`)
-      setAddRootModalOpen(false)
+      message.success(
+        t('Root folder added: {value1}」', { value1: added.name })
+      )
+      closeAddRootModal()
       await loadRoots()
       // 自动切换到新添加的根
       void load(`${added.key}:/`)
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '添加失败')
+      message.error(
+        err instanceof Error ? err.message : t('Could not add this item.')
+      )
     } finally {
       setAddingRoot(false)
     }
@@ -276,7 +381,7 @@ export default function ServerFileManager() {
     setDeletingRoot(true)
     try {
       await deleteServerRoot(deleteRootTarget.key)
-      message.success('已移除根目录挂载')
+      message.success(t('Root folder disconnected.'))
       setDeleteRootTarget(null)
       await loadRoots()
       // 若删除的是当前根，回到 uploads
@@ -284,7 +389,9 @@ export default function ServerFileManager() {
         void load('uploads:/')
       }
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '删除失败')
+      message.error(
+        err instanceof Error ? err.message : t('Could not remove this item.')
+      )
     } finally {
       setDeletingRoot(false)
     }
@@ -304,10 +411,10 @@ export default function ServerFileManager() {
       await uploadServerFiles(files, currentPath, (loaded, total) => {
         setUploadProgress(total > 0 ? Math.round((loaded / total) * 100) : 0)
       })
-      message.success(`已上传 ${files.length} 个文件`)
+      message.success(t('Uploaded  {value1}  files', { value1: files.length }))
       void load(currentPath)
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '上传失败')
+      message.error(err instanceof Error ? err.message : t('Upload failed.'))
     } finally {
       setUploading(false)
       setUploadProgress(0)
@@ -324,17 +431,19 @@ export default function ServerFileManager() {
   const handleCreateFolder = async () => {
     const name = folderName.trim()
     if (!name) {
-      message.warning('请输入文件夹名称')
+      message.warning(t('Enter a folder name.'))
       return
     }
     setFolderCreating(true)
     try {
       await createFolder(currentPath, name)
-      message.success('文件夹已创建')
+      message.success(t('Folder created.'))
       setFolderModalOpen(false)
       void load(currentPath)
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '新建文件夹失败')
+      message.error(
+        err instanceof Error ? err.message : t('Could not create the folder.')
+      )
     } finally {
       setFolderCreating(false)
     }
@@ -356,11 +465,13 @@ export default function ServerFileManager() {
     setRenaming(true)
     try {
       await renameServerFile(renameTarget.path, newName)
-      message.success('已重命名')
+      message.success(t('Renamed.'))
       setRenameTarget(null)
       void load(currentPath)
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '重命名失败')
+      message.error(
+        err instanceof Error ? err.message : t('Could not rename this item.')
+      )
     } finally {
       setRenaming(false)
     }
@@ -372,11 +483,13 @@ export default function ServerFileManager() {
     setDeleting(true)
     try {
       await deleteServerFile(deleteTarget.path)
-      message.success('已删除')
+      message.success(t('Removed '))
       setDeleteTarget(null)
       void load(currentPath)
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '删除失败')
+      message.error(
+        err instanceof Error ? err.message : t('Could not remove this item.')
+      )
     } finally {
       setDeleting(false)
     }
@@ -388,23 +501,25 @@ export default function ServerFileManager() {
     <div className="glass-card p-4">
       {/* 头部 */}
       <div className="mb-4 flex flex-col gap-3">
-        <div className="flex items-center gap-2">
-          <div
-            className="flex h-8 w-8 items-center justify-center rounded-[var(--md-sys-shape-corner)]"
-            style={{
-              backgroundColor: 'var(--md-sys-color-primary-container)',
-              color: 'var(--md-sys-color-on-primary-container)',
-            }}
-          >
-            <HardDrive className="h-4 w-4" />
+        {showHeading && (
+          <div className="flex items-center gap-2">
+            <div
+              className="flex h-8 w-8 items-center justify-center rounded-[var(--md-sys-shape-corner)]"
+              style={{
+                backgroundColor: 'var(--md-sys-color-primary-container)',
+                color: 'var(--md-sys-color-on-primary-container)',
+              }}
+            >
+              <HardDrive className="h-4 w-4" />
+            </div>
+            <div className="flex flex-col">
+              <Text className="text-sm font-medium">{t('Server files')}</Text>
+              <Text className="text-[10px] uppercase tracking-wide text-[var(--md-sys-color-on-surface-variant)]">
+                {t('SERVER FILES')}
+              </Text>
+            </div>
           </div>
-          <div className="flex flex-col">
-            <Text className="text-sm font-medium">服务器文件</Text>
-            <Text className="text-[10px] uppercase tracking-wide text-[var(--md-sys-color-on-surface-variant)]">
-              SERVER FILES
-            </Text>
-          </div>
-        </div>
+        )}
         <div className="flex flex-wrap gap-2">
           <Button
             variant="ghost"
@@ -416,7 +531,7 @@ export default function ServerFileManager() {
             }}
             disabled={loading || rootsLoading}
           >
-            刷新
+            {t('Refresh')}
           </Button>
           <Button
             variant="ghost"
@@ -424,7 +539,7 @@ export default function ServerFileManager() {
             icon={<Plus className="h-4 w-4" />}
             onClick={openAddRootModal}
           >
-            添加目录
+            {t('Add folder')}
           </Button>
           <Button
             variant="ghost"
@@ -433,7 +548,7 @@ export default function ServerFileManager() {
             onClick={openFolderModal}
             disabled={readonly}
           >
-            新建文件夹
+            {t('New folder')}
           </Button>
           <Button
             variant="primary"
@@ -442,12 +557,14 @@ export default function ServerFileManager() {
             onClick={handleUploadClick}
             disabled={uploading || readonly}
           >
-            {uploading ? `上传中 ${uploadProgress}%` : '上传文件'}
+            {uploading
+              ? t('Uploading… {value1}%', { value1: uploadProgress })
+              : t('Upload files')}
           </Button>
         </div>
       </div>
 
-      {/* 上传进度条 */}
+      {/* Upload进度 comments */}
       {uploading && (
         <div className="mb-3">
           <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--md-sys-color-surface-container)]">
@@ -471,7 +588,7 @@ export default function ServerFileManager() {
         onChange={(e) => void handleFileChange(e)}
       />
 
-      {/* 根目录切换器 + 路径栏 */}
+      {/* Root folder切换器 + Path栏 */}
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <div className="relative shrink-0">
           <Button
@@ -480,26 +597,35 @@ export default function ServerFileManager() {
             icon={<HardDrive className="h-4 w-4" />}
             onClick={(e) => {
               e.stopPropagation()
-              setRootsMenuOpen((v) => !v)
+              if (rootsMenuOpen && !rootsMenuClosing) closeRootsMenu()
+              else showRootsMenu()
             }}
             disabled={rootsLoading}
           >
-            {currentRoot?.name ?? '选择根目录'}
+            {currentRoot?.name ?? t('Choose root folder')}
           </Button>
           {rootsMenuOpen && (
             <div
-              className="glass absolute left-0 top-full z-30 mt-1 min-w-[260px] max-w-[calc(100vw-2rem)] rounded-[var(--md-sys-shape-corner)] p-1 shadow-lg"
+              className={
+                'glass absolute left-0 top-full z-30 mt-1 min-w-[260px] max-w-[calc(100vw-2rem)] rounded-[var(--md-sys-shape-corner)] p-1 shadow-lg ' +
+                (rootsMenuClosing ? 'zen-dropdown-exit' : 'zen-dropdown-enter')
+              }
+              style={{
+                transformOrigin: 'top left',
+                pointerEvents: rootsMenuClosing ? 'none' : undefined,
+              }}
               onClick={(e) => e.stopPropagation()}
             >
               <div className="px-2 py-1.5">
                 <Text className="text-[10px] uppercase tracking-wide text-[var(--md-sys-color-on-surface-variant)]">
-                  根目录
+                  {t('Root folder')}
                 </Text>
               </div>
-              {roots.map((r) => (
+              {roots.map((r, index) => (
                 <div
                   key={r.key}
-                  className="group flex items-center gap-2 rounded-[var(--md-sys-shape-corner)] px-2 py-1.5 transition-colors hover:bg-[var(--md-sys-color-surface-container-highest)]"
+                  className="zen-dropdown-item group flex items-center gap-2 rounded-[var(--md-sys-shape-corner)] px-2 py-1.5 transition-colors hover:bg-[var(--md-sys-color-surface-container-highest)]"
+                  style={{ '--item-index': index } as React.CSSProperties}
                 >
                   <button
                     type="button"
@@ -540,7 +666,7 @@ export default function ServerFileManager() {
                     </div>
                     {!r.exists && (
                       <span className="shrink-0 text-[10px] text-[var(--md-sys-color-error)]">
-                        不存在
+                        {t('Unavailable')}
                       </span>
                     )}
                   </button>
@@ -549,25 +675,28 @@ export default function ServerFileManager() {
                       type="button"
                       onClick={() => setDeleteRootTarget(r)}
                       className="shrink-0 rounded p-1 text-[var(--md-sys-color-on-surface-variant)] opacity-0 transition-opacity hover:text-[var(--md-sys-color-error)] group-hover:opacity-100"
-                      title="移除挂载"
+                      title={t('Disconnect source')}
                     >
                       <X className="h-3.5 w-3.5" />
                     </button>
                   )}
                 </div>
               ))}
-              <div className="mt-1 border-t border-[var(--glass-border)] pt-1">
+              <div
+                className="zen-dropdown-item mt-1 border-t border-[var(--glass-border)] pt-1"
+                style={{ '--item-index': roots.length } as React.CSSProperties}
+              >
                 <button
                   type="button"
                   onClick={() => {
-                    setRootsMenuOpen(false)
+                    closeRootsMenu()
                     openAddRootModal()
                   }}
                   className="flex w-full items-center gap-2 rounded-[var(--md-sys-shape-corner)] px-2 py-1.5 text-left text-xs transition-colors hover:bg-[var(--md-sys-color-surface-container-highest)]"
                   style={{ color: 'var(--md-sys-color-primary)' }}
                 >
                   <Plus className="h-3.5 w-3.5" />
-                  添加服务器目录
+                  {t('Add server folder')}
                 </button>
               </div>
             </div>
@@ -585,7 +714,7 @@ export default function ServerFileManager() {
             !currentPath
           }
         >
-          返回
+          {t('Back')}
         </Button>
         <Text
           className="min-w-0 flex-1 truncate text-xs text-[var(--md-sys-color-on-surface-variant)]"
@@ -603,35 +732,35 @@ export default function ServerFileManager() {
             }}
           >
             <Lock className="h-3 w-3" />
-            只读
+            {t('Read-only')}
           </span>
         )}
       </div>
 
-      {/* 文件列表 */}
+      {/* 文件List */}
       {error ? (
         <div className="flex flex-col items-center gap-3 py-6">
           <Text className="text-sm text-[var(--md-sys-color-error)]">
-            {error}
+            {t(error)}
           </Text>
           <Button
             variant="secondary"
             size="sm"
             onClick={() => void load(currentPath)}
           >
-            重试
+            {t('Try again')}
           </Button>
         </div>
       ) : loading && entries.length === 0 ? (
         <div className="py-6">
-          <Spinner tip="加载中..." size={28} />
+          <Spinner tip={t('Loading…')} size={28} />
         </div>
       ) : entries.length === 0 ? (
         <div className="py-6 text-center">
           <Text type="secondary" className="text-sm">
             {readonly
-              ? '当前目录为空'
-              : '当前目录为空，点击上方「上传文件」添加'}
+              ? t('This folder is empty.')
+              : t('This folder is empty. Upload files to get started.')}
           </Text>
         </div>
       ) : (
@@ -681,12 +810,14 @@ export default function ServerFileManager() {
               {!readonly && (
                 <div className="flex shrink-0 gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                   <Button
+                    aria-label={t('Rename')}
                     variant="ghost"
                     size="sm"
                     icon={<Pencil className="h-3.5 w-3.5" />}
                     onClick={() => openRenameModal(entry)}
                   />
                   <Button
+                    aria-label={t('Delete')}
                     variant="danger"
                     size="sm"
                     icon={<Trash2 className="h-3.5 w-3.5" />}
@@ -699,7 +830,7 @@ export default function ServerFileManager() {
         </div>
       )}
 
-      {/* 添加根目录 Popup（主面板 + 副面板 flex 布局，向右延伸） */}
+      {/* AddRoot folder Popup（主面板 + 副面板 flex 布局，向右延伸） */}
       {addRootModalOpen &&
         createPortal(
           <div
@@ -709,18 +840,34 @@ export default function ServerFileManager() {
               paddingTop: '80px',
             }}
           >
-            {/* 轻量遮罩（点击关闭） */}
+            {/* 轻量遮罩（点击Close） */}
             <div
-              className="absolute inset-0 bg-black/20"
+              className={
+                'absolute inset-0 bg-black/20 ' +
+                (addRootModalClosing
+                  ? 'zen-modal-backdrop-exit'
+                  : 'zen-modal-backdrop-enter')
+              }
               style={{
                 backdropFilter: 'blur(var(--glass-blur-mask))',
                 WebkitBackdropFilter: 'blur(var(--glass-blur-mask))',
               }}
-              onClick={() => setAddRootModalOpen(false)}
+              onClick={closeAddRootModal}
             />
             {/* 主面板 + 副面板 flex 容器 */}
             <div
-              className="glass-strong relative z-10 flex max-h-[calc(100vh-160px)] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-[var(--md-sys-shape-corner)] shadow-lg md:flex-row"
+              ref={addRootDialogRef}
+              data-tongmu-modal={addRootDialogId}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby={`${addRootDialogId}-title`}
+              tabIndex={-1}
+              className={
+                'glass-strong relative z-10 flex max-h-[calc(100vh-160px)] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-[var(--md-sys-shape-corner)] shadow-lg md:flex-row ' +
+                (addRootModalClosing
+                  ? 'zen-modal-content-exit'
+                  : 'zen-modal-content-enter')
+              }
               style={{
                 boxShadow:
                   '0 8px 24px -8px color-mix(in srgb, var(--md-sys-color-primary) 25%, transparent)',
@@ -741,12 +888,17 @@ export default function ServerFileManager() {
                     >
                       <HardDrive className="h-4 w-4" />
                     </div>
-                    <h3 className="text-base font-semibold text-[var(--md-sys-color-on-surface)]">
-                      添加服务器目录
+                    <h3
+                      id={`${addRootDialogId}-title`}
+                      className="text-base font-semibold text-[var(--md-sys-color-on-surface)]"
+                    >
+                      {t('Add server folder')}
                     </h3>
                   </div>
                   <button
-                    onClick={() => setAddRootModalOpen(false)}
+                    type="button"
+                    aria-label={t('Close')}
+                    onClick={closeAddRootModal}
                     className="rounded-[var(--md-sys-shape-corner)] p-1 text-[var(--md-sys-color-on-surface-variant)] transition-all hover:bg-[var(--md-sys-color-surface-container)] hover:text-[var(--md-sys-color-on-surface)]"
                   >
                     <X className="h-4 w-4" />
@@ -756,20 +908,27 @@ export default function ServerFileManager() {
                 {/* 表单内容 */}
                 <div className="flex flex-col gap-3">
                   <Input
-                    label="名称"
+                    id={`${addRootDialogId}-name`}
+                    label={t('Name')}
                     value={newRootName}
                     onChange={(e) => setNewRootName(e.target.value)}
-                    placeholder="如：影视库、下载目录"
+                    placeholder={t('Media library, Downloads…')}
                     autoFocus
                   />
-                  {/* 服务器目录选取 */}
+                  {/* Server folder选取 */}
                   <div className="flex flex-col gap-1.5">
-                    <Text className="text-sm font-medium">服务器目录</Text>
+                    <label
+                      htmlFor={`${addRootDialogId}-path`}
+                      className="text-sm font-medium"
+                    >
+                      {t('Server folder')}
+                    </label>
                     <div className="flex gap-2">
                       <Input
+                        id={`${addRootDialogId}-path`}
                         value={newRootPath}
                         onChange={(e) => setNewRootPath(e.target.value)}
-                        placeholder="点击右侧按钮浏览选取目录"
+                        placeholder={t('Choose a folder using Browse')}
                         className="flex-1"
                       />
                       <Button
@@ -778,18 +937,22 @@ export default function ServerFileManager() {
                         icon={<HardDrive className="h-3.5 w-3.5" />}
                         onClick={handleDirPickerToggle}
                       >
-                        {dirPickerOpen ? '收起' : '浏览'}
+                        {dirPickerOpen ? t('Collapse') : t('Browse')}
                       </Button>
                     </div>
                   </div>
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex flex-col">
-                      <Text className="text-sm font-medium">只读模式</Text>
+                      <Text className="text-sm font-medium">
+                        {t('Read-only mode')}
+                      </Text>
                       <Text
                         type="secondary"
                         className="text-[10px] uppercase tracking-wide"
                       >
-                        禁止上传/新建/重命名/删除
+                        {t(
+                          'Prevents uploads, creation, renaming and deletion.'
+                        )}
                       </Text>
                     </div>
                     <Switch
@@ -801,19 +964,20 @@ export default function ServerFileManager() {
                     type="secondary"
                     className="text-[10px] leading-relaxed"
                   >
-                    点击「浏览」在服务器文件系统中导航选取目录，也可手动输入路径。
-                    目录必须存在且服务器进程有访问权限。
+                    {t(
+                      'Browse the server folders or enter a path. The folder must exist and be accessible to the server.'
+                    )}
                   </Text>
                 </div>
 
-                {/* 底部按钮 */}
+                {/* Bottom按钮 */}
                 <div className="mt-5 flex items-center justify-end gap-3">
                   <Button
                     variant="secondary"
                     size="sm"
-                    onClick={() => setAddRootModalOpen(false)}
+                    onClick={closeAddRootModal}
                   >
-                    取消
+                    {t('Cancel')}
                   </Button>
                   <Button
                     variant="primary"
@@ -821,12 +985,12 @@ export default function ServerFileManager() {
                     onClick={() => void handleAddRoot()}
                     disabled={addingRoot}
                   >
-                    {addingRoot ? '添加中...' : '添加'}
+                    {addingRoot ? t('Adding…') : t('Add')}
                   </Button>
                 </div>
               </div>
 
-              {/* 副面板：目录浏览（向右延伸，width 动画） */}
+              {/* 副面板：目录Browse（向右延伸，width 动画） */}
               <DirPickerSidePanel
                 open={dirPickerOpen}
                 loading={dirPickerLoading}
@@ -844,11 +1008,11 @@ export default function ServerFileManager() {
           document.body
         )}
 
-      {/* 新建文件夹 Modal */}
+      {/* New folder Modal */}
       <Modal
         open={folderModalOpen}
         onClose={() => setFolderModalOpen(false)}
-        title="新建文件夹"
+        title={t('New folder')}
         footer={
           <>
             <Button
@@ -856,7 +1020,7 @@ export default function ServerFileManager() {
               size="sm"
               onClick={() => setFolderModalOpen(false)}
             >
-              取消
+              {t('Cancel')}
             </Button>
             <Button
               variant="primary"
@@ -864,7 +1028,7 @@ export default function ServerFileManager() {
               onClick={() => void handleCreateFolder()}
               disabled={folderCreating}
             >
-              {folderCreating ? '创建中...' : '创建'}
+              {folderCreating ? t('Creating…') : t('Create')}
             </Button>
           </>
         }
@@ -872,7 +1036,7 @@ export default function ServerFileManager() {
         <Input
           value={folderName}
           onChange={(e) => setFolderName(e.target.value)}
-          placeholder="文件夹名称"
+          placeholder={t('Folder name')}
           autoFocus
           onKeyDown={(e) => {
             if (e.key === 'Enter') void handleCreateFolder()
@@ -880,11 +1044,11 @@ export default function ServerFileManager() {
         />
       </Modal>
 
-      {/* 重命名 Modal */}
+      {/* Rename Modal */}
       <Modal
         open={!!renameTarget}
         onClose={() => setRenameTarget(null)}
-        title="重命名"
+        title={t('Rename')}
         footer={
           <>
             <Button
@@ -892,7 +1056,7 @@ export default function ServerFileManager() {
               size="sm"
               onClick={() => setRenameTarget(null)}
             >
-              取消
+              {t('Cancel')}
             </Button>
             <Button
               variant="primary"
@@ -900,7 +1064,7 @@ export default function ServerFileManager() {
               onClick={() => void handleRename()}
               disabled={renaming}
             >
-              {renaming ? '重命名中...' : '确认'}
+              {renaming ? t('Renaming…') : t('Confirm')}
             </Button>
           </>
         }
@@ -908,7 +1072,7 @@ export default function ServerFileManager() {
         <Input
           value={renameValue}
           onChange={(e) => setRenameValue(e.target.value)}
-          placeholder="新名称"
+          placeholder={t('New name')}
           autoFocus
           onKeyDown={(e) => {
             if (e.key === 'Enter') void handleRename()
@@ -916,31 +1080,35 @@ export default function ServerFileManager() {
         />
       </Modal>
 
-      {/* 删除文件确认 */}
+      {/* Remove文件Confirm */}
       <ConfirmModal
         open={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
-        title="确认删除"
+        title={t('Remove')}
         onOk={() => void handleDelete()}
-        okText={deleting ? '删除中...' : '删除'}
-        cancelText="取消"
+        okText={deleting ? t('Removing…') : t('Remove')}
+        cancelText={t('Cancel')}
       >
-        确定要删除「{deleteTarget?.name}」吗？
+        {t('Remove 「')}
+        {deleteTarget?.name}?
         {deleteTarget?.type === 'directory' &&
-          ' 该文件夹内所有内容将被一并删除，且不可恢复。'}
+          t(
+            ' All contents of this folder will also be removed. This cannot be undone.'
+          )}
       </ConfirmModal>
 
-      {/* 删除根目录确认 */}
+      {/* RemoveRoot folderConfirm */}
       <ConfirmModal
         open={!!deleteRootTarget}
         onClose={() => setDeleteRootTarget(null)}
-        title="移除根目录挂载"
+        title={t('Disconnect root folder')}
         onOk={() => void handleDeleteRoot()}
-        okText={deletingRoot ? '移除中...' : '移除'}
-        cancelText="取消"
+        okText={deletingRoot ? t('Removing…') : t('Remove')}
+        cancelText={t('Cancel')}
       >
-        确定要移除「{deleteRootTarget?.name}」的挂载吗？
-        服务器上的真实文件不会被删除，仅取消在本面板的访问入口。
+        {t('Remove 「')}
+        {deleteRootTarget?.name}
+        {t('? Files on the server are kept. Only this shortcut is removed.')}
       </ConfirmModal>
     </div>
   )

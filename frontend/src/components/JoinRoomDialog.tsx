@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import { useState, type FormEvent } from 'react'
 import { ArrowRight } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
@@ -12,6 +13,8 @@ export function JoinRoomDialog({
   onClose: () => void
   onJoin: (path: string) => void
 }) {
+  useTranslation()
+
   const [roomId, setRoomId] = useState('')
 
   const joinRoom = (event: FormEvent<HTMLFormElement>) => {
@@ -24,19 +27,27 @@ export function JoinRoomDialog({
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="输入房间号" footer={null}>
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={t('Join by room ID')}
+      footer={null}
+    >
       <form className="tongmu-home__join-dialog" onSubmit={joinRoom}>
-        <label htmlFor="join-room-id">输入朋友分享的房间号</label>
+        <label htmlFor="join-room-id">
+          {t('Enter the room ID shared by your friend')}
+        </label>
         <input
           id="join-room-id"
           autoFocus
-          placeholder="房间号"
+          placeholder={t('Room ID')}
           maxLength={64}
           value={roomId}
           onChange={(event) => setRoomId(event.target.value)}
         />
         <button type="submit" disabled={!roomId.trim()}>
-          加入房间 <ArrowRight className="h-4 w-4" aria-hidden="true" />
+          {t('Join room')}
+          <ArrowRight className="h-4 w-4" aria-hidden="true" />
         </button>
       </form>
     </Modal>

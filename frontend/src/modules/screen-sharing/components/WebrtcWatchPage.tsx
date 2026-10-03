@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 /**
  * WebRTC 屏幕共享观众端。
  *
@@ -33,7 +34,7 @@ import { useSignalingChannel } from '../hooks/useSignalingChannel'
 import { RemoteVideoPlayer } from './RemoteVideoPlayer'
 import { WatchControlsBar } from './WatchControlsBar'
 
-/** 观众端 P2P 状态快照 */
+/** Members端 P2P 状态快照 */
 export interface ViewerP2PStateSnapshot {
   enabled: boolean
   pc: RTCPeerConnection | null
@@ -55,9 +56,19 @@ declare global {
 
 interface WebrtcWatchPageProps {
   roomId: string
+  embedded?: boolean
+  onStatsPeerConnectionChange?: (pc: RTCPeerConnection | null) => void
+  onP2PStateChange?: (state: ViewerP2PStateSnapshot) => void
 }
 
-function WebrtcWatchPage({ roomId }: WebrtcWatchPageProps) {
+function WebrtcWatchPage({
+  roomId,
+  embedded = false,
+  onStatsPeerConnectionChange,
+  onP2PStateChange,
+}: WebrtcWatchPageProps) {
+  useTranslation()
+
   const { socket, connected } = useSocket()
 
   // UI state
@@ -134,10 +145,10 @@ function WebrtcWatchPage({ roomId }: WebrtcWatchPageProps) {
     onStatusChange: (status, didFallback) => {
       if (didFallback) {
         setP2pFallbackNotice(true)
-        message.warning('P2P 连接失败，已回退到服务器中转')
+        message.warning(t('Peer connection failed. Using server relay.'))
       } else if (status === 'connected') {
         setP2pFallbackNotice(false)
-        message.success('P2P 直连已建立')
+        message.success(t('Peer connection established.'))
       } else if (status === 'connecting') {
         setP2pFallbackNotice(false)
       }
@@ -175,6 +186,26 @@ function WebrtcWatchPage({ roomId }: WebrtcWatchPageProps) {
     [enableP2P, disableP2P]
   )
 
+  useEffect(() => {
+    onStatsPeerConnectionChange?.(pc)
+  }, [pc, onStatsPeerConnectionChange])
+  useEffect(() => {
+    onP2PStateChange?.({
+      enabled: p2pEnabled,
+      pc: p2pPC,
+      status: p2pStatus,
+      fallbackNotice: p2pFallbackNotice,
+      toggle: handleToggleP2P,
+    })
+  }, [
+    p2pEnabled,
+    p2pPC,
+    p2pStatus,
+    p2pFallbackNotice,
+    handleToggleP2P,
+    onP2PStateChange,
+  ])
+
   // WebRTC 控制栏自动隐藏（逻辑仿照 WatchTogetherCore）
   const webrtcControlBarVisible = useControlBarAutoHide(webrtcStageRef)
 
@@ -198,10 +229,17 @@ function WebrtcWatchPage({ roomId }: WebrtcWatchPageProps) {
       handleSharerReady()
     }
     socket.on('sharer-ready', handleSharerReadyEvent)
+    const stopScreen = (data: { roomId: string }) => {
+      if (data.roomId !== roomId) return
+      cleanupPc()
+      if (videoRef.current) videoRef.current.srcObject = null
+    }
+    socket.on('room:stop-screen', stopScreen)
     return () => {
       socket.off('sharer-ready', handleSharerReadyEvent)
+      socket.off('room:stop-screen', stopScreen)
     }
-  }, [socket, roomId, handleSharerReady])
+  }, [socket, roomId, handleSharerReady, cleanupPc])
 
   // video 元素 resolution / PiP 监听
   useEffect(() => {
@@ -288,7 +326,7 @@ function WebrtcWatchPage({ roomId }: WebrtcWatchPageProps) {
       else await video.requestPictureInPicture()
     } catch (err) {
       console.error('[WebrtcWatchPage] picture-in-picture error:', err)
-      message.error('画中画模式不可用')
+      message.error(t('Picture-in-picture is unavailable in this browser.'))
     }
   }
 
@@ -374,6 +412,7 @@ function WebrtcWatchPage({ roomId }: WebrtcWatchPageProps) {
     </div>
   )
 
+  if (embedded) return playerContent
   return (
     <RoomLayout
       roomId={roomId}

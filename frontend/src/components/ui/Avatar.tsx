@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import { useEffect, useState } from 'react'
 import { User } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -17,6 +18,8 @@ export function Avatar({
   className,
   ...props
 }: AvatarProps) {
+  useTranslation()
+
   const [error, setError] = useState(false)
   const sizes = {
     sm: 'h-6 w-6',
@@ -46,7 +49,7 @@ export function Avatar({
       {src && !error ? (
         <img
           src={src}
-          alt={alt || 'avatar'}
+          alt={alt || t('avatar')}
           className="h-full w-full object-cover"
           onError={() => setError(true)}
         />

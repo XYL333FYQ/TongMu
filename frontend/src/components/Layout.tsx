@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom'
 import { useThemeStore } from '@/store/themeStore'
 import { Header } from './Header'
 import { InsecureContextBanner } from './InsecureContextBanner'
+import { ReturnToRoomButton } from './ReturnToRoomButton'
 import '@/styles/tongmu-experience.css'
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -87,7 +88,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         } as CSSProperties
       }
     >
-      {/* 仅用户主动设置背景图时显示；默认是连续浅蓝画布。 */}
+      {/* 仅用户主动Settings背景图时显示；Default是连续浅蓝画布。 */}
       {backgroundImage && (
         <div
           className="fixed inset-0 pointer-events-none"
@@ -107,14 +108,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
         />
       )}
 
-      {/* 内容层：z-auto 不创建层叠上下文，允许后代 glass-card 的
+      {/* 内容层：z-auto 不Create层叠上下文，Allow后代 glass-card 的
           backdrop-filter 跨层采样到背景图（z-index: 0）。
           文档顺序保证内容仍在背景图之上，无需显式 z-index。 */}
       <div className="relative z-auto flex flex-1 flex-col">
         {!immersiveRoom && <Header />}
-        <main key={location.pathname} className="flex min-w-0 flex-1 flex-col">
-          {children}
-        </main>
+        <main className="flex min-w-0 flex-1 flex-col">{children}</main>
+        <ReturnToRoomButton />
         <div
           ref={pointerGlowRef}
           className="tongmu-cursor-glow"

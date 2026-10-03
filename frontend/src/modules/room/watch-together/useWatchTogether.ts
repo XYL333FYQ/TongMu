@@ -1,6 +1,7 @@
+import { t, useTranslation } from '@/i18n'
 import { isProxiedMediaTransport } from '@/modules/media/transport'
+import { useRoomExperienceStore } from '@/store/roomExperienceStore'
 import { useEffect, useRef, useCallback, useState } from 'react'
-import type { MutableRefObject } from 'react'
 import { formatDuration } from '@/lib/utils'
 import {
   ROOM_MEDIA_TEARDOWN_EVENT,
@@ -9,6 +10,7 @@ import {
 import { useShallow } from 'zustand/react/shallow'
 import { useSocket } from '@/hooks/useSocket'
 import { message } from '@/components/ui/message'
+import { englishErrorMessage } from '@/lib/errorMessage'
 import {
   useRoomStore,
   type WatchTogetherState,
@@ -50,9 +52,7 @@ import {
   UrlExpiredError,
   DownloadAbortedError,
 } from '@/modules/player/services/buffer-mode'
-import {
-  ROOM_MEDIA_GRANT_CHANGED_EVENT,
-} from '@/modules/media/roomMediaGrant'
+import { ROOM_MEDIA_GRANT_CHANGED_EVENT } from '@/modules/media/roomMediaGrant'
 import { redactMediaError } from '@/modules/player/services/media-redaction'
 import {
   startMediaPlaybackSession,
@@ -114,7 +114,12 @@ export function useWatchTogether({
   videoRef,
   initialPlayback,
 }: UseWatchTogetherOptions) {
+  useTranslation()
+
   const { socket } = useSocket()
+  const activeActivity = useRoomExperienceStore((s) =>
+    s.snapshot?.roomId === roomId ? s.snapshot.activity : 'watch'
+  )
   // 使用 useShallow 做浅比较，避免无 selector 订阅整个 store 导致任何字段变化都触发重渲染。
   // 特别是无害字段（viewers/isReloading 等）变化不应触发本 hook 重执行。
   const {
@@ -160,15 +165,9 @@ export function useWatchTogether({
   // 事件抑制采用计数式实现：多个异步流程（attach/恢复/seek/缓冲下载）重叠时，
   // 任一流程完成只释放自己的一次抑制，不再误伤其他进行中的流程
   // （旧单布尔实现存在"先完成者提前释放抑制窗口"导致事件泄漏广播的问题）。
-  // 必须用 useRef 持有：直接调用 createSuppressRef() 会在每次渲染时创建
+  // 必须持有同一个实例：直接调用 createSuppressRef() 会在每次渲染时创建
   // 全新对象（count 归零），导致抑制状态跨渲染丢失 + effect 因引用变化不断重订阅。
-  const suppressInstanceRef = useRef<MutableRefObject<boolean> | undefined>(
-    undefined
-  )
-  if (!suppressInstanceRef.current) {
-    suppressInstanceRef.current = createSuppressRef()
-  }
-  const suppressEventsRef = suppressInstanceRef.current
+  const [suppressEventsRef] = useState(createSuppressRef)
   const lastLoadedMovieRef = useRef<{ id: number; url: string } | null>(null)
   // 房主刷新恢复：用于在 loadMovie 完成后应用 initialPlayback.currentTime 并暂停
   // 通过 ref 暂存，避免修改 effect 依赖导致 loadMovie 重新触发
@@ -245,7 +244,10 @@ export function useWatchTogether({
           })
         }
       } catch (error) {
-        console.warn('[useWatchTogether] provider session stop failed:', redactMediaError(error))
+        console.warn(
+          '[useWatchTogether] provider session stop failed:',
+          redactMediaError(error)
+        )
       }
       try {
         await cleanupMediaPlaybackSession(active.url, {
@@ -254,34 +256,50 @@ export function useWatchTogether({
         })
       } catch (error) {
         // Cleanup is best effort and must not delay the next media source.
-        console.warn('[useWatchTogether] provider session cleanup failed:', redactMediaError(error))
+        console.warn(
+          '[useWatchTogether] provider session cleanup failed:',
+          redactMediaError(error)
+        )
       }
     })()
   }, [roomId, videoRef])
 
-  const beginMediaServerSession = useCallback((url: string | undefined, movieId: number, sourceGeneration: number) => {
-    if (!isHostRef.current || !url) return
-    const existing = mediaServerSessionRef.current
-    if (existing && existing.url === url && existing.sourceGeneration === sourceGeneration) return
-    if (existing) endMediaServerSession()
+  const beginMediaServerSession = useCallback(
+    (url: string | undefined, movieId: number, sourceGeneration: number) => {
+      if (!isHostRef.current || !url) return
+      const existing = mediaServerSessionRef.current
+      if (
+        existing &&
+        existing.url === url &&
+        existing.sourceGeneration === sourceGeneration
+      )
+        return
+      if (existing) endMediaServerSession()
 
-    const active: ActiveMediaServerSession = {
-      url,
-      movieId,
-      sourceGeneration,
-      started: false,
-      startPromise: Promise.resolve(),
-    }
-    active.startPromise = startMediaPlaybackSession(url, {
-      roomId,
-      sourceGeneration,
-    }).then(() => {
-      active.started = true
-    }).catch((error) => {
-      console.warn(`[useWatchTogether] ${movieId} provider session start failed:`, redactMediaError(error))
-    })
-    mediaServerSessionRef.current = active
-  }, [endMediaServerSession, isHostRef, roomId])
+      const active: ActiveMediaServerSession = {
+        url,
+        movieId,
+        sourceGeneration,
+        started: false,
+        startPromise: Promise.resolve(),
+      }
+      active.startPromise = startMediaPlaybackSession(url, {
+        roomId,
+        sourceGeneration,
+      })
+        .then(() => {
+          active.started = true
+        })
+        .catch((error) => {
+          console.warn(
+            `[useWatchTogether] ${movieId} provider session start failed:`,
+            redactMediaError(error)
+          )
+        })
+      mediaServerSessionRef.current = active
+    },
+    [endMediaServerSession, isHostRef, roomId]
+  )
 
   // stalled/error 自动重载的治理状态（ref 保存，避免 effect 重订阅时归零）：
   // - lastAutoReloadAtRef：上次自动重载时间戳
@@ -316,6 +334,28 @@ export function useWatchTogether({
     isHostRef.current = isHost
   }, [isHost])
 
+  useEffect(() => {
+    if (activeActivity === 'watch') return
+    suppressEventsRef.current = true
+    videoRef.current?.pause()
+    setWatchTogether({
+      ...useRoomStore.getState().watchTogether,
+      isPlaying: false,
+    })
+    let released = false
+    const release = () => {
+      if (!released) {
+        released = true
+        suppressEventsRef.current = false
+      }
+    }
+    const timer = window.setTimeout(release, 200)
+    return () => {
+      clearTimeout(timer)
+      release()
+    }
+  }, [activeActivity, videoRef, setWatchTogether, suppressEventsRef])
+
   // 1. 视频源管理：applySourceToVideo / cleanupMedia / restoredRef / seekTo / reloadVideo
   const { applySourceToVideo, cleanupMedia, seekTo, reloadVideo } =
     useVideoSource({
@@ -343,10 +383,12 @@ export function useWatchTogether({
     }
 
     const handleGrantChanged = (event: Event) => {
-      const detail = (event as CustomEvent<{
-        roomId?: string
-        grant?: string
-      }>).detail
+      const detail = (
+        event as CustomEvent<{
+          roomId?: string
+          grant?: string
+        }>
+      ).detail
       if (detail?.roomId !== roomId || !detail.grant) return
       const current = useRoomStore.getState().watchTogether
       if (!isMediaCoreUrl(current.sourceUrl)) return
@@ -368,7 +410,10 @@ export function useWatchTogether({
             await safePlay(video)
           }
         } catch (error) {
-          console.error('[useWatchTogether] 房间媒体凭证更新后重挂载失败:', redactMediaError(error))
+          console.error(
+            '[useWatchTogether] 房间媒体凭证更新后重挂载失败:',
+            redactMediaError(error)
+          )
         } finally {
           resumeAfterSocketReconnectRef.current = false
           suppressEventsRef.current = false
@@ -382,9 +427,11 @@ export function useWatchTogether({
           pendingRoomGrantRef.current = null
           const latest = useRoomStore.getState().watchTogether
           if (isMediaCoreUrl(latest.sourceUrl)) {
-            window.dispatchEvent(new CustomEvent(ROOM_MEDIA_GRANT_CHANGED_EVENT, {
-              detail: { roomId, grant: nextGrant },
-            }))
+            window.dispatchEvent(
+              new CustomEvent(ROOM_MEDIA_GRANT_CHANGED_EVENT, {
+                detail: { roomId, grant: nextGrant },
+              })
+            )
           }
         }
       })
@@ -393,7 +440,10 @@ export function useWatchTogether({
 
     window.addEventListener(ROOM_MEDIA_GRANT_CHANGED_EVENT, handleGrantChanged)
     return () => {
-      window.removeEventListener(ROOM_MEDIA_GRANT_CHANGED_EVENT, handleGrantChanged)
+      window.removeEventListener(
+        ROOM_MEDIA_GRANT_CHANGED_EVENT,
+        handleGrantChanged
+      )
       pendingRoomGrantRef.current = null
     }
   }, [roomId, reloadVideo, suppressEventsRef, videoRef])
@@ -406,6 +456,44 @@ export function useWatchTogether({
     suppressEventsRef,
     setWatchTogether,
   })
+
+  // A shared controller changes the server state; the hosting player follows
+  // that change as well, without rebroadcasting its previous local state.
+  useEffect(() => {
+    if (!socket) return
+    const pending = new Map<number, () => void>()
+    const followControl = (payload: { state?: WatchTogetherState }) => {
+      if (!isHostRef.current || !payload.state) return
+      const video = videoRef.current
+      const next = payload.state
+      if (
+        !video ||
+        next.sourceGeneration !==
+          useRoomStore.getState().watchTogether.sourceGeneration
+      )
+        return
+      suppressEventsRef.current = true
+      setWatchTogether(next)
+      video.currentTime = next.currentTime
+      video.playbackRate = next.playbackRate
+      if (next.isPlaying) void video.play().catch(() => {})
+      else video.pause()
+      const timer = window.setTimeout(() => {
+        pending.delete(timer)
+        suppressEventsRef.current = false
+      }, 200)
+      pending.set(timer, () => {
+        clearTimeout(timer)
+        suppressEventsRef.current = false
+      })
+    }
+    socket.on('watch-together-control', followControl)
+    return () => {
+      socket.off('watch-together-control', followControl)
+      pending.forEach((release) => release())
+      pending.clear()
+    }
+  }, [socket, isHostRef, videoRef, suppressEventsRef, setWatchTogether])
 
   // Provider progress is deliberately separate from room sync. The room
   // remains authoritative for play/pause/seek; this reports a bounded,
@@ -423,14 +511,24 @@ export function useWatchTogether({
       const now = Date.now()
       if (now - lastReportedAt < 5_000 || progressInFlight) return
       lastReportedAt = now
-      const position = Number.isFinite(video.currentTime) ? video.currentTime : 0
+      const position = Number.isFinite(video.currentTime)
+        ? video.currentTime
+        : 0
       const paused = video.paused
-      const request = reportMediaPlaybackProgress(active.url, position, paused, {
-        roomId,
-        sourceGeneration: active.sourceGeneration,
-      }).catch((error) => {
+      const request = reportMediaPlaybackProgress(
+        active.url,
+        position,
+        paused,
+        {
+          roomId,
+          sourceGeneration: active.sourceGeneration,
+        }
+      ).catch((error) => {
         // Provider progress is non-authoritative; a failure must not stop local playback.
-        console.warn('[useWatchTogether] provider session progress failed:', redactMediaError(error))
+        console.warn(
+          '[useWatchTogether] provider session progress failed:',
+          redactMediaError(error)
+        )
       })
       progressInFlight = request
       void request.finally(() => {
@@ -504,7 +602,7 @@ export function useWatchTogether({
         setBufferProgress({
           downloaded: 0,
           total: 1,
-          title: movie.title || '当前视频',
+          title: movie.title || t('Current video'),
         })
 
         const result = await fetchBlobsForBufferMode({
@@ -520,12 +618,24 @@ export function useWatchTogether({
         if (err instanceof DownloadAbortedError) {
           console.log('[useWatchTogether] 缓冲下载已取消')
         } else if (err instanceof UrlExpiredError) {
-          message.error('B站 URL 已过期，请重新解析视频')
+          message.error(
+            t('This Bilibili media link expired. Resolve the video again.')
+          )
         } else if (err instanceof DownloadError) {
-          message.error(`缓冲下载失败: ${err.message}`)
+          message.error(
+            englishErrorMessage(
+              err,
+              t(
+                'Unable to buffer this video. Check the connection and try again.'
+              )
+            )
+          )
         } else {
-          console.error('[useWatchTogether] 缓冲下载失败:', redactMediaError(err))
-          message.error('缓冲下载失败，请重试')
+          console.error(
+            '[useWatchTogether] 缓冲下载失败:',
+            redactMediaError(err)
+          )
+          message.error(t('Unable to buffer this video. Try again.'))
         }
         throw err
       } finally {
@@ -635,9 +745,17 @@ export function useWatchTogether({
           suppressEventsRef.current = false
         })
         .catch((err: unknown) => {
-          console.error('[useWatchTogether] 观众端预览源加载失败:', redactMediaError(err))
+          console.error(
+            '[useWatchTogether] 观众端预览源加载失败:',
+            redactMediaError(err)
+          )
           suppressEventsRef.current = false
-          message.error(err instanceof Error ? err.message : '预览源加载失败')
+          message.error(
+            englishErrorMessage(
+              err,
+              t('Unable to load this preview. Try again.')
+            )
+          )
         })
     }
 
@@ -647,7 +765,10 @@ export function useWatchTogether({
 
     // 房间加入/刷新时优先通过 REST 接口加载影片列表
     fetchMovies(roomId).catch((err) => {
-      console.error('[useWatchTogether] fetchMovies error:', redactMediaError(err))
+      console.error(
+        '[useWatchTogether] fetchMovies error:',
+        redactMediaError(err)
+      )
     })
     socket.emit(SOCKET_EVENT.REQUEST_CURRENT_MOVIE, { roomId })
 
@@ -777,7 +898,9 @@ export function useWatchTogether({
         // CLI 已启用但未连接时直接报错，不再降级为 MP4。
         const parsePrefs = getBilibiliParseOptions(movie.id)
         if (parsePrefs.cliEnabled && !getActiveCliProxyUrl()) {
-          throw new Error('CLI 代理未连接，请先启动本地 zcontrol-cli')
+          throw new Error(
+            'The local CLI agent is disconnected. Start zcontrol-cli and reconnect.'
+          )
         }
         const resolvedOptions = options ?? {
           preferMp4: getEffectivePreferMp4(movie.id),
@@ -845,7 +968,9 @@ export function useWatchTogether({
                   url: resolved.sourceUrl,
                   audioUrl: resolved.audioUrl,
                   sourceInput: movie.sourceInput || movie.url,
-                  mediaDescriptor: stripTransientMediaDescriptor(resolved.mediaCore.descriptor),
+                  mediaDescriptor: stripTransientMediaDescriptor(
+                    resolved.mediaCore.descriptor
+                  ),
                 }
               : {}),
             acceptQuality: newState.acceptQuality,
@@ -860,8 +985,16 @@ export function useWatchTogether({
       } catch (err) {
         // 已过期的失败（被新加载取代）无需提示或回退，避免覆盖新状态
         if (loadSeqRef.current !== seq) return
-        console.error('[useWatchTogether] 重新解析 B站 视频失败:', redactMediaError(err))
-        message.error(err instanceof Error ? err.message : '重新解析失败')
+        console.error(
+          '[useWatchTogether] 重新解析 B站 视频失败:',
+          redactMediaError(err)
+        )
+        message.error(
+          englishErrorMessage(
+            err,
+            t('Unable to refresh the media source. Try again.')
+          )
+        )
         try {
           await applySourceToVideo(video, state, preserveTime)
           if (preserveTime > 0) {
@@ -981,8 +1114,18 @@ export function useWatchTogether({
 
         await applySourceToVideo(video, state, video.currentTime)
       } catch (err) {
-        console.error('[useWatchTogether] 观众重新 attach 源失败:', redactMediaError(err))
-        message.error(err instanceof Error ? err.message : '本地代理加载失败')
+        console.error(
+          '[useWatchTogether] 观众重新 attach 源失败:',
+          redactMediaError(err)
+        )
+        message.error(
+          englishErrorMessage(
+            err,
+            t(
+              'Unable to load the local media route. Check the local agent and try again.'
+            )
+          )
+        )
         // 出错时回退到房主广播源
         try {
           storeState.setViewerCliResolvedSource(null)
@@ -1124,7 +1267,9 @@ export function useWatchTogether({
       try {
         const parsePrefs = getBilibiliParseOptions(movie.id)
         if (parsePrefs.cliEnabled && !getActiveCliProxyUrl()) {
-          throw new Error('CLI 代理未连接，请先启动本地 zcontrol-cli')
+          throw new Error(
+            'The local CLI agent is disconnected. Start zcontrol-cli and reconnect.'
+          )
         }
         return await resolveBilibiliOnline(movie, undefined, {
           preferMp4: getEffectivePreferMp4(movie.id),
@@ -1203,9 +1348,26 @@ export function useWatchTogether({
       } catch (err) {
         // 已被更新的加载取代（切影片等）：静默放弃，不提示也不重置（新流程自管理状态）
         if (loadSeqRef.current !== seq) return
-        console.error('[useWatchTogether] 解析视频源失败:', redactMediaError(err))
-        message.error(err instanceof Error ? err.message : '视频源解析失败')
-        resetForRetry(err instanceof Error ? err.message : '视频源解析失败')
+        console.error(
+          '[useWatchTogether] 解析视频源失败:',
+          redactMediaError(err)
+        )
+        message.error(
+          englishErrorMessage(
+            err,
+            t(
+              'Unable to resolve this video source. Check the source and try again.'
+            )
+          )
+        )
+        resetForRetry(
+          englishErrorMessage(
+            err,
+            t(
+              'Unable to resolve this video source. Check the source and try again.'
+            )
+          )
+        )
         return
       }
       // 解析成功但已被更新的加载取代：放弃（不写 store、不 attach）
@@ -1228,7 +1390,9 @@ export function useWatchTogether({
       const buildNewState = (r: ResolvedMovieSource): WatchTogetherState => ({
         version: isRecovery ? recovery!.version : watchTogether.version,
         sourceGeneration,
-        serverTimestamp: isRecovery ? recovery!.serverTimestamp : watchTogether.serverTimestamp,
+        serverTimestamp: isRecovery
+          ? recovery!.serverTimestamp
+          : watchTogether.serverTimestamp,
         sourceUrl: r.sourceUrl,
         sourceType,
         audioUrl: r.audioUrl,
@@ -1277,7 +1441,11 @@ export function useWatchTogether({
         // attach 已完成但本次加载已过期（新加载进行中）：不再恢复进度/广播/动
         // suppressEventsRef（由新流程管理），避免旧状态覆盖新影片
         if (loadSeqRef.current !== seq) return
-        beginMediaServerSession(sourceForSession.playbackSessionUrl, movie.id, seq)
+        beginMediaServerSession(
+          sourceForSession.playbackSessionUrl,
+          movie.id,
+          seq
+        )
         if (isRecovery && recoveryTime > 0) {
           // 恢复进度：seek 到目标时间并强制暂停
           try {
@@ -1291,7 +1459,11 @@ export function useWatchTogether({
             broadcastState(state)
             sendControl('pause')
           }
-          message.info(`已恢复到 ${formatDuration(recoveryTime)}（已暂停）`)
+          message.info(
+            t('Resumed at {value1}. Playback is paused.', {
+              value1: formatDuration(recoveryTime),
+            })
+          )
         } else {
           if (video.currentTime > 0) video.currentTime = 0
           // 用户在管线运行期间（MKV 的 playsvideo attach 可达 5-10s）按了
@@ -1334,73 +1506,92 @@ export function useWatchTogether({
         } catch {
           if (loadSeqRef.current === seq) {
             // 缓冲失败已通过 message.error 提示，重置状态允许用户重试
-            resetForRetry('缓冲下载失败')
+            resetForRetry('Unable to buffer this video.')
           }
           return
         }
       }
 
-      void applyAndRecover(newState, blobs, resolved).catch(async (err: unknown) => {
-        // 已被新加载取代：失败无需处理（新流程自管理状态）
-        if (loadSeqRef.current !== seq) return
-        // MSE attach 失败时必须释放 suppressEventsRef，否则房主端
-        // play/pause/seek/timeupdate 事件全部被吞，broadcastState 永不调用，
-        // 导致观众端永久黑屏。
-        console.error('[useWatchTogether] applySourceToVideo 失败:', redactMediaError(err))
+      void applyAndRecover(newState, blobs, resolved).catch(
+        async (err: unknown) => {
+          // 已被新加载取代：失败无需处理（新流程自管理状态）
+          if (loadSeqRef.current !== seq) return
+          // MSE attach 失败时必须释放 suppressEventsRef，否则房主端
+          // play/pause/seek/timeupdate 事件全部被吞，broadcastState 永不调用，
+          // 导致观众端永久黑屏。
+          console.error(
+            '[useWatchTogether] applySourceToVideo 失败:',
+            redactMediaError(err)
+          )
 
-        // 房主刷新恢复 + 复用旧 B站 URL 失败（通常 403/404 deadline 过期）：
-        // 回退到重新解析 B站 获取最新 URL，attach 后再次 applyAndRecover。
-        // 非 B站 源或非 recovery 路径不回退（错误大概率不会自愈）。
-        if (resolved.reusedRecoveryUrl) {
-          console.log('[useWatchTogether] 复用旧 B站 URL 失败，回退到重新解析')
-          try {
-            // 旧 URL 已失效（403/404 deadline 过期），必须绕过解析缓存强制取新地址
-            const reResolved = await resolveOnline(true)
-            if (loadSeqRef.current !== seq) return
-            if (reResolved.acceptQuality?.length) {
-              quality.setAvailableQualities(reResolved.acceptQuality)
-            }
-            quality.setCurrentQuality(
-              reResolved.currentQn ?? reResolved.acceptQuality?.[0]?.id ?? null
+          // 房主刷新恢复 + 复用旧 B站 URL 失败（通常 403/404 deadline 过期）：
+          // 回退到重新解析 B站 获取最新 URL，attach 后再次 applyAndRecover。
+          // 非 B站 源或非 recovery 路径不回退（错误大概率不会自愈）。
+          if (resolved.reusedRecoveryUrl) {
+            console.log(
+              '[useWatchTogether] 复用旧 B站 URL 失败，回退到重新解析'
             )
-
-            const reResolvedState = buildNewState(reResolved)
-            setWatchTogether(reResolvedState)
-
-            // 缓冲模式重新解析时也需要重新下载 m4s
-            let reBlobs: { videoBlob: Blob; audioBlob: Blob } | undefined
-            if (reResolvedState.bufferMode) {
-              try {
-                reBlobs = await fetchBlobsForBufferModeLocal(
-                  reResolvedState,
-                  movie
-                )
-              } catch {
-                if (loadSeqRef.current === seq) {
-                  resetForRetry('缓冲下载失败')
-                }
-                return
+            try {
+              // 旧 URL 已失效（403/404 deadline 过期），必须绕过解析缓存强制取新地址
+              const reResolved = await resolveOnline(true)
+              if (loadSeqRef.current !== seq) return
+              if (reResolved.acceptQuality?.length) {
+                quality.setAvailableQualities(reResolved.acceptQuality)
               }
+              quality.setCurrentQuality(
+                reResolved.currentQn ??
+                  reResolved.acceptQuality?.[0]?.id ??
+                  null
+              )
+
+              const reResolvedState = buildNewState(reResolved)
+              setWatchTogether(reResolvedState)
+
+              // 缓冲模式重新解析时也需要重新下载 m4s
+              let reBlobs: { videoBlob: Blob; audioBlob: Blob } | undefined
+              if (reResolvedState.bufferMode) {
+                try {
+                  reBlobs = await fetchBlobsForBufferModeLocal(
+                    reResolvedState,
+                    movie
+                  )
+                } catch {
+                  if (loadSeqRef.current === seq) {
+                    resetForRetry('Unable to buffer this video.')
+                  }
+                  return
+                }
+              }
+
+              await applyAndRecover(reResolvedState, reBlobs, reResolved)
+              return
+            } catch (retryErr) {
+              if (loadSeqRef.current !== seq) return
+              console.error(
+                '[useWatchTogether] 回退重新解析失败:',
+                redactMediaError(retryErr)
+              )
+              const retryMsg = englishErrorMessage(
+                retryErr,
+                t('Unable to resolve this Bilibili video. Try again.')
+              )
+              message.error(retryMsg)
+              resetForRetry(retryMsg)
+              return
             }
-
-            await applyAndRecover(reResolvedState, reBlobs, reResolved)
-            return
-          } catch (retryErr) {
-            if (loadSeqRef.current !== seq) return
-            console.error('[useWatchTogether] 回退重新解析失败:', redactMediaError(retryErr))
-            const retryMsg =
-              retryErr instanceof Error ? retryErr.message : 'B站视频解析失败'
-            message.error(retryMsg)
-            resetForRetry(retryMsg)
-            return
           }
-        }
 
-        // 非回退路径：报错并允许重试
-        const errMsg = err instanceof Error ? err.message : '视频源加载失败'
-        message.error(errMsg)
-        resetForRetry(errMsg)
-      })
+          // 非回退路径：报错并允许重试
+          const errMsg = englishErrorMessage(
+            err,
+            t(
+              'Unable to load this video source. Check the source and try again.'
+            )
+          )
+          message.error(errMsg)
+          resetForRetry(errMsg)
+        }
+      )
     }
 
     void loadMovie()
@@ -1439,7 +1630,13 @@ export function useWatchTogether({
     cleanupMedia()
     lastLoadedMovieRef.current = null
     failedLoadMovieIdsRef.current.clear()
-  }, [currentMovieId, cleanupMedia, endMediaServerSession, videoRef, suppressEventsRef])
+  }, [
+    currentMovieId,
+    cleanupMedia,
+    endMediaServerSession,
+    videoRef,
+    suppressEventsRef,
+  ])
 
   // 组件卸载或切换房间时释放 MSE blob URL 与音频同步资源
   useEffect(() => {
@@ -1457,8 +1654,7 @@ export function useWatchTogether({
       if (!full) {
         resumeAfterSocketReconnectRef.current = Boolean(
           video &&
-            (!video.paused ||
-              useRoomStore.getState().watchTogether.isPlaying)
+          (!video.paused || useRoomStore.getState().watchTogether.isPlaying)
         )
       } else {
         resumeAfterSocketReconnectRef.current = false
@@ -1533,7 +1729,9 @@ export function useWatchTogether({
         if (!autoReloadNotifiedRef.current) {
           autoReloadNotifiedRef.current = true
           message.warning(
-            '自动重载已达上限，视频仍无法播放，请手动重载、切换清晰度或更换影片'
+            t(
+              'Automatic retries have stopped. Reload the content, choose another available quality or select another video.'
+            )
           )
         }
         return
@@ -1608,9 +1806,13 @@ export function useWatchTogether({
           return
         const reason = formatVideoLoadError(video.error?.code)
         if (watchTogether.noProxyFallback) {
-          message.error(`直链播放中断：${reason}。可尝试重载或重新添加影片`)
+          message.error(
+            `Direct playback stopped: ${reason} Reload or add the content again.`
+          )
         } else {
-          message.error(`播放中断：${reason}。可尝试重载影片`)
+          message.error(
+            `Playback stopped: ${reason} Reload the content to try again.`
+          )
         }
       }, 1500)
     }
@@ -1712,9 +1914,17 @@ export function useWatchTogether({
           })
         })
         .catch((err: unknown) => {
-          console.error('[useWatchTogether] previewPlay 加载失败:', redactMediaError(err))
+          console.error(
+            '[useWatchTogether] previewPlay 加载失败:',
+            redactMediaError(err)
+          )
           suppressEventsRef.current = false
-          message.error(err instanceof Error ? err.message : '预览源加载失败')
+          message.error(
+            englishErrorMessage(
+              err,
+              t('Unable to load this preview. Try again.')
+            )
+          )
         })
     },
     [

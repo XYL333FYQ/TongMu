@@ -38,8 +38,9 @@ export async function downloadObsConfig(roomId: string): Promise<void> {
   const url = `/api/stream-push/obs-config/${encodeURIComponent(roomId)}`
   const response = await apiFetch(url)
   if (!response.ok) {
-    const text = await response.text().catch(() => '')
-    throw new Error(`下载 OBS 配置失败: ${response.status} ${text}`)
+    throw new Error(
+      `Unable to download the OBS configuration (HTTP ${response.status}). Check your room access and try again.`
+    )
   }
   const blob = await response.blob()
   const objectUrl = URL.createObjectURL(blob)

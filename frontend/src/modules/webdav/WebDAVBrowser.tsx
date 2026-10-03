@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import MountBrowserBase from '@/modules/mounts/MountBrowserBase'
 import { browseWebDAVMount } from './webdavApi'
 import type { WebDAVDirectoryEntry } from './types'
@@ -16,9 +17,11 @@ export default function WebDAVBrowser({
   onClose,
   onSelectFiles,
 }: WebDAVBrowserProps) {
+  useTranslation()
+
   return (
     <MountBrowserBase<WebDAVDirectoryEntry>
-      title="浏览 WebDAV 目录"
+      title={t('Browse WebDAV folders')}
       mountId={mountId}
       open={open}
       onClose={onClose}

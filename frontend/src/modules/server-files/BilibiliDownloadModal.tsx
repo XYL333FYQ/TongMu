@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 /**
  * B站视频下载 Popup。
  *
@@ -34,6 +35,8 @@ import {
   Crown,
 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
+import { disclosureExitDuration } from '@/components/ui/motion'
+import { useDisclosureMotion } from '@/components/ui/useDisclosureMotion'
 import { Input } from '@/components/ui/Input'
 import { Spinner } from '@/components/ui/Spinner'
 import { Text } from '@/components/ui/Typography'
@@ -48,13 +51,10 @@ import {
 } from './serverFilesApi'
 import type { ServerFileEntry, ServerFileRoot } from './types'
 
-/** 需要大会员的清晰度 qn 列表 */
+/** 需要Premium的Quality qn List */
 const VIP_ONLY_QNS = [112, 116, 120, 125, 126, 127]
 /** MP4 模式最高 qn（B站 html5 MP4 接口实际最高仅 720P） */
 const MP4_MAX_QN = 64
-
-/** Popup 动画时长 */
-const POPUP_DURATION = 220
 
 export interface BilibiliDownloadModalProps {
   open: boolean
@@ -65,6 +65,8 @@ export function BilibiliDownloadModal({
   open,
   onClose,
 }: BilibiliDownloadModalProps) {
+  useTranslation()
+
   // 步骤状态
   // - 'input'：输入 URL 阶段
   // - 'resolved'：解析完成，选择清晰度阶段
@@ -88,7 +90,12 @@ export function BilibiliDownloadModal({
   // 目标目录
   const [roots, setRoots] = useState<ServerFileRoot[]>([])
   const [targetPath, setTargetPath] = useState('uploads:/')
-  const [rootsMenuOpen, setRootsMenuOpen] = useState(false)
+  const {
+    open: rootsMenuOpen,
+    closing: rootsMenuClosing,
+    show: showRootsMenu,
+    close: closeRootsMenu,
+  } = useDisclosureMotion()
   const [dirPickerOpen, setDirPickerOpen] = useState(false)
   const [dirEntries, setDirEntries] = useState<ServerFileEntry[]>([])
   const [dirLoading, setDirLoading] = useState(false)
@@ -119,7 +126,7 @@ export function BilibiliDownloadModal({
       const t = setTimeout(() => {
         setVisible(false)
         setExiting(false)
-      }, POPUP_DURATION)
+      }, disclosureExitDuration())
       return () => clearTimeout(t)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -132,7 +139,9 @@ export function BilibiliDownloadModal({
       const list = await listServerRoots()
       setRoots(list)
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '加载根目录失败')
+      message.error(
+        err instanceof Error ? err.message : t('Could not load root folders.')
+      )
     }
   }, [])
 
@@ -149,10 +158,10 @@ export function BilibiliDownloadModal({
   // 关闭根目录下拉
   useEffect(() => {
     if (!rootsMenuOpen) return
-    const onClick = () => setRootsMenuOpen(false)
+    const onClick = () => closeRootsMenu()
     window.addEventListener('click', onClick)
     return () => window.removeEventListener('click', onClick)
-  }, [rootsMenuOpen])
+  }, [rootsMenuOpen, closeRootsMenu])
 
   // 加载目录
   const loadDir = useCallback(async (path: string) => {
@@ -199,7 +208,7 @@ export function BilibiliDownloadModal({
     resetToInput()
     setUrl('')
     setDirPickerOpen(false)
-    setRootsMenuOpen(false)
+    closeRootsMenu()
     onClose()
   }
 
@@ -207,11 +216,11 @@ export function BilibiliDownloadModal({
   const handleParse = async () => {
     const trimmedUrl = url.trim()
     if (!trimmedUrl) {
-      message.warning('请输入 B站视频链接或 BV 号')
+      message.warning(t('Enter a Bilibili URL or BV ID.'))
       return
     }
     setParsing(true)
-    setParseMessage('正在解析视频地址...')
+    setParseMessage(t('Resolving video…'))
     try {
       const result = await resolveBilibili(
         trimmedUrl,
@@ -232,7 +241,9 @@ export function BilibiliDownloadModal({
       setSelectedQn(preferred.id)
       setStep('resolved')
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '解析失败')
+      message.error(
+        err instanceof Error ? err.message : t('Could not resolve the source.')
+      )
     } finally {
       setParsing(false)
       setParseMessage('')
@@ -243,12 +254,12 @@ export function BilibiliDownloadModal({
   const handleDownload = async () => {
     if (!resolved) return
     if (readonly) {
-      message.warning('目标目录为只读，请选择其他目录')
+      message.warning(t('This folder is read-only. Choose another folder.'))
       return
     }
     setStep('downloading')
     setStage('parsing')
-    setStageMessage('正在请求下载...')
+    setStageMessage(t('Preparing download…'))
     setPercent(0)
     setReceived(0)
     setTotal(0)
@@ -274,10 +285,10 @@ export function BilibiliDownloadModal({
           },
         }
       )
-      message.success(`已下载「${result.name}」`)
+      message.success(t('Downloaded: {value1}」', { value1: result.name }))
       handleClose()
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '下载失败')
+      message.error(err instanceof Error ? err.message : t('Download failed.'))
       setStep('resolved')
     } finally {
       setStage(null)
@@ -357,10 +368,10 @@ export function BilibiliDownloadModal({
               </div>
               <div className="flex flex-col">
                 <Text className="text-sm font-medium text-[var(--md-sys-color-on-surface)]">
-                  下载 B站视频
+                  {t('Download a Bilibili video')}
                 </Text>
                 <Text className="text-[10px] uppercase tracking-wide text-[var(--md-sys-color-on-surface-variant)]">
-                  BILIBILI DOWNLOAD
+                  {t('BILIBILI DOWNLOAD')}
                 </Text>
               </div>
             </div>
@@ -373,12 +384,12 @@ export function BilibiliDownloadModal({
             </button>
           </div>
 
-          {/* 表单内容（滚动区） */}
+          {/* 表单内容（Scrolling区） */}
           <div className="zen-scroll flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-5 py-2">
             {/* 步骤 1：输入 URL */}
             <div className="flex flex-col gap-1.5">
               <Text className="text-[10px] uppercase tracking-wide text-[var(--md-sys-color-on-surface-variant)]">
-                视频链接或 BV 号
+                {t('Video URL or BV ID')}
               </Text>
               <div className="flex gap-2">
                 <Input
@@ -408,7 +419,7 @@ export function BilibiliDownloadModal({
                     onClick={() => void handleParse()}
                     disabled={parsing || !url.trim()}
                   >
-                    解析
+                    {t('Resolve')}
                   </Button>
                 )}
                 {step !== 'input' && (
@@ -418,18 +429,18 @@ export function BilibiliDownloadModal({
                     onClick={() => resetToInput()}
                     disabled={!!stage}
                   >
-                    重新输入
+                    {t('Change URL')}
                   </Button>
                 )}
               </div>
               {parsing && parseMessage && (
                 <Text className="text-[10px] text-[var(--md-sys-color-on-surface-variant)]">
-                  {parseMessage}
+                  {t(parseMessage)}
                 </Text>
               )}
             </div>
 
-            {/* 步骤 2：解析结果 */}
+            {/* 步骤 2：Resolve结果 */}
             {step !== 'input' && resolved && (
               <>
                 {/* 视频信息卡片 */}
@@ -442,7 +453,7 @@ export function BilibiliDownloadModal({
                 {resolved.pages && resolved.pages.length > 1 && (
                   <div className="flex flex-col gap-1.5">
                     <Text className="text-[10px] uppercase tracking-wide text-[var(--md-sys-color-on-surface-variant)]">
-                      分集（共 {resolved.pages.length} P）
+                      {t('Episodes (total:')} {resolved.pages.length} P）
                     </Text>
                     <div className="zen-scroll max-h-32 overflow-y-auto rounded-[var(--md-sys-shape-corner)] bg-[var(--md-sys-color-surface-container-high)] p-1.5">
                       <div className="grid grid-cols-1 gap-1">
@@ -476,7 +487,7 @@ export function BilibiliDownloadModal({
                   </div>
                 )}
 
-                {/* 清晰度按钮组（基于解析结果） */}
+                {/* Quality按钮组（基于Resolve结果） */}
                 <QualitySelector
                   acceptQuality={resolved.acceptQuality}
                   selectedQn={selectedQn}
@@ -494,28 +505,30 @@ export function BilibiliDownloadModal({
                     }}
                   />
                   <Text className="text-[10px] text-[var(--md-sys-color-on-surface-variant)]">
-                    MP4 直链模式 · 最高 720P（高画质请使用 CLI 模式下载）
+                    {t(
+                      'Direct MP4 · up to 720P. Use the CLI for higher quality.'
+                    )}
                   </Text>
                 </div>
 
                 {/* 文件名 */}
                 <div className="flex flex-col gap-1.5">
                   <Text className="text-[10px] uppercase tracking-wide text-[var(--md-sys-color-on-surface-variant)]">
-                    文件名（可选，留空使用视频标题）
+                    {t('File name (optional; defaults to video title)')}
                   </Text>
                   <Input
                     value={filename}
                     onChange={(e) => setFilename(e.target.value)}
-                    placeholder={resolved.title ?? '如：我的视频'}
+                    placeholder={resolved.title ?? t('My video')}
                     disabled={!!stage}
                     size="sm"
                   />
                 </div>
 
-                {/* 保存目录 */}
+                {/* Save目录 */}
                 <div className="flex flex-col gap-1.5">
                   <Text className="text-[10px] uppercase tracking-wide text-[var(--md-sys-color-on-surface-variant)]">
-                    保存到
+                    {t('Save to')}
                   </Text>
                   <div className="flex gap-2">
                     <div className="relative">
@@ -525,28 +538,44 @@ export function BilibiliDownloadModal({
                         icon={<HardDrive className="h-3.5 w-3.5" />}
                         onClick={(e) => {
                           e.stopPropagation()
-                          setRootsMenuOpen((v) => !v)
+                          if (rootsMenuOpen && !rootsMenuClosing)
+                            closeRootsMenu()
+                          else showRootsMenu()
                         }}
                         disabled={!!stage}
                       >
-                        {currentRoot?.name ?? '根目录'}
+                        {currentRoot?.name ?? t('Root folder')}
                       </Button>
                       {rootsMenuOpen && (
                         <div
-                          className="glass absolute left-0 top-full z-30 mt-1 min-w-[220px] rounded-[var(--md-sys-shape-corner)] p-1 shadow-lg"
+                          className={
+                            'glass absolute left-0 top-full z-30 mt-1 min-w-[220px] rounded-[var(--md-sys-shape-corner)] p-1 shadow-lg ' +
+                            (rootsMenuClosing
+                              ? 'zen-dropdown-exit'
+                              : 'zen-dropdown-enter')
+                          }
+                          style={{
+                            transformOrigin: 'top left',
+                            pointerEvents: rootsMenuClosing
+                              ? 'none'
+                              : undefined,
+                          }}
                           onClick={(e) => e.stopPropagation()}
                         >
-                          {roots.map((r) => (
+                          {roots.map((r, index) => (
                             <button
                               key={r.key}
                               type="button"
                               onClick={() => {
                                 setTargetPath(`${r.key}:/`)
-                                setRootsMenuOpen(false)
+                                closeRootsMenu()
                                 setDirPickerOpen(false)
                               }}
                               disabled={!r.exists}
-                              className="flex w-full items-center gap-2 rounded-[var(--md-sys-shape-corner)] px-2 py-1.5 text-left transition-colors hover:bg-[var(--md-sys-color-surface-container-highest)] disabled:opacity-40"
+                              className="zen-dropdown-item flex w-full items-center gap-2 rounded-[var(--md-sys-shape-corner)] px-2 py-1.5 text-left transition-colors hover:bg-[var(--md-sys-color-surface-container-highest)] disabled:opacity-40"
+                              style={
+                                { '--item-index': index } as React.CSSProperties
+                              }
                             >
                               <HardDrive
                                 className="h-3.5 w-3.5 shrink-0"
@@ -588,17 +617,17 @@ export function BilibiliDownloadModal({
                       onClick={openDirPicker}
                       disabled={!!stage}
                     >
-                      {dirPickerOpen ? '收起' : '浏览'}
+                      {dirPickerOpen ? t('Collapse') : t('Browse')}
                     </Button>
                   </div>
                   {readonly && (
                     <Text className="text-[10px] text-[var(--md-sys-color-error)]">
-                      该根目录为只读，请选择其他目录
+                      {t('This folder is read-only. Choose another folder.')}
                     </Text>
                   )}
                 </div>
 
-                {/* 下载进度 */}
+                {/* Download进度 */}
                 {step === 'downloading' && stage && (
                   <div
                     className="flex flex-col gap-2 rounded-[var(--md-sys-shape-corner)] p-3"
@@ -615,7 +644,9 @@ export function BilibiliDownloadModal({
                           <Download className="h-3.5 w-3.5 text-[var(--md-sys-color-primary)]" />
                         )}
                         <Text className="text-xs font-medium text-[var(--md-sys-color-on-surface)]">
-                          {stage === 'parsing' ? '解析中' : '下载视频'}
+                          {stage === 'parsing'
+                            ? t('Resolving…')
+                            : t('Download video')}
                         </Text>
                       </div>
                       {stage === 'downloading' && (
@@ -626,9 +657,9 @@ export function BilibiliDownloadModal({
                     </div>
                     <Text
                       className="text-[10px] text-[var(--md-sys-color-on-surface-variant)]"
-                      title={stageMessage}
+                      title={t(stageMessage)}
                     >
-                      {stageMessage || '处理中...'}
+                      {stageMessage ? t(stageMessage) : t('Processing…')}
                     </Text>
                     {stage === 'downloading' && (
                       <>
@@ -645,8 +676,10 @@ export function BilibiliDownloadModal({
                           <span>{formatSize(received)}</span>
                           <span>
                             {total > 0
-                              ? `共 ${formatSize(total)}`
-                              : '大小未知'}
+                              ? t('Total: {value1}', {
+                                  value1: formatSize(total),
+                                })
+                              : t('Unknown size')}
                           </span>
                         </div>
                       </>
@@ -657,7 +690,7 @@ export function BilibiliDownloadModal({
             )}
           </div>
 
-          {/* 底部按钮 */}
+          {/* Bottom按钮 */}
           <div className="flex shrink-0 items-center justify-end gap-3 p-5 pt-3">
             <Button
               variant="secondary"
@@ -665,7 +698,7 @@ export function BilibiliDownloadModal({
               onClick={handleClose}
               disabled={!!stage}
             >
-              取消
+              {t('Cancel')}
             </Button>
             {step === 'resolved' && (
               <Button
@@ -675,13 +708,13 @@ export function BilibiliDownloadModal({
                 onClick={() => void handleDownload()}
                 disabled={!!stage || readonly || selectedQn > MP4_MAX_QN}
               >
-                开始下载
+                {t('Start download')}
               </Button>
             )}
           </div>
         </div>
 
-        {/* 副面板：目录浏览 */}
+        {/* 副面板：目录Browse */}
         <DirBrowseSidePanel
           open={dirPickerOpen}
           loading={dirLoading}
@@ -719,6 +752,8 @@ interface VideoInfoCardProps {
 }
 
 function VideoInfoCard({ resolved, duration }: VideoInfoCardProps) {
+  useTranslation()
+
   const isVip = resolved.vipStatus === 1
   return (
     <div
@@ -741,7 +776,7 @@ function VideoInfoCard({ resolved, duration }: VideoInfoCardProps) {
           className="truncate text-xs font-medium text-[var(--md-sys-color-on-surface)]"
           title={resolved.title}
         >
-          {resolved.title ?? '未知视频'}
+          {resolved.title ?? t('Unknown video')}
         </Text>
         <div className="flex items-center gap-3 text-[10px] text-[var(--md-sys-color-on-surface-variant)]">
           {duration && (
@@ -753,7 +788,9 @@ function VideoInfoCard({ resolved, duration }: VideoInfoCardProps) {
           {resolved.pages && resolved.pages.length > 1 && (
             <div className="flex items-center gap-1">
               <ListVideo className="h-3 w-3" />
-              <span>共 {resolved.pages.length} P</span>
+              <span>
+                {t('Total:')} {resolved.pages.length} P
+              </span>
             </div>
           )}
           <div
@@ -768,7 +805,7 @@ function VideoInfoCard({ resolved, duration }: VideoInfoCardProps) {
             }}
           >
             <Crown className="h-3 w-3" />
-            <span>{isVip ? '大会员' : '非会员'}</span>
+            <span>{isVip ? t('Premium') : t('Standard account')}</span>
           </div>
         </div>
       </div>
@@ -793,6 +830,8 @@ function QualitySelector({
   vipStatus,
   onSelect,
 }: QualitySelectorProps) {
+  useTranslation()
+
   // 没有清晰度列表时，显示固定的 4 个 MP4 选项作为兜底
   const list =
     acceptQuality && acceptQuality.length > 0
@@ -810,7 +849,7 @@ function QualitySelector({
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between">
         <Text className="text-[10px] uppercase tracking-wide text-[var(--md-sys-color-on-surface-variant)]">
-          清晰度（共 {list.length} 个可用）
+          {t('Quality (total:')} {list.length} {t('available)')}
         </Text>
         <div className="flex items-center gap-1">
           <div
@@ -829,7 +868,7 @@ function QualitySelector({
                 : 'var(--md-sys-color-on-surface-variant)',
             }}
           >
-            {isVip ? '大会员' : '非会员'}
+            {isVip ? t('Premium') : t('Standard account')}
           </Text>
         </div>
       </div>
@@ -842,9 +881,9 @@ function QualitySelector({
           const disabledByVip = isVipOnly && !isVip
           const isDisabled = disabled || disabledByNoMerge || disabledByVip
           const title = disabledByVip
-            ? '需要大会员账号才能下载此画质'
+            ? 'This quality requires a premium account.'
             : disabledByNoMerge
-              ? '服务器端 FFmpeg 已移除，高画质请使用 CLI 模式下载'
+              ? 'Use the CLI to download higher quality.'
               : undefined
           return (
             <button
@@ -882,7 +921,7 @@ function QualitySelector({
                       ? 'var(--md-sys-color-error)'
                       : 'var(--md-sys-color-tertiary)',
                   }}
-                  title="大会员专属"
+                  title={t('Premium')}
                 />
               )}
             </button>
@@ -891,12 +930,12 @@ function QualitySelector({
       </div>
       {!isVip && (
         <Text className="text-[10px] text-[var(--md-sys-color-on-surface-variant)]">
-          带
+          {t('Marked')}
           <span
             className="mx-1 inline-block h-1.5 w-1.5 rounded-full align-middle"
             style={{ backgroundColor: 'var(--md-sys-color-error)' }}
           />
-          标识的清晰度需要大会员账号
+          {t('quality requires a premium account.')}
         </Text>
       )}
     </div>
@@ -917,8 +956,6 @@ interface DirBrowseSidePanelProps {
 }
 
 const SIDE_PANEL_WIDTH = 280
-const SIDE_DURATION = 240
-
 function DirBrowseSidePanel({
   open,
   loading,
@@ -929,6 +966,8 @@ function DirBrowseSidePanel({
   onSelect,
   onClose,
 }: DirBrowseSidePanelProps) {
+  useTranslation()
+
   const match = currentPath.match(/^(uploads|custom:\d+):\/?$/)
   const isRootLevel = !!match
 
@@ -937,7 +976,7 @@ function DirBrowseSidePanel({
       className="flex-shrink-0 overflow-hidden"
       style={{
         width: open ? SIDE_PANEL_WIDTH : 0,
-        transition: `width ${SIDE_DURATION}ms var(--ease-out-expo)`,
+        transition: `width var(${open ? '--tm-motion-enter' : '--tm-motion-exit'}) var(${open ? '--ease-out-expo' : '--ease-in-expo'})`,
         willChange: 'width',
       }}
     >
@@ -957,7 +996,7 @@ function DirBrowseSidePanel({
               <Folder className="h-4 w-4" />
             </div>
             <span className="text-sm font-medium text-[var(--md-sys-color-on-surface)]">
-              选择目录
+              {t('Choose folder')}
             </span>
           </div>
           <button
@@ -976,7 +1015,7 @@ function DirBrowseSidePanel({
             onClick={onBack}
             disabled={isRootLevel}
           >
-            返回
+            {t('Back')}
           </Button>
           <Text
             className="min-w-0 flex-1 truncate text-xs text-[var(--md-sys-color-on-surface-variant)]"
@@ -1003,7 +1042,7 @@ function DirBrowseSidePanel({
                 <Folder className="h-4 w-4 text-[var(--md-sys-color-on-surface-variant)]" />
               </div>
               <Text className="text-[10px] text-[var(--md-sys-color-on-surface-variant)]">
-                无子目录
+                {t('No subfolders.')}
               </Text>
             </div>
           ) : (
@@ -1036,7 +1075,7 @@ function DirBrowseSidePanel({
             className="mt-2 shrink-0"
             onClick={onSelect}
           >
-            选择此目录
+            {t('Use this folder')}
           </Button>
         )}
       </div>

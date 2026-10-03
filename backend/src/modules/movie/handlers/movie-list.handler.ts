@@ -17,14 +17,15 @@ import { roomStateService } from '../../room/room-state.service';
 import { movieService } from '../movie.service';
 import { movieBroadcasterService } from '../movie-broadcaster.service';
 import type { MovieDto } from '../../shared';
+import { realtimeSyncCore } from '../../realtime-sync-core';
 
 /**
  * 影片列表事件处理器。
  *
  * 注册以下事件：
- * - add-movie { roomId, movie }：房主添加影片到列表
- * - remove-movie { roomId, movieId }：房主从列表移除影片
- * - play-movie { roomId, movieId }：房主切换当前播放影片
+ * - add-movie { roomId, movie }：有选片权限的成员添加影片到列表
+ * - remove-movie { roomId, movieId }：有选片权限的成员从列表移除影片
+ * - play-movie { roomId, movieId }：有选片与播放权限的成员切换当前影片
  * - request-movie-list { roomId }：请求房间影片列表
  * - request-current-movie { roomId }：请求当前正在播放的影片 ID
  */
@@ -40,15 +41,16 @@ export class MovieListHandler implements SocketEventHandler {
         callback?: AckCallback,
       ) => {
         try {
-          // 权限校验：仅房主可添加影片
-          const permission = await roomPermissionService.canPerform(socket, payload.roomId, 'movie.change');
-          if (!permission.allowed) {
-            return safeAck(callback, { success: false, message: '无权限添加影片' });
-          }
+          await realtimeSyncCore.withRoomLock(payload.roomId, async () => {
+            const permission = await roomPermissionService.canPerform(socket, payload.roomId, 'movie.change');
+            if (!permission.allowed) {
+              return safeAck(callback, { success: false, message: '无权限添加影片' });
+            }
 
-          await movieService.createMovie(payload.roomId, payload.movie ?? {});
-          await movieBroadcasterService.broadcastMovieList(io, payload.roomId);
-          safeAck(callback, { success: true });
+            await movieService.createMovie(payload.roomId, payload.movie ?? {});
+            await movieBroadcasterService.broadcastMovieList(io, payload.roomId);
+            safeAck(callback, { success: true });
+          });
         } catch (err) {
           console.error('[add-movie] error:', err);
           safeAck(callback, { success: false, message: '添加影片失败' });
@@ -64,30 +66,21 @@ export class MovieListHandler implements SocketEventHandler {
         callback?: AckCallback,
       ) => {
         try {
-          const permission = await roomPermissionService.canPerform(socket, payload.roomId, 'movie.change');
-          if (!permission.allowed) {
-            return safeAck(callback, { success: false, message: '无权限移除影片' });
-          }
+          await realtimeSyncCore.withRoomLock(payload.roomId, async () => {
+            const permission = await roomPermissionService.canPerform(socket, payload.roomId, 'movie.change');
+            if (!permission.allowed) {
+              return safeAck(callback, { success: false, message: '无权限移除影片' });
+            }
 
-          const removed = await movieService.deleteMovie(payload.roomId, payload.movieId);
-          if (!removed) {
-            return safeAck(callback, { success: false, message: '影片不存在' });
-          }
+            const removed = await movieService.deleteMovie(payload.roomId, payload.movieId);
+            if (!removed) {
+              return safeAck(callback, { success: false, message: '影片不存在' });
+            }
 
-          await movieBroadcasterService.broadcastMovieList(io, payload.roomId);
+            await movieBroadcasterService.broadcastMovieList(io, payload.roomId);
 
-          // 若删除的是当前正在播放的影片，清空 currentMovieId 并广播
-          const currentMovieId = roomStateService.getCurrentMovieId(payload.roomId);
-          if (
-            currentMovieId != null &&
-            (currentMovieId === payload.movieId ||
-              String(currentMovieId) === String(payload.movieId))
-          ) {
-            roomStateService.setCurrentMovie(payload.roomId, null);
-            io.to(payload.roomId).emit('current-movie', { movieId: null });
-          }
-
-          safeAck(callback, { success: true });
+            safeAck(callback, { success: true });
+          });
         } catch (err) {
           console.error('[remove-movie] error:', err);
           safeAck(callback, { success: false, message: '移除影片失败' });
@@ -103,23 +96,26 @@ export class MovieListHandler implements SocketEventHandler {
         callback?: AckCallback,
       ) => {
         try {
-          const permission = await roomPermissionService.canPerform(socket, payload.roomId, 'movie.change');
-          if (!permission.allowed) {
-            return safeAck(callback, { success: false, message: '无权限播放影片' });
-          }
+          await realtimeSyncCore.withRoomLock(payload.roomId, async () => {
+            const permission = await roomPermissionService.canPerform(socket, payload.roomId, 'movie.change');
+            const playback = await roomPermissionService.canPerform(socket, payload.roomId, 'playback.play');
+            if (!permission.allowed || !playback.allowed || !(await roomPermissionService.isWatchTogetherRoom(payload.roomId))) {
+              return safeAck(callback, { success: false, message: 'Watch activity and content/playback permission are required.' });
+            }
 
-          // 校验影片是否在列表中
-          const movies = roomStateService.getMovies(payload.roomId);
-          const exists = movies.some(
-            (m) => m.id === payload.movieId || String(m.id) === String(payload.movieId),
-          );
-          if (!exists) {
-            return safeAck(callback, { success: false, message: '影片不存在' });
-          }
+            // 校验影片是否在列表中
+            const movies = roomStateService.getMovies(payload.roomId);
+            const exists = movies.some(
+              (m) => m.id === payload.movieId || String(m.id) === String(payload.movieId),
+            );
+            if (!exists) {
+              return safeAck(callback, { success: false, message: '影片不存在' });
+            }
 
-          roomStateService.setCurrentMovie(payload.roomId, payload.movieId);
-          io.to(payload.roomId).emit('current-movie', { movieId: payload.movieId });
-          safeAck(callback, { success: true });
+            roomStateService.setCurrentMovie(payload.roomId, payload.movieId);
+            io.to(payload.roomId).emit('current-movie', { movieId: payload.movieId });
+            safeAck(callback, { success: true });
+          });
         } catch (err) {
           console.error('[play-movie] error:', err);
           safeAck(callback, { success: false, message: '播放影片失败' });

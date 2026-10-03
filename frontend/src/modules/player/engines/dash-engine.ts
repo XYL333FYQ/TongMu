@@ -40,31 +40,63 @@ export const dashEngine: PlayerEngine = {
       const onStreamInitialized = () => {
         if (disposed || source.signal?.aborted) return
         const levels = player.getBitrateInfoListFor('video')
-        const highest = levels.reduce((best, level) => (level.height || 0) > (best?.height || 0) || ((level.height || 0) === (best?.height || 0) && level.bitrate > (best?.bitrate ?? -1)) ? level : best, levels[0])
+        const highest = levels.reduce(
+          (best, level) =>
+            (level.height || 0) > (best?.height || 0) ||
+            ((level.height || 0) === (best?.height || 0) &&
+              level.bitrate > (best?.bitrate ?? -1))
+              ? level
+              : best,
+          levels[0]
+        )
         if (highest) player.setQualityFor('video', highest.qualityIndex)
       }
       const onError = () => {
-        if (!disposed && !source.signal?.aborted) video.dispatchEvent(new Event('error'))
+        if (!disposed && !source.signal?.aborted)
+          video.dispatchEvent(new Event('error'))
       }
       const cleanup = () => {
         if (cleaned) return
         cleaned = true
         disposed = true
         source.signal?.removeEventListener('abort', cleanup)
-        try { player.off(dashjs.MediaPlayer.events.STREAM_INITIALIZED, onStreamInitialized) } catch { /* ignore */ }
-        try { player.off(dashjs.MediaPlayer.events.ERROR, onError) } catch { /* ignore */ }
-        try { player.reset() } catch { /* ignore */ }
+        try {
+          player.off(
+            dashjs.MediaPlayer.events.STREAM_INITIALIZED,
+            onStreamInitialized
+          )
+        } catch {
+          /* ignore */
+        }
+        try {
+          player.off(dashjs.MediaPlayer.events.ERROR, onError)
+        } catch {
+          /* ignore */
+        }
+        try {
+          player.reset()
+        } catch {
+          /* ignore */
+        }
       }
       source.signal?.addEventListener('abort', cleanup, { once: true })
       try {
         player.updateSettings({
-          streaming: { buffer: { bufferTimeAtTopQuality: 30 }, abr: { autoSwitchBitrate: { video: false } } },
+          streaming: {
+            buffer: { bufferTimeAtTopQuality: 30 },
+            abr: { autoSwitchBitrate: { video: false } },
+          },
         })
-        player.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, onStreamInitialized)
+        player.on(
+          dashjs.MediaPlayer.events.STREAM_INITIALIZED,
+          onStreamInitialized
+        )
         player.on(dashjs.MediaPlayer.events.ERROR, onError)
         player.initialize(
           video,
-          resolveProxyUrl(source.url, source.headers, source.format, { noProxyFallback: source.noProxyFallback }),
+          resolveProxyUrl(source.url, source.headers, source.format, {
+            noProxyFallback: source.noProxyFallback,
+          }),
           false
         )
         await waitForMetadata(video, source.signal)
@@ -73,7 +105,10 @@ export const dashEngine: PlayerEngine = {
         }
       } catch (err) {
         cleanup()
-        throw new Error('dash.js 加载 MPD 失败', { cause: err })
+        throw new Error(
+          'DASH manifest loading failed. Check the media source and try again.',
+          { cause: err }
+        )
       }
     }
 
@@ -102,7 +137,10 @@ export const dashEngine: PlayerEngine = {
       }
     } catch (err) {
       dashPlayer.cleanup()
-      throw new Error('dash.js 加载 DASH 源失败', { cause: err })
+      throw new Error(
+        'DASH media loading failed. Check the media source and try again.',
+        { cause: err }
+      )
     }
   },
 }

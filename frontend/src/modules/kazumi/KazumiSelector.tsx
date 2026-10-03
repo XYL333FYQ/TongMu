@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Search,
@@ -42,6 +43,8 @@ export function KazumiSelector({
   onSelectEpisode,
   disabled,
 }: KazumiSelectorProps) {
+  useTranslation()
+
   const [sources, setSources] = useState<KazumiSource[]>([])
   const [selectedSource, setSelectedSource] = useState('')
   const [keyword, setKeyword] = useState('')
@@ -74,12 +77,16 @@ export function KazumiSelector({
           setSelectedSource(data[0].id)
         }
         if (data.length === 0) {
-          setSourcesError('未找到可用数据源，请在管理面板检查 Kazumi 规则配置')
+          setSourcesError(
+            t('No Kazumi sources are available. Check the rule settings.')
+          )
         }
       })
       .catch((err) => {
         console.error('[KazumiSelector] load sources error:', err)
-        setSourcesError(err instanceof Error ? err.message : '加载数据源失败')
+        setSourcesError(
+          err instanceof Error ? err.message : t('Could not load sources.')
+        )
       })
       .finally(() => setLoadingSources(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅在 open 变化时加载
@@ -102,11 +109,11 @@ export function KazumiSelector({
 
   const handleSearch = useCallback(async () => {
     if (!selectedSource) {
-      message.warning('请选择数据源')
+      message.warning(t('Choose a source.'))
       return
     }
     if (!keyword.trim()) {
-      message.warning('请输入搜索关键词')
+      message.warning(t('Enter a search query.'))
       return
     }
     setSearching(true)
@@ -117,10 +124,11 @@ export function KazumiSelector({
       const results = await searchKazumi(selectedSource, keyword.trim())
       setSearchResults(results)
       if (results.length === 0) {
-        message.info('未找到匹配结果')
+        message.info(t('No matching results.'))
       }
     } catch (err) {
-      const errMsg = err instanceof Error ? err.message : '搜索番剧失败'
+      const errMsg =
+        err instanceof Error ? err.message : 'Could not search anime.'
       if (
         errMsg.includes('Cloudflare') ||
         errMsg.includes('403') ||
@@ -129,7 +137,11 @@ export function KazumiSelector({
         errMsg.includes('超时') ||
         errMsg.includes('fetch failed')
       ) {
-        message.warning(`${selectedSourceLabel} 无法访问，请尝试切换其他数据源`)
+        message.warning(
+          t('{value1} This source is unavailable. Try another source.', {
+            value1: selectedSourceLabel,
+          })
+        )
       } else {
         message.error(errMsg)
       }
@@ -154,7 +166,9 @@ export function KazumiSelector({
         setEpisodesMap((prev) => ({ ...prev, [result.id]: episodes }))
       } catch (err) {
         console.error('[KazumiSelector] load episodes error:', err)
-        message.error(err instanceof Error ? err.message : '获取集数失败')
+        message.error(
+          err instanceof Error ? err.message : t('Could not load episodes.')
+        )
       } finally {
         setLoadingEpisodes(false)
       }
@@ -165,7 +179,7 @@ export function KazumiSelector({
   const handleSelectEpisode = useCallback(
     (result: KazumiSearchResult, episode: KazumiEpisode) => {
       if (disabled) {
-        message.info('当前不可用')
+        message.info(t('Unavailable'))
         return
       }
       setSelectedEpisodeId(episode.id)
@@ -198,31 +212,31 @@ export function KazumiSelector({
           </div>
           <div className="flex min-w-0 flex-col">
             <Text className="text-base font-semibold leading-tight">
-              Kazumi 番剧源
+              {t('Kazumi')}
             </Text>
             <Text
               type="secondary"
               className="text-[10px] uppercase tracking-wide"
             >
               {loadingSources
-                ? '加载中'
+                ? t('Loading…')
                 : sources.length > 0
-                  ? `${sources.length} 个数据源可用`
-                  : '暂无数据源'}
+                  ? t('{value1}  sources available', { value1: sources.length })
+                  : t('No sources available.')}
             </Text>
           </div>
         </div>
       }
     >
       <div className="flex h-full flex-col">
-        {/* 搜索区 */}
+        {/* Search区 */}
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end">
           <div className="sm:w-52">
             <Text
               type="secondary"
               className="mb-1.5 block text-[10px] uppercase tracking-wide"
             >
-              数据源
+              {t('Source')}
             </Text>
             <Select
               value={selectedSource}
@@ -234,11 +248,11 @@ export function KazumiSelector({
                 setEpisodesMap({})
               }}
               disabled={loadingSources || sourceOptions.length === 0}
-              placeholder="选择数据源"
+              placeholder={t('Choose source')}
             />
             {sourcesError && (
               <p className="mt-1.5 text-xs text-[var(--md-sys-color-error)]">
-                {sourcesError}
+                {t(sourcesError)}
               </p>
             )}
           </div>
@@ -247,13 +261,13 @@ export function KazumiSelector({
               type="secondary"
               className="mb-1.5 block text-[10px] uppercase tracking-wide"
             >
-              关键词
+              {t('Search query')}
             </Text>
             <Input
               size="md"
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
-              placeholder="输入番剧名称搜索"
+              placeholder={t('Search anime titles')}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault()
@@ -271,7 +285,7 @@ export function KazumiSelector({
             disabled={searching || !selectedSource}
             className="h-[42px] shrink-0"
           >
-            搜索
+            {t('Search')}
           </Button>
         </div>
 
@@ -279,10 +293,10 @@ export function KazumiSelector({
         <div className="mb-3 flex items-center justify-between">
           <Text type="secondary" className="text-xs">
             {searchResults.length > 0
-              ? `共 ${searchResults.length} 条结果`
+              ? t('Total: {value1}  results', { value1: searchResults.length })
               : searching
-                ? '搜索中...'
-                : '输入关键词开始搜索'}
+                ? t('Searching…')
+                : t('Enter a query to search.')}
           </Text>
           <div
             className="inline-flex rounded-[var(--md-sys-shape-corner)] border p-0.5"
@@ -305,11 +319,11 @@ export function KazumiSelector({
                     ? 'var(--md-sys-color-on-primary-container)'
                     : 'var(--md-sys-color-on-surface-variant)',
               }}
-              aria-label="列表视图"
-              title="列表视图"
+              aria-label={t('List view')}
+              title={t('List view')}
             >
               <List className="h-3.5 w-3.5" />
-              <span>列表</span>
+              <span>{t('List')}</span>
             </button>
             <button
               type="button"
@@ -328,11 +342,11 @@ export function KazumiSelector({
                     ? 'var(--md-sys-color-on-primary-container)'
                     : 'var(--md-sys-color-on-surface-variant)',
               }}
-              aria-label="平铺视图"
-              title="平铺视图"
+              aria-label={t('Grid view')}
+              title={t('Grid view')}
             >
               <LayoutGrid className="h-3.5 w-3.5" />
-              <span>平铺</span>
+              <span>{t('Grid')}</span>
             </button>
           </div>
         </div>
@@ -383,10 +397,10 @@ export function KazumiSelector({
                 )}
                 <Paragraph type="secondary" className="m-0 text-xs">
                   {searching
-                    ? '正在搜索...'
+                    ? t('Searching…')
                     : keyword
-                      ? '暂无结果，换个关键词试试'
-                      : '输入关键词开始搜索番剧'}
+                      ? t('No results. Try another query.')
+                      : t('Enter a query to find anime.')}
                 </Paragraph>
               </div>
             </div>
@@ -473,17 +487,17 @@ export function KazumiSelector({
                       {loadingEpisodes && expanded ? (
                         <>
                           <Loader2 className="h-3 w-3 animate-spin" />
-                          <span>加载中</span>
+                          <span>{t('Loading…')}</span>
                         </>
                       ) : expanded ? (
                         <>
                           <ChevronDown className="h-3 w-3" />
-                          <span>收起</span>
+                          <span>{t('Collapse')}</span>
                         </>
                       ) : (
                         <>
                           <Play className="h-3 w-3" />
-                          <span>展开集数</span>
+                          <span>{t('Show episodes')}</span>
                         </>
                       )}
                     </div>
@@ -500,7 +514,7 @@ export function KazumiSelector({
                     {episodes.length === 0 && !loadingEpisodes && (
                       <div className="flex h-16 items-center justify-center">
                         <Paragraph type="secondary" className="m-0 text-xs">
-                          暂无集数信息
+                          {t('No episodes available.')}
                         </Paragraph>
                       </div>
                     )}

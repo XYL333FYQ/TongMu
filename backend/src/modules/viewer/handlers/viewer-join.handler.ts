@@ -15,6 +15,8 @@ import type { Server as SocketIOServer, Socket } from 'socket.io';
 import bcrypt from 'bcryptjs';
 import { AppDataSource } from '../../../data-source';
 import { Room } from '../../../entities/Room';
+import { Session } from '../../../entities/Session';
+import { IsNull } from 'typeorm';
 import type { RoomMode } from '../../../entities/Room';
 import type { UserRole } from '../../../entities/User';
 import {
@@ -28,15 +30,17 @@ import { movieBroadcasterService } from '../../movie';
 import type { ViewerJoinedPayload } from '../../shared';
 import { viewerListService } from '../viewer-list.service';
 import { createRoomMediaGrant } from '../../../services/media/room-access';
+import { parseRoomPolicy } from '../../room/room-policy';
+import { roomExperienceService } from '../../room/room-experience.service';
+import { isBoundedIdentifier, realtimeSyncCore } from '../../realtime-sync-core';
+import { viewerService } from '../viewer.service';
 
 /** request-join 事件 payload */
 interface RequestJoinPayload {
   roomId: string;
   password?: string;
+  nickname?: string;
 }
-
-/** 房主离线后观众仍可加入的宽限时间（毫秒）。5 分钟内房主不回来则无法加入。 */
-const HOST_JOIN_GRACE_MS = 5 * 60 * 1000; // 5 分钟
 
 /**
  * 给新观众补发房主当前的字幕状态（外挂/内嵌字幕轨道数据）。
@@ -59,9 +63,28 @@ export class ViewerJoinHandler implements SocketEventHandler {
   readonly name = 'viewer-join';
 
   register(socket: Socket, io: SocketIOServer): void {
+    socket.on('room:join:cancel', (payload: { roomId?: unknown }, callback?: AckCallback) => {
+      if (!payload || !isBoundedIdentifier(payload.roomId, 128)) return safeAck(callback, { success: false, message: 'Invalid room ID.' });
+      let cancelledSession: Session | null = null;
+      void realtimeSyncCore.withRoomLock(payload.roomId, async () => {
+        viewerService.removePendingRequest(payload.roomId as string, socket.id);
+        const session = await AppDataSource.getRepository(Session).findOneBy({ roomId: payload.roomId as string, socketId: socket.id, role: 'viewer', endedAt: IsNull() });
+        if (session) { await roomSessionService.endViewerSession(socket.id); await socket.leave(session.roomId); cancelledSession = session; }
+        io.to(payload.roomId as string).emit('join-request-cancelled', { viewerSocketId: socket.id });
+      }).then(async () => {
+        if (cancelledSession) await roomExperienceService.memberLeft(io, cancelledSession.roomId, socket.id, false);
+        await roomExperienceService.broadcast(io, payload.roomId as string);
+        safeAck(callback, { success: true });
+      }).catch(() => safeAck(callback, { success: false, message: 'Could not cancel the request.' }));
+    });
     socket.on(
       'request-join',
       async (payload: RequestJoinPayload, callback: AckCallback) => {
+        if (!payload || !isBoundedIdentifier(payload.roomId, 128) ||
+          (payload.password !== undefined && (typeof payload.password !== 'string' || payload.password.length > 128))) {
+          return safeAck(callback, { success: false, message: '房间编号或密码无效' });
+        }
+        await realtimeSyncCore.withRoomLock(payload.roomId, async () => {
         try {
           const role: UserRole = socket.data.role;
           const roomRepo = AppDataSource.getRepository(Room);
@@ -74,11 +97,26 @@ export class ViewerJoinHandler implements SocketEventHandler {
           if (room.status !== 'active') {
             return safeAck(callback, { success: false, message: '房间已关闭' });
           }
+          const policy = parseRoomPolicy(room.policyJson);
+          if (role === 'guest') {
+            if (!policy.allowGuests) return safeAck(callback, { success: false, code: 'LOGIN_REQUIRED', message: '此房间需要登录后加入' });
+            if (payload.nickname !== undefined) {
+              if (typeof payload.nickname !== 'string' || !payload.nickname.trim() || payload.nickname.trim().length > 40) {
+                return safeAck(callback, { success: false, message: '昵称需要 1-40 个字符' });
+              }
+              socket.data.username = payload.nickname.trim();
+            }
+            if (!socket.data.username || socket.data.username === 'guest') {
+              return safeAck(callback, { success: false, code: 'NICKNAME_REQUIRED', message: '请先填写昵称' });
+            }
+          }
+          const activeSession = await AppDataSource.getRepository(Session).findOneBy({ socketId: socket.id, endedAt: IsNull() });
+          if (activeSession && activeSession.roomId !== payload.roomId) return safeAck(callback, { success: false, code: 'LEAVE_CURRENT_ROOM', message: '请先退出当前房间' });
 
           // 重复加入检测：同一账户（非 guest）不能在多个标签页同时进入同一房间。
           // guest 用户共享 userId=0 且允许无限多端进入（游客不受登录数限制），跳过检测。
           // 如果发现旧 session 但其 socket 已断开（session 未清理），先结束旧 session 再放行。
-          const currentUserId: number | null = socket.data.userId ?? null;
+          const currentUserId: number | null = role === 'guest' ? null : socket.data.userId ?? null;
           if (currentUserId != null && role !== 'guest') {
             const existingSession = await roomSessionService.findActiveSessionByUser(
               payload.roomId,
@@ -115,18 +153,21 @@ export class ViewerJoinHandler implements SocketEventHandler {
               socket,
               payload.roomId,
               userId,
+              true,
             );
             if (hostResult) {
               // 同步 DB 影片到 roomStateService 并广播 movie-list
               await movieBroadcasterService.broadcastMovieList(io, payload.roomId);
               // 通知房间内其他成员房主已就绪
               socket.to(payload.roomId).emit('sharer-ready', { roomId: payload.roomId });
+              viewerService.replayPendingRequests(io, payload.roomId, socket.id);
 
               return safeAck(callback, {
                 success: true,
                 message: '已恢复房主身份',
                 data: {
                   mode: hostResult.mode as RoomMode,
+                  activity: hostResult.activity,
                   shareMethod: hostResult.shareMethod as 'webrtc' | 'stream-push',
                   streamKey: hostResult.streamKey,
                   mediaGrant: hostResult.mediaGrant,
@@ -157,25 +198,12 @@ export class ViewerJoinHandler implements SocketEventHandler {
             });
           }
 
-          // 校验房主在线：
-          // - 需审批房间：房主必须在线（审批须由房主进行），离线时拒绝加入
-          // - 免审批房间：房主离线但未超过 5 分钟宽限期时仍允许加入
-          let sharer = null;
-          if (room.requireApproval) {
-            sharer = await roomSessionService.getSharer(payload.roomId);
-          } else {
-            sharer = await roomSessionService.getRecentSharer(
-              payload.roomId,
-              HOST_JOIN_GRACE_MS,
-            );
-          }
-          if (!sharer) {
-            return safeAck(callback, { success: false, message: '分享端不在线' });
-          }
+          const sharer = await roomSessionService.getSharer(payload.roomId);
 
           // 免审批：直接加入房间
           if (room.requireApproval === false) {
             await roomSessionService.admitViewer(socket, payload.roomId, currentUserId);
+            await roomExperienceService.memberJoined(io, payload.roomId);
             const mediaGrant = createRoomMediaGrant(payload.roomId, socket.id);
 
             // 推送房间信息给新观众
@@ -223,6 +251,7 @@ export class ViewerJoinHandler implements SocketEventHandler {
               data: {
                 mode: room.mode,
                 shareMethod: room.shareMethod,
+                activity: room.activity,
                 streamKey: room.streamKey,
                 mediaGrant,
               },
@@ -230,7 +259,7 @@ export class ViewerJoinHandler implements SocketEventHandler {
           }
 
           // 需审批：检查是否已被房主批准过（持久化白名单）
-          const viewerUserId: number | null = socket.data.userId ?? null;
+          const viewerUserId: number | null = currentUserId;
           if (viewerUserId != null) {
             let approvedList: number[] = [];
             try {
@@ -239,6 +268,7 @@ export class ViewerJoinHandler implements SocketEventHandler {
             if (approvedList.includes(viewerUserId)) {
               // 已批准用户直接加入，无需再次审批
               await roomSessionService.admitViewer(socket, payload.roomId, currentUserId);
+              await roomExperienceService.memberJoined(io, payload.roomId);
               const mediaGrant = createRoomMediaGrant(payload.roomId, socket.id);
 
               io.to(socket.id).emit('join-approved', {
@@ -283,6 +313,7 @@ export class ViewerJoinHandler implements SocketEventHandler {
                 data: {
                   mode: room.mode,
                   shareMethod: room.shareMethod,
+                  activity: room.activity,
                   streamKey: room.streamKey,
                   mediaGrant,
                 },
@@ -291,8 +322,14 @@ export class ViewerJoinHandler implements SocketEventHandler {
           }
 
           // 未批准：向房主发送 join-request
-          io.to(sharer.socketId).emit('join-request', {
+          // An offline owner can still receive/review the join request on return.
+          // Pending members are not admitted and cannot read room media.
+          const approver = sharer?.socketId;
+          viewerService.addPendingRequest(payload.roomId, socket.id);
+          await roomExperienceService.broadcast(io, payload.roomId);
+          if (approver) io.to(approver).emit('join-request', {
             viewerSocketId: socket.id,
+            username: socket.data.username,
           });
           return safeAck(callback, {
             success: true,
@@ -300,13 +337,15 @@ export class ViewerJoinHandler implements SocketEventHandler {
             data: {
               mode: room.mode,
               shareMethod: room.shareMethod,
-              streamKey: room.streamKey,
+              activity: room.activity,
+              waitingApproval: true,
             },
           });
         } catch (err) {
           console.error('[request-join] error:', err);
           return safeAck(callback, { success: false, message: '加入房间失败' });
         }
+        });
       },
     );
   }

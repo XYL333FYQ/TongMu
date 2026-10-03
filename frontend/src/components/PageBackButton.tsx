@@ -3,9 +3,9 @@ import { ArrowLeft } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 
 interface PageBackButtonProps {
-  /** 返回目标，默认 '/'；可传数字表示 navigate(-n) */
+  /** Back目标，Default '/'；可传数字表示 navigate(-n) */
   to?: string | number
-  /** 自定义文案，默认"返回" */
+  /** Custom文案，Default"Back" */
   label?: string
   /** 额外 className */
   className?: string
@@ -19,7 +19,7 @@ interface PageBackButtonProps {
  */
 export function PageBackButton({
   to = '/',
-  label = '返回',
+  label = 'Back',
   className = '',
 }: PageBackButtonProps) {
   const navigate = useNavigate()

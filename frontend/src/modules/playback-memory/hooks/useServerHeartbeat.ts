@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 /**
  * useServerHeartbeat Hook
  *
@@ -46,6 +47,8 @@ export function useServerHeartbeat({
   setWatchTogether,
   watchTogether,
 }: UseServerHeartbeatOptions): UseServerHeartbeatReturn {
+  useTranslation()
+
   const { socket } = useSocket()
   // 防止重复提示"房主已离开"
   const hostLeftNotifiedRef = useRef(false)
@@ -92,7 +95,9 @@ export function useServerHeartbeat({
           const diff = Math.abs(video.currentTime - state.currentTime)
           if (diff > 10) {
             // 大幅差异：显示提示并延迟 2s 后 seek，避免突兀跳转
-            message.info('房主已重连，即将同步进度，2 秒后自动同步')
+            message.info(
+              t('The host reconnected. Playback will synchronize in 2 seconds.')
+            )
             if (reconnectSyncTimerRef.current) {
               clearTimeout(reconnectSyncTimerRef.current)
             }
@@ -143,7 +148,9 @@ export function useServerHeartbeat({
       if (!isBufferMode && isBilibiliUrlExpired(state.sourceUrl)) {
         urlExpiredRef.current = true
         if (!video.paused) video.pause()
-        message.warning('视频源已过期，等待房主重连')
+        message.warning(
+          t('This media source expired. Waiting for the host to reconnect.')
+        )
         suppressEventsRef.current = false
         return
       }
@@ -208,7 +215,11 @@ export function useServerHeartbeat({
       if (hostLeftNotifiedRef.current) return
       hostLeftNotifiedRef.current = true
       // 仅提示，不暂停播放（观众进入自主控制模式）
-      message.info('房主已离开，您可以自主控制播放')
+      message.info(
+        t(
+          'The host disconnected. You can control playback according to the room permissions.'
+        )
+      )
     }
 
     // 房主重连时重置标记（通过 sharer-ready 事件判断）
@@ -264,7 +275,9 @@ export function useServerHeartbeat({
       if (isVideoSourceExpired(currentState.sourceUrl, error, video)) {
         urlExpiredRef.current = true
         if (!video.paused) video.pause()
-        message.warning('视频源已过期，等待房主重连')
+        message.warning(
+          t('This media source expired. Waiting for the host to reconnect.')
+        )
       }
     }
 

@@ -435,7 +435,13 @@ export const useDanmakuStore = create<DanmakuState>()(
           await get().removeTrack('default')
           return
         }
-        await get().addTrack('default', '当前视频', 'bilibili-video', items, 0)
+        await get().addTrack(
+          'default',
+          'Current video',
+          'bilibili-video',
+          items,
+          0
+        )
       },
 
       setStyle: (updates) => {

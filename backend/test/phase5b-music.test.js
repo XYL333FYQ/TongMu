@@ -31,6 +31,7 @@ async function createMusicDataSource() {
     maxViewers: 10,
     status: 'active',
     mode: 'watch-together',
+    activity: 'listen',
     shareMethod: 'webrtc',
     streamKey: null,
     requireApproval: false,

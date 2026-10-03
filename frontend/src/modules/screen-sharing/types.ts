@@ -8,7 +8,13 @@ export interface SignalPayload<T> {
 
 /** 观众加入房间状态机 */
 export type JoinStatus =
-  'idle' | 'joining' | 'approved' | 'rejected' | 'closed' | 'password-required'
+  | 'idle'
+  | 'joining'
+  | 'waiting'
+  | 'approved'
+  | 'rejected'
+  | 'closed'
+  | 'password-required'
 
 /** WebRTC 连接状态 */
 export type ConnectionState =
@@ -84,5 +90,6 @@ export interface ViewerReadyPayload {
 export interface JoinFormValues {
   roomId: string
   password?: string
+  nickname?: string
   [key: string]: unknown
 }

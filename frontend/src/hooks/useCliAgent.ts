@@ -1,6 +1,8 @@
 import { useEffect, useRef, useCallback } from 'react'
 import { useSocket } from './useSocket'
 import { useCliAgentStore } from '@/store/cliAgentStore'
+import { useTranslation } from '@/i18n'
+import { englishErrorMessage } from '@/lib/errorMessage'
 
 /** 本地 CLI 默认端口 */
 export const CLI_DEFAULT_PORT = 9333
@@ -58,6 +60,7 @@ interface CliAgentsPayload {
  * @returns 当前可用的 CLI 代理信息
  */
 export function useCliAgent(roomId: string | undefined) {
+  const { t } = useTranslation()
   const { socket, connected } = useSocket()
   const {
     localOnline,
@@ -95,15 +98,18 @@ export function useCliAgent(roomId: string | undefined) {
       if (data.ok) {
         setLocalOnline(true, null)
       } else {
-        setLocalOnline(false, '本地 CLI 响应异常')
+        setLocalOnline(
+          false,
+          'The local CLI agent returned an invalid response.'
+        )
       }
     } catch (err) {
       const message =
         err instanceof Error
           ? err.name === 'AbortError'
-            ? '健康检查已取消'
+            ? 'The connection check was cancelled.'
             : err.message
-          : '本地 CLI 连接失败'
+          : 'Unable to connect to the local CLI agent.'
       setLocalOnline(false, message)
     }
   }, [setLocalOnline])
@@ -233,7 +239,16 @@ export function useCliAgent(roomId: string | undefined) {
     /** 代理元信息 */
     agentInfo: selectedAgent,
     /** 最近一次本地健康检查错误 */
-    localError,
+    localError: localError
+      ? /^HTTP \d+$/.test(localError)
+        ? t('Local CLI connection failed (HTTP {status}).', {
+            status: localError.slice(5),
+          })
+        : englishErrorMessage(
+            localError,
+            'Unable to connect to the local CLI agent.'
+          )
+      : null,
     /** 是否正在从后端拉取代理列表 */
     isLoadingAgents,
     /** 手动刷新代理列表 */

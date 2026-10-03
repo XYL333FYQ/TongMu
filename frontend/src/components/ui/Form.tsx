@@ -4,8 +4,10 @@ import React, {
   useContext,
   useMemo,
   useState,
+  useId,
 } from 'react'
 import { cn } from '@/lib/utils'
+import { t, useTranslation } from '@/i18n'
 
 export interface Rule {
   required?: boolean
@@ -80,24 +82,24 @@ export function Form<
       const value = values[name]
       for (const rule of rules) {
         if (rule.required && (value === undefined || value === '')) {
-          nextErrors[name] = rule.message ?? '该字段为必填项'
+          nextErrors[name] = rule.message ?? 'This field is required.'
           valid = false
           break
         }
         if (rule.type === 'number' && value !== undefined && value !== '') {
           const num = Number(value)
           if (Number.isNaN(num)) {
-            nextErrors[name] = rule.message ?? '请输入数字'
+            nextErrors[name] = rule.message ?? 'Enter a number.'
             valid = false
             break
           }
           if (rule.min !== undefined && num < rule.min) {
-            nextErrors[name] = rule.message ?? `最小值为 ${rule.min}`
+            nextErrors[name] = rule.message ?? `The minimum is ${rule.min}.`
             valid = false
             break
           }
           if (rule.max !== undefined && num > rule.max) {
-            nextErrors[name] = rule.message ?? `最大值为 ${rule.max}`
+            nextErrors[name] = rule.message ?? `The maximum is ${rule.max}.`
             valid = false
             break
           }
@@ -170,7 +172,9 @@ Form.Item = function FormItem({
   children,
   className,
 }: FormItemProps) {
+  useTranslation()
   const ctx = useFormContext()
+  const generatedId = useId()
 
   if (name) {
     ctx.registerField(name, rules)
@@ -193,22 +197,47 @@ Form.Item = function FormItem({
       ? children({ value, onChange, error })
       : children
 
+  const firstControl = React.Children.toArray(childNode).find(
+    React.isValidElement
+  )
+  const inputId =
+    React.isValidElement<{ id?: unknown }>(firstControl) &&
+    typeof firstControl.props.id === 'string'
+      ? firstControl.props.id
+      : `form-field-${generatedId}`
+  const errorId = `${inputId}-form-error`
+
   return (
     <div className={cn('text-left', className)}>
       {label && (
-        <label className="mb-1.5 block text-sm font-medium text-[var(--md-sys-color-on-surface-variant)]">
+        <label
+          htmlFor={name ? inputId : undefined}
+          className="mb-1.5 block text-sm font-medium text-[var(--md-sys-color-on-surface-variant)]"
+        >
           {label}
         </label>
       )}
       {name ? (
-        <ValueBinder value={value} onChange={onChange}>
+        <ValueBinder
+          value={value}
+          onChange={onChange}
+          inputId={inputId}
+          errorId={errorId}
+          error={error}
+        >
           {childNode}
         </ValueBinder>
       ) : (
         childNode
       )}
       {error && (
-        <p className="mt-1 text-xs text-[var(--md-sys-color-error)]">{error}</p>
+        <p
+          id={errorId}
+          role="alert"
+          className="mt-1 text-xs text-[var(--md-sys-color-error)]"
+        >
+          {t(error)}
+        </p>
       )}
     </div>
   )
@@ -218,10 +247,16 @@ function ValueBinder({
   value,
   onChange,
   children,
+  inputId,
+  errorId,
+  error,
 }: {
   value: unknown
   onChange: (value: unknown) => void
   children: React.ReactNode
+  inputId: string
+  errorId: string
+  error?: string
 }) {
   return (
     <>
@@ -232,6 +267,14 @@ function ValueBinder({
           typeof childType === 'function' || typeof childType === 'object'
             ? (childType as { displayName?: string }).displayName
             : undefined
+        const accessibleProps = {
+          id: child.props.id ?? inputId,
+          'aria-invalid': error ? true : child.props['aria-invalid'],
+          'aria-describedby':
+            [child.props['aria-describedby'], error ? errorId : undefined]
+              .filter(Boolean)
+              .join(' ') || undefined,
+        }
 
         // 原生 input/select/textarea：注入 value + 事件 onChange
         if (
@@ -243,6 +286,7 @@ function ValueBinder({
               React.InputHTMLAttributes<HTMLInputElement>
             >,
             {
+              ...accessibleProps,
               value: value ?? '',
               onChange: (
                 e: React.ChangeEvent<
@@ -265,6 +309,7 @@ function ValueBinder({
               React.InputHTMLAttributes<HTMLInputElement>
             >,
             {
+              ...accessibleProps,
               checked: !!value,
               onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
                 onChange(e.target.checked)
@@ -283,6 +328,7 @@ function ValueBinder({
               React.InputHTMLAttributes<HTMLInputElement>
             >,
             {
+              ...accessibleProps,
               value: value ?? '',
               onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
                 onChange(e.target.value)
@@ -296,6 +342,7 @@ function ValueBinder({
 
         // 自定义组件（InputNumber / Select 等）：注入 value + value onChange
         return React.cloneElement(child, {
+          ...accessibleProps,
           value: value ?? '',
           onChange: (newValue: unknown) => {
             onChange(newValue)

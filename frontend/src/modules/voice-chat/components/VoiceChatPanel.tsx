@@ -1,4 +1,6 @@
+import { t, useTranslation } from '@/i18n'
 import { useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import { createPortal } from 'react-dom'
 import {
   Mic,
@@ -23,7 +25,7 @@ interface VoiceChatPanelProps {
   socket: Socket | null
   roomId: string | undefined
   username?: string
-  /** 是否为房主（已废弃，码率固定不再需要房主权限） */
+  /** 是否为房主（已废弃，Bitrate固定不再需要房主权限） */
   isHost?: boolean
 }
 
@@ -33,6 +35,9 @@ export function VoiceChatPanel({
   username,
   isHost = false,
 }: VoiceChatPanelProps) {
+  useTranslation()
+
+  const location = useLocation()
   const [expanded, setExpanded] = useState(false)
   const [editingPeer, setEditingPeer] = useState<string | null>(null)
   const {
@@ -58,7 +63,7 @@ export function VoiceChatPanel({
     kickVoiceMember,
   } = useVoiceChat({ socket, roomId, username })
 
-  if (!roomId) return null
+  if (!roomId || location.pathname !== `/room/${roomId}`) return null
 
   const memberCount = members.length
   const isMe = (socketId: string) => socketId === socket?.id
@@ -92,10 +97,12 @@ export function VoiceChatPanel({
             </div>
             <div className="flex flex-1 flex-col">
               <span className="text-sm font-medium text-[var(--md-sys-color-on-surface)]">
-                语音聊天
+                {t('Voice chat')}
               </span>
               <span className="text-[10px] uppercase tracking-wide text-[var(--md-sys-color-on-surface-variant)]">
-                {joined ? `${memberCount} 人在线` : '未连接'}
+                {joined
+                  ? t('{value1}  online', { value1: memberCount })
+                  : t('Disconnected')}
               </span>
             </div>
             <button
@@ -106,11 +113,11 @@ export function VoiceChatPanel({
             </button>
           </div>
 
-          {/* 全局音量 */}
+          {/* Listening volume */}
           {joined && (
             <div className="mb-1.5 rounded-[var(--md-sys-radius-small)] bg-[var(--glass-bg)] px-2 py-1.5">
               <div className="mb-0.5 text-xs font-medium text-[var(--md-sys-color-on-surface)]">
-                全局音量
+                {t('Listening volume')}
               </div>
               <div className="flex items-center gap-2">
                 <Slider
@@ -130,11 +137,11 @@ export function VoiceChatPanel({
             </div>
           )}
 
-          {/* 麦克风音量（对所有远端用户生效） */}
+          {/* Microphone volume（对all 远端用户生效） */}
           {joined && (
             <div className="mb-1.5 rounded-[var(--md-sys-radius-small)] bg-[var(--glass-bg)] px-2 py-1.5">
               <div className="mb-0.5 text-xs font-medium text-[var(--md-sys-color-on-surface)]">
-                麦克风音量
+                {t('Microphone volume')}
               </div>
               <div className="flex items-center gap-2">
                 <Slider
@@ -154,7 +161,7 @@ export function VoiceChatPanel({
             </div>
           )}
 
-          {/* 成员列表 */}
+          {/* 成员List */}
           {joined && memberCount > 0 && (
             <div className="mb-2 flex-1 space-y-1.5 overflow-y-auto pr-1">
               {members.map((member) => {
@@ -197,17 +204,21 @@ export function VoiceChatPanel({
                             ? 'text-[var(--md-sys-color-error)]'
                             : 'text-[var(--md-sys-color-on-surface)]'
                         )}
-                        title={memberMuted ? '已被语音禁言' : undefined}
+                        title={
+                          memberMuted ? t('Voice muted by the host') : undefined
+                        }
                       >
                         {me
-                          ? '我'
+                          ? t('You')
                           : member.username ||
-                            `游客 ${member.socketId.slice(0, 4)}`}
+                            t('Guest {value1}', {
+                              value1: member.socketId.slice(0, 4),
+                            })}
                       </span>
                       {memberMuted && (
                         <VolumeX className="h-3 w-3 shrink-0 text-[var(--md-sys-color-error)]" />
                       )}
-                      {/* 横向实时音量条 */}
+                      {/* 横向实时音量 comments */}
                       <div className="flex h-1.5 flex-1 items-center overflow-hidden rounded-full bg-[var(--md-sys-color-surface-container-high)]">
                         <div
                           className="h-full rounded-full transition-[width] duration-75"
@@ -261,7 +272,11 @@ export function VoiceChatPanel({
                               })
                             }}
                             className="rounded-full p-1 text-[var(--md-sys-color-on-surface-variant)] transition-colors hover:bg-[var(--md-sys-color-surface-container-highest)]"
-                            title={memberMuted ? '解除语音禁言' : '语音禁言'}
+                            title={
+                              memberMuted
+                                ? t('Allow microphone')
+                                : t('Mute microphone')
+                            }
                           >
                             {memberMuted ? (
                               <Volume2 className="h-3.5 w-3.5" />
@@ -274,7 +289,9 @@ export function VoiceChatPanel({
                               void kickVoiceMember(member.socketId).then(
                                 (response) => {
                                   if (response.success) {
-                                    message.success('已将成员移出语音')
+                                    message.success(
+                                      t('Member removed from voice chat.')
+                                    )
                                   } else if (response.message) {
                                     message.error(response.message)
                                   }
@@ -282,7 +299,7 @@ export function VoiceChatPanel({
                               )
                             }}
                             className="rounded-full p-1 text-[var(--md-sys-color-on-surface-variant)] transition-colors hover:bg-[var(--md-sys-color-surface-container-highest)]"
-                            title="移出语音"
+                            title={t('Remove from voice')}
                           >
                             <UserX className="h-3.5 w-3.5" />
                           </button>
@@ -293,7 +310,7 @@ export function VoiceChatPanel({
                       <div className="mt-2">
                         <Slider
                           size="sm"
-                          label="单独音量"
+                          label={t('Member volume')}
                           value={Math.round(peerVolume * 100)}
                           min={0}
                           max={100}
@@ -314,7 +331,7 @@ export function VoiceChatPanel({
           {/* 未加入提示 */}
           {!joined && !joining && (
             <div className="mb-3 text-center text-xs text-[var(--md-sys-color-on-surface-variant)]">
-              点击加入即可与房间内其他观众语音交流
+              {t('Join voice chat to talk with the room.')}
             </div>
           )}
 
@@ -335,14 +352,18 @@ export function VoiceChatPanel({
                   }
                   onClick={toggleMic}
                 >
-                  {micEnabled ? '静音' : '取消静音'}
+                  {micEnabled ? t('Mute') : t('Unmute')}
                 </Button>
                 <Button
                   variant={monitorEnabled ? 'primary' : 'secondary'}
                   size="sm"
                   icon={<Headphones className="h-3.5 w-3.5" />}
                   onClick={toggleMonitor}
-                  title={monitorEnabled ? '关闭反送' : '开启反送'}
+                  title={
+                    monitorEnabled
+                      ? t('Stop microphone monitor')
+                      : t('Monitor microphone')
+                  }
                 />
                 <Button
                   variant="danger"
@@ -351,7 +372,7 @@ export function VoiceChatPanel({
                   icon={<PhoneOff className="h-3.5 w-3.5" />}
                   onClick={leave}
                 >
-                  断开
+                  {t('Disconnect')}
                 </Button>
               </>
             ) : (
@@ -363,7 +384,7 @@ export function VoiceChatPanel({
                 icon={<Phone className="h-3.5 w-3.5" />}
                 onClick={join}
               >
-                加入语音
+                {t('Join voice')}
               </Button>
             )}
           </div>
@@ -387,7 +408,7 @@ export function VoiceChatPanel({
               ? 'var(--md-sys-color-on-primary-container)'
               : 'var(--md-sys-color-on-surface)',
           }}
-          title="语音聊天"
+          title={t('Voice chat')}
         >
           {joined ? (
             micEnabled ? (

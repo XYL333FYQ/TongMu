@@ -1,4 +1,4 @@
-﻿// 统一挂载表单：按挂载类型渲染对应模块的表单字段
+import { t, useTranslation } from '@/i18n' // 统一挂载表单：按挂载类型渲染对应模块的表单字段
 // 调用各模块独立的 create/update/test API
 import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/Button'
@@ -9,6 +9,7 @@ import { Modal } from '@/components/ui/Modal'
 import { Select } from '@/components/ui/Select'
 import { Switch } from '@/components/ui/Switch'
 import { message } from '@/components/ui/message'
+import { englishErrorMessage } from '@/lib/errorMessage'
 import {
   createWebDAVMount,
   updateWebDAVMount,
@@ -88,18 +89,18 @@ function mountToFormValues(mount: UnionMount): FormValues {
 function validateForm(values: FormValues): Record<string, string> {
   const errors: Record<string, string> = {}
   if (!values.name.trim()) {
-    errors.name = '挂载名称不能为空'
+    errors.name = 'Enter a source name.'
   }
   if (!values.serverUrl.trim()) {
-    errors.serverUrl = '服务器地址不能为空'
+    errors.serverUrl = 'Enter a server address.'
   }
   if (values.type === 'ftp') {
     if (!values.port.trim()) {
-      errors.port = '端口不能为空'
+      errors.port = 'Enter a port.'
     } else {
       const portNum = Number(values.port.trim())
       if (Number.isNaN(portNum) || portNum < 1 || portNum > 65535) {
-        errors.port = '请输入 1-65535 之间的端口'
+        errors.port = 'Enter a port between 1 and 65535.'
       }
     }
   }
@@ -108,7 +109,7 @@ function validateForm(values: FormValues): Record<string, string> {
       !values.apiKey.trim() &&
       (!values.username.trim() || !values.password)
     ) {
-      errors.apiKey = '请填写 API Key，或用户名与密码'
+      errors.apiKey = 'Enter an API key or your username and password.'
     }
   }
   return errors
@@ -129,6 +130,8 @@ export default function MountFormModal({
   editingMount,
   initialType = 'webdav',
 }: MountFormModalProps) {
+  useTranslation()
+
   const [formValues, setFormValues] = useState<FormValues>({
     ...EMPTY_FORM,
     type: initialType,
@@ -141,7 +144,7 @@ export default function MountFormModal({
   // 打开时重置表单
   useEffect(() => {
     if (open) {
-      /* eslint-disable react-hooks/set-state-in-effect -- 打开时根据 editingMount 重置表单 */
+      /* eslint-disable react-hooks/set-state-in-effect -- Open时根据 editingMount 重置表单 */
       if (editingMount) {
         setFormValues(mountToFormValues(editingMount))
       } else {
@@ -194,7 +197,9 @@ export default function MountFormModal({
           type === 'webdav'
             ? await testWebDAVMount(params)
             : await testOpenListMount(params)
-        message.success(`连接成功，共 ${result.itemCount} 条目`)
+        message.success(
+          t('Connected. Items:  {value1}  items', { value1: result.itemCount })
+        )
       } else if (type === 'emby') {
         const result = await testEmbyMount({
           name: formValues.name.trim(),
@@ -205,7 +210,11 @@ export default function MountFormModal({
           directLink: formValues.directLink,
         })
         message.success(
-          `连接成功${result.userName ? `，用户：${result.userName}` : ''}`
+          t('Connected.{value1}', {
+            value1: result.userName
+              ? t(' · User: {value1}', { value1: result.userName })
+              : '',
+          })
         )
       } else if (type === 'jellyfin') {
         const result = await testJellyfinMount({
@@ -217,7 +226,11 @@ export default function MountFormModal({
           directLink: formValues.directLink,
         })
         message.success(
-          `连接成功${result.userName ? `，用户：${result.userName}` : ''}`
+          t('Connected.{value1}', {
+            value1: result.userName
+              ? t(' · User: {value1}', { value1: result.userName })
+              : '',
+          })
         )
       } else {
         const portNum = port.trim() ? Number(port.trim()) : undefined
@@ -228,10 +241,14 @@ export default function MountFormModal({
           username: trimmedUser,
           password: trimmedPwd,
         })
-        message.success(`连接成功，共 ${result.itemCount} 条目`)
+        message.success(
+          t('Connected. Items:  {value1}  items', { value1: result.itemCount })
+        )
       }
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '连接测试失败')
+      message.error(
+        err instanceof Error ? err.message : t('Connection test failed.')
+      )
     } finally {
       setTesting(false)
     }
@@ -284,8 +301,16 @@ export default function MountFormModal({
                       : null,
                 })
               : await updateOpenListMount(editingMount.id, payload)
-          message.success(`${label} 挂载更新成功`)
-          if (saved.warning) message.warning(saved.warning)
+          message.success(t('{value1} Source updated.', { value1: label }))
+          if (saved.warning)
+            message.warning(
+              englishErrorMessage(
+                saved.warning,
+                t(
+                  'Source saved with a connection warning. Test the connection before selecting content.'
+                )
+              )
+            )
         } else {
           const saved =
             type === 'webdav'
@@ -298,8 +323,16 @@ export default function MountFormModal({
                       : null,
                 })
               : await createOpenListMount(payload)
-          message.success(`${label} 挂载添加成功`)
-          if (saved.warning) message.warning(saved.warning)
+          message.success(t('{value1} Source added.', { value1: label }))
+          if (saved.warning)
+            message.warning(
+              englishErrorMessage(
+                saved.warning,
+                t(
+                  'Source saved with a connection warning. Test the connection before selecting content.'
+                )
+              )
+            )
         }
       } else if (type === 'emby') {
         const payload = {
@@ -312,12 +345,28 @@ export default function MountFormModal({
         }
         if (editingMount) {
           const saved = await updateEmbyMount(editingMount.id, payload)
-          message.success('Emby 挂载更新成功')
-          if (saved.warning) message.warning(saved.warning)
+          message.success(t('Emby Source updated.'))
+          if (saved.warning)
+            message.warning(
+              englishErrorMessage(
+                saved.warning,
+                t(
+                  'Source saved with a connection warning. Test the connection before selecting content.'
+                )
+              )
+            )
         } else {
           const saved = await createEmbyMount(payload)
-          message.success('Emby 挂载添加成功')
-          if (saved.warning) message.warning(saved.warning)
+          message.success(t('Emby Source added.'))
+          if (saved.warning)
+            message.warning(
+              englishErrorMessage(
+                saved.warning,
+                t(
+                  'Source saved with a connection warning. Test the connection before selecting content.'
+                )
+              )
+            )
         }
       } else if (type === 'jellyfin') {
         const payload = {
@@ -330,12 +379,28 @@ export default function MountFormModal({
         }
         if (editingMount) {
           const saved = await updateJellyfinMount(editingMount.id, payload)
-          message.success('Jellyfin 挂载更新成功')
-          if (saved.warning) message.warning(saved.warning)
+          message.success(t('Jellyfin Source updated.'))
+          if (saved.warning)
+            message.warning(
+              englishErrorMessage(
+                saved.warning,
+                t(
+                  'Source saved with a connection warning. Test the connection before selecting content.'
+                )
+              )
+            )
         } else {
           const saved = await createJellyfinMount(payload)
-          message.success('Jellyfin 挂载添加成功')
-          if (saved.warning) message.warning(saved.warning)
+          message.success(t('Jellyfin Source added.'))
+          if (saved.warning)
+            message.warning(
+              englishErrorMessage(
+                saved.warning,
+                t(
+                  'Source saved with a connection warning. Test the connection before selecting content.'
+                )
+              )
+            )
         }
       } else {
         const payload = {
@@ -350,17 +415,20 @@ export default function MountFormModal({
         }
         if (editingMount) {
           await updateFTPMount(editingMount.id, payload)
-          message.success('FTP 挂载更新成功')
+          message.success(t('FTP Source updated.'))
         } else {
           await createFTPMount(payload)
-          message.success('FTP 挂载添加成功')
+          message.success(t('FTP Source added.'))
         }
       }
 
       onSuccess()
       onClose()
     } catch (err) {
-      const msg = err instanceof Error ? err.message : '保存挂载失败'
+      const msg = englishErrorMessage(
+        err,
+        t('Could not save the source. Check its settings and try again.')
+      )
       setSubmitError(msg)
       message.error(msg)
     } finally {
@@ -368,7 +436,7 @@ export default function MountFormModal({
     }
   }
 
-  const modalTitle = editingMount ? '编辑挂载' : '添加挂载'
+  const modalTitle = editingMount ? 'Edit source' : 'Add source'
   const isFtp = formValues.type === 'ftp'
   const isWebdav = formValues.type === 'webdav'
   const isOpenlist = formValues.type === 'openlist'
@@ -385,7 +453,7 @@ export default function MountFormModal({
       footer={
         <>
           <Button variant="secondary" size="sm" onClick={onClose}>
-            取消
+            {t('Cancel')}
           </Button>
           <Button
             variant="secondary"
@@ -393,7 +461,7 @@ export default function MountFormModal({
             loading={testing}
             onClick={handleTest}
           >
-            测试连接
+            {t('Test connection')}
           </Button>
           <Button
             variant="primary"
@@ -401,36 +469,36 @@ export default function MountFormModal({
             loading={submitting}
             onClick={handleSubmit}
           >
-            保存
+            {t('Save')}
           </Button>
         </>
       }
     >
       <div className="space-y-4">
         <Select
-          label="挂载类型"
+          label={t('Source type')}
           options={TYPE_OPTIONS}
           value={formValues.type}
           disabled={!!editingMount}
           onChange={(value) => updateField('type', value as MountType)}
         />
         <Input
-          label="挂载名称"
-          placeholder="例如：家庭 NAS"
+          label={t('Source name')}
+          placeholder={t('Home NAS')}
           value={formValues.name}
           onChange={(e) => updateField('name', e.target.value)}
           error={errors.name}
         />
         <Input
-          label="服务器地址"
+          label={t('Server address')}
           placeholder={
             isEmby
-              ? '例如：http://192.168.1.100:8096'
+              ? t('For example: http://192.168.1.100:8096')
               : isOpenlist
-                ? '例如：openlist.example.com（无需填 /dav，自动补全）'
+                ? t('openlist.example.com (/dav is added automatically)')
                 : isWebdav
-                  ? '例如：https://dav.example.com'
-                  : '例如：ftp.example.com'
+                  ? t('For example: https://dav.example.com')
+                  : t('For example: ftp.example.com')
           }
           value={formValues.serverUrl}
           onChange={(e) => updateField('serverUrl', e.target.value)}
@@ -438,8 +506,8 @@ export default function MountFormModal({
         />
         {isEmby && (
           <Input
-            label="API Key（推荐）"
-            placeholder="Emby 控制台 → 高级 → API 密钥"
+            label={t('API key (recommended)')}
+            placeholder={t('Emby dashboard → Advanced → API keys')}
             value={formValues.apiKey}
             onChange={(e) => updateField('apiKey', e.target.value)}
             error={errors.apiKey}
@@ -447,8 +515,8 @@ export default function MountFormModal({
         )}
         {isFtp && (
           <InputNumber
-            label="端口"
-            placeholder="例如：21"
+            label={t('Port')}
+            placeholder={t('For example: 21')}
             min={1}
             max={65535}
             value={formValues.port ? Number(formValues.port) : undefined}
@@ -460,28 +528,34 @@ export default function MountFormModal({
         )}
         {!isEmby && (
           <Input
-            label="路径"
-            placeholder="例如：/videos"
+            label={t('Path')}
+            placeholder={t('For example: /videos')}
             value={formValues.path}
             onChange={(e) => updateField('path', e.target.value)}
           />
         )}
         <Input
-          label={isEmby ? '用户名（与 API Key 二选一）' : '用户名'}
-          placeholder="可选"
+          label={
+            isEmby ? t('Username (alternative to API key)') : t('Username')
+          }
+          placeholder={t('Optional')}
           value={formValues.username}
           onChange={(e) => updateField('username', e.target.value)}
         />
         <InputPassword
-          label="密码"
-          placeholder={editingMount ? '留空将清空原密码' : '可选'}
+          label={t('Password')}
+          placeholder={
+            editingMount
+              ? t('Leave blank to clear the current password.')
+              : t('Optional')
+          }
           value={formValues.password}
           onChange={(e) => updateField('password', e.target.value)}
         />
         {showDirectLink && (
           <>
             <Switch
-              label="使用直链播放（不经过服务端转发）"
+              label={t('Prefer a direct connection')}
               checked={
                 isWebdavOrOpenlistInternal ? false : formValues.directLink
               }
@@ -490,14 +564,14 @@ export default function MountFormModal({
             />
             {isWebdavOrOpenlistInternal && (
               <div className="rounded border border-[var(--md-sys-color-outline-variant)] bg-[var(--md-sys-color-surface-container-high)] px-3 py-2 text-xs text-[var(--md-sys-color-on-surface-variant)]">
-                检测到内网地址，浏览器无法直连，已强制使用服务器转发模式
+                {t('This source uses a private address. Using server relay.')}
               </div>
             )}
           </>
         )}
         {submitError && (
           <div className="rounded border border-[var(--md-sys-color-error)] bg-[var(--md-sys-color-error-container)] px-3 py-2 text-xs text-[var(--md-sys-color-on-error-container)]">
-            {submitError}
+            {t(submitError)}
           </div>
         )}
       </div>

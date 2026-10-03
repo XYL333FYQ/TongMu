@@ -141,7 +141,9 @@ test('host transfer is atomic, removes the new host moderator row, and invalidat
     assert.equal(state.sessions.find((session) => session.socketId === 'old-host').role, 'viewer');
     assert.equal(state.sessions.find((session) => session.socketId === 'new-host').role, 'sharer');
     assert.deepEqual(playbackHostUpdate, ['transfer-room', 'new-host']);
-    assert.equal(cacheInvalidations.length, 2);
+    assert.ok(cacheInvalidations.some(([socket, room]) => socket === 'old-host' && room === 'transfer-room'));
+    assert.ok(cacheInvalidations.some(([socket, room]) => socket === 'new-host' && room === 'transfer-room'));
+    assert.ok(cacheInvalidations.some(([socket, room]) => socket === undefined && room === 'transfer-room'));
     assert.equal(canPerformRoomAction(facts('member'), 'playback.seek').allowed, false);
     assert.equal(canPerformRoomAction(facts('owner'), 'playback.seek').allowed, true);
   } finally {

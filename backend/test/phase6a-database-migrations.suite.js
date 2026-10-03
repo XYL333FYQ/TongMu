@@ -177,7 +177,7 @@ async function assertGoldenData(dataSource, configDir, sourceLevel) {
 test('historical Git-backed fixture matrix upgrades with identity and credential golden assertions', async (t) => {
   assert.deepEqual(
     HISTORICAL_FIXTURES.map((fixture) => fixture.id),
-    SUPPORTED_DATABASE_SCHEMAS.filter(schema => schema.id !== 'tongmu-movie-create-receipts').map((schema) => schema.id),
+    SUPPORTED_DATABASE_SCHEMAS.filter(schema => !['tongmu-movie-create-receipts', 'tongmu-room-experience'].includes(schema.id)).map((schema) => schema.id),
   );
   for (const fixture of HISTORICAL_FIXTURES) {
     await t.test(`${fixture.id} (${fixture.evidence})`, async (t) => {
@@ -226,7 +226,7 @@ test('current synchronize-created V2 adopts only after exact fingerprint and rep
   const firstBackup = first.result.backupDir;
   try {
     assert.equal(first.result.baselineAdopted, true);
-    assert.deepEqual(first.result.executed, ['EncryptLegacyCredentials1790500000000', 'EncryptMoviePasswords1790600000000', 'ProtectMovieUrls1790700000000', 'AddMovieCreateRequests1790800000000']);
+    assert.deepEqual(first.result.executed, ['EncryptLegacyCredentials1790500000000', 'EncryptMoviePasswords1790600000000', 'ProtectMovieUrls1790700000000', 'AddMovieCreateRequests1790800000000', 'AddRoomExperience1790900000000']);
   } finally {
     await first.dataSource.destroy();
   }
@@ -308,6 +308,8 @@ test('a forged completed migration history cannot hide legacy plaintext credenti
   const forged = await rawDatabase(paths.databasePath);
   const { AddMovieCreateRequests1790800000000 } = require('../dist/migrations/1790800000000-AddMovieCreateRequests');
   await new AddMovieCreateRequests1790800000000().up(forged.createQueryRunner());
+  const { AddRoomExperience1790900000000 } = require('../dist/migrations/1790900000000-AddRoomExperience');
+  await new AddRoomExperience1790900000000().up(forged.createQueryRunner());
   await forged.query('CREATE TABLE "migrations" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "timestamp" bigint NOT NULL, "name" varchar NOT NULL)');
   for (const migration of ORDERED_MIGRATIONS) {
     await forged.query('INSERT INTO "migrations" ("timestamp", "name") VALUES (?, ?)', [migration.timestamp, migration.name]);

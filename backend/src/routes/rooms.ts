@@ -5,6 +5,7 @@ import { Room } from '../entities/Room';
 import { Session } from '../entities/Session';
 import { DanmakuTrack } from '../entities/DanmakuTrack';
 import { IsNull, In } from 'typeorm';
+import { parseRoomPolicy, roomDelegates } from '../modules/room/room-policy';
 import {
   authenticateToken,
   AuthenticatedRequest,
@@ -21,7 +22,7 @@ const danmakuTrackRepository = () => AppDataSource.getRepository(DanmakuTrack);
 function canControlRoom(req: AuthenticatedRequest, room: Room): boolean {
   const role = req.user?.role;
   if (role === 'root') return true;
-  if (role === 'admin' && room.ownerUserId === req.user?.userId) return true;
+  if (role !== 'guest' && room.ownerUserId === req.user?.userId) return true;
   return false;
 }
 
@@ -72,14 +73,16 @@ export function createRoomsRouter(io: SocketIOServer): Router {
   // GET /api/rooms - 获取房间列表
   router.get(
     '/',
-    async (_req: AuthenticatedRequest, res: Response) => {
+    async (req: AuthenticatedRequest, res: Response) => {
       try {
         const roomRepo = roomRepository();
         const sessionRepo = sessionRepository();
-        const rooms = await roomRepo.find({
+        const allRooms = await roomRepo.find({
           where: { status: 'active' },
           order: { lastAccessedAt: 'DESC' },
         });
+        const rooms = allRooms.filter(room => parseRoomPolicy(room.policyJson).visibility === 'public' ||
+          (req.query.owned === 'true' && room.ownerUserId === req.user?.userId));
 
         // 批量查询观众数和 sharer 在线状态（消除 N+1）
         const roomIds = rooms.map((r) => r.roomId);
@@ -108,8 +111,13 @@ export function createRoomsRouter(io: SocketIOServer): Router {
               maxViewers: room.maxViewers,
               hasPassword: !!room.password,
               viewerCount: viewerCountMap.get(room.roomId) ?? 0,
-              sharerOnline: sharerSet.has(room.roomId),
+              sharerOnline: sharerSet.has(room.roomId) || roomDelegates.has(room.roomId),
               mode: room.mode,
+              activity: room.activity,
+              visibility: parseRoomPolicy(room.policyJson).visibility,
+              lifetime: parseRoomPolicy(room.policyJson).lifetime,
+              allowGuests: parseRoomPolicy(room.policyJson).allowGuests,
+              collaboration: parseRoomPolicy(room.policyJson).collaboration,
               lastAccessedAt: room.lastAccessedAt.toISOString(),
               createdAt: room.createdAt.toISOString(),
             }));

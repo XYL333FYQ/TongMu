@@ -1,0 +1,447 @@
+[
+  {
+    "height": 1080,
+    "lang": "zh-CN",
+    "scrollHeight": 1080,
+    "scrollWidth": 1920,
+    "width": 1920,
+    "page": "hall"
+  },
+  {
+    "height": 1080,
+    "lang": "zh-CN",
+    "scrollHeight": 1080,
+    "scrollWidth": 2560,
+    "width": 2560,
+    "page": "hall"
+  },
+  {
+    "height": 768,
+    "lang": "zh-CN",
+    "scrollHeight": 1142,
+    "scrollWidth": 1014,
+    "width": 1024,
+    "page": "hall"
+  },
+  {
+    "height": 1024,
+    "lang": "zh-CN",
+    "scrollHeight": 1166,
+    "scrollWidth": 758,
+    "width": 768,
+    "page": "hall"
+  },
+  {
+    "height": 844,
+    "lang": "zh-CN",
+    "scrollHeight": 1569,
+    "scrollWidth": 380,
+    "width": 390,
+    "page": "hall"
+  },
+  {
+    "height": 390,
+    "lang": "zh-CN",
+    "scrollHeight": 1166,
+    "scrollWidth": 834,
+    "width": 844,
+    "page": "hall"
+  },
+  {
+    "height": 800,
+    "lang": "zh-CN",
+    "scrollHeight": 1542,
+    "scrollWidth": 590,
+    "width": 600,
+    "page": "hall"
+  },
+  {
+    "height": 800,
+    "lang": "zh-CN",
+    "scrollHeight": 1520,
+    "scrollWidth": 591,
+    "width": 601,
+    "page": "hall"
+  },
+  {
+    "height": 900,
+    "lang": "zh-CN",
+    "scrollHeight": 1166,
+    "scrollWidth": 790,
+    "width": 800,
+    "page": "hall"
+  },
+  {
+    "height": 900,
+    "lang": "zh-CN",
+    "scrollHeight": 1166,
+    "scrollWidth": 791,
+    "width": 801,
+    "page": "hall"
+  },
+  {
+    "height": 700,
+    "lang": "zh-CN",
+    "scrollHeight": 853,
+    "scrollWidth": 1040,
+    "width": 1050,
+    "page": "hall"
+  },
+  {
+    "height": 700,
+    "lang": "zh-CN",
+    "scrollHeight": 853,
+    "scrollWidth": 1041,
+    "width": 1051,
+    "page": "hall"
+  },
+  {
+    "height": 480,
+    "lang": "zh-CN",
+    "scrollHeight": 807,
+    "scrollWidth": 1430,
+    "width": 1440,
+    "page": "hall"
+  },
+  {
+    "height": 640,
+    "lang": "zh-CN",
+    "scrollHeight": 1689,
+    "scrollWidth": 310,
+    "width": 320,
+    "page": "hall"
+  },
+  {
+    "height": 450,
+    "lang": "zh-CN",
+    "scrollHeight": 1154,
+    "scrollWidth": 710,
+    "width": 720,
+    "page": "hall"
+  },
+  {
+    "height": 900,
+    "lang": "zh-CN",
+    "scrollHeight": 900,
+    "scrollWidth": 1440,
+    "width": 1440,
+    "page": "room-watch"
+  },
+  {
+    "height": 1080,
+    "lang": "zh-CN",
+    "scrollHeight": 1080,
+    "scrollWidth": 1920,
+    "width": 1920,
+    "page": "room-watch"
+  },
+  {
+    "height": 1080,
+    "lang": "zh-CN",
+    "scrollHeight": 1080,
+    "scrollWidth": 2560,
+    "width": 2560,
+    "page": "room-watch"
+  },
+  {
+    "height": 768,
+    "lang": "zh-CN",
+    "scrollHeight": 768,
+    "scrollWidth": 1024,
+    "width": 1024,
+    "page": "room-watch"
+  },
+  {
+    "height": 1024,
+    "lang": "zh-CN",
+    "scrollHeight": 1024,
+    "scrollWidth": 768,
+    "width": 768,
+    "page": "room-watch"
+  },
+  {
+    "height": 844,
+    "lang": "zh-CN",
+    "scrollHeight": 844,
+    "scrollWidth": 390,
+    "width": 390,
+    "page": "room-watch"
+  },
+  {
+    "height": 390,
+    "lang": "zh-CN",
+    "scrollHeight": 526,
+    "scrollWidth": 834,
+    "width": 844,
+    "page": "room-watch"
+  },
+  {
+    "height": 800,
+    "lang": "zh-CN",
+    "scrollHeight": 942,
+    "scrollWidth": 590,
+    "width": 600,
+    "page": "room-watch"
+  },
+  {
+    "height": 800,
+    "lang": "zh-CN",
+    "scrollHeight": 844,
+    "scrollWidth": 591,
+    "width": 601,
+    "page": "room-watch"
+  },
+  {
+    "height": 900,
+    "lang": "zh-CN",
+    "scrollHeight": 956,
+    "scrollWidth": 790,
+    "width": 800,
+    "page": "room-watch"
+  },
+  {
+    "height": 900,
+    "lang": "zh-CN",
+    "scrollHeight": 900,
+    "scrollWidth": 801,
+    "width": 801,
+    "page": "room-watch"
+  },
+  {
+    "height": 700,
+    "lang": "zh-CN",
+    "scrollHeight": 700,
+    "scrollWidth": 1050,
+    "width": 1050,
+    "page": "room-watch"
+  },
+  {
+    "height": 700,
+    "lang": "zh-CN",
+    "scrollHeight": 700,
+    "scrollWidth": 1051,
+    "width": 1051,
+    "page": "room-watch"
+  },
+  {
+    "height": 480,
+    "lang": "zh-CN",
+    "scrollHeight": 743,
+    "scrollWidth": 1430,
+    "width": 1440,
+    "page": "room-watch"
+  },
+  {
+    "height": 640,
+    "lang": "zh-CN",
+    "scrollHeight": 844,
+    "scrollWidth": 310,
+    "width": 320,
+    "page": "room-watch"
+  },
+  {
+    "height": 450,
+    "lang": "zh-CN",
+    "scrollHeight": 911,
+    "scrollWidth": 710,
+    "width": 720,
+    "page": "room-watch"
+  },
+  {
+    "height": 900,
+    "lang": "zh-CN",
+    "scrollHeight": 900,
+    "scrollWidth": 1440,
+    "width": 1440,
+    "page": "room-watch-final"
+  },
+  {
+    "height": 1080,
+    "lang": "zh-CN",
+    "scrollHeight": 1080,
+    "scrollWidth": 1920,
+    "width": 1920,
+    "page": "room-watch-final"
+  },
+  {
+    "height": 1080,
+    "lang": "zh-CN",
+    "scrollHeight": 1080,
+    "scrollWidth": 2560,
+    "width": 2560,
+    "page": "room-watch-final"
+  },
+  {
+    "height": 768,
+    "lang": "zh-CN",
+    "scrollHeight": 768,
+    "scrollWidth": 1024,
+    "width": 1024,
+    "page": "room-watch-final"
+  },
+  {
+    "height": 1024,
+    "lang": "zh-CN",
+    "scrollHeight": 1024,
+    "scrollWidth": 768,
+    "width": 768,
+    "page": "room-watch-final"
+  },
+  {
+    "height": 844,
+    "lang": "zh-CN",
+    "scrollHeight": 945,
+    "scrollWidth": 380,
+    "width": 390,
+    "page": "room-watch-final"
+  },
+  {
+    "height": 390,
+    "lang": "zh-CN",
+    "scrollHeight": 567,
+    "scrollWidth": 834,
+    "width": 844,
+    "page": "room-watch-final"
+  },
+  {
+    "height": 800,
+    "lang": "zh-CN",
+    "scrollHeight": 1063,
+    "scrollWidth": 590,
+    "width": 600,
+    "page": "room-watch-final"
+  },
+  {
+    "height": 800,
+    "lang": "zh-CN",
+    "scrollHeight": 909,
+    "scrollWidth": 591,
+    "width": 601,
+    "page": "room-watch-final"
+  },
+  {
+    "height": 900,
+    "lang": "zh-CN",
+    "scrollHeight": 1021,
+    "scrollWidth": 790,
+    "width": 800,
+    "page": "room-watch-final"
+  },
+  {
+    "height": 900,
+    "lang": "zh-CN",
+    "scrollHeight": 900,
+    "scrollWidth": 801,
+    "width": 801,
+    "page": "room-watch-final"
+  },
+  {
+    "height": 700,
+    "lang": "zh-CN",
+    "scrollHeight": 700,
+    "scrollWidth": 1050,
+    "width": 1050,
+    "page": "room-watch-final"
+  },
+  {
+    "height": 700,
+    "lang": "zh-CN",
+    "scrollHeight": 700,
+    "scrollWidth": 1051,
+    "width": 1051,
+    "page": "room-watch-final"
+  },
+  {
+    "height": 480,
+    "lang": "zh-CN",
+    "scrollHeight": 743,
+    "scrollWidth": 1430,
+    "width": 1440,
+    "page": "room-watch-final"
+  },
+  {
+    "height": 640,
+    "lang": "zh-CN",
+    "scrollHeight": 941,
+    "scrollWidth": 310,
+    "width": 320,
+    "page": "room-watch-final"
+  },
+  {
+    "height": 450,
+    "lang": "zh-CN",
+    "scrollHeight": 975,
+    "scrollWidth": 710,
+    "width": 720,
+    "page": "room-watch-final"
+  },
+  {
+    "page": "hall-wide-final",
+    "width": 2560,
+    "height": 1080,
+    "scrollWidth": 2560,
+    "contentX": 600,
+    "contentWidth": 1360,
+    "dpr": 1
+  },
+  {
+    "height": 768,
+    "lang": "zh-CN",
+    "page": "room-modes-final",
+    "scrollWidth": 1024,
+    "segments": [
+      {
+        "height": 32,
+        "scrollWidth": 56,
+        "text": "消息",
+        "whiteSpace": "nowrap",
+        "width": 55.77083587646485
+      },
+      {
+        "height": 32,
+        "scrollWidth": 80,
+        "text": "弹幕轨道",
+        "whiteSpace": "nowrap",
+        "width": 79.78125
+      },
+      {
+        "height": 32,
+        "scrollWidth": 80,
+        "text": "实时弹幕",
+        "whiteSpace": "nowrap",
+        "width": 79.78125
+      }
+    ],
+    "width": 1024
+  },
+  {
+    "height": 768,
+    "lang": "en",
+    "page": "room-modes-final",
+    "scrollWidth": 1024,
+    "segments": [
+      {
+        "height": 32,
+        "scrollWidth": 69,
+        "text": "Messages",
+        "whiteSpace": "nowrap",
+        "width": 69.04167175292969
+      },
+      {
+        "height": 32,
+        "scrollWidth": 49,
+        "text": "Tracks",
+        "whiteSpace": "nowrap",
+        "width": 49.03125
+      },
+      {
+        "height": 32,
+        "scrollWidth": 97,
+        "text": "Live comments",
+        "whiteSpace": "nowrap",
+        "width": 97.26042175292967
+      }
+    ],
+    "width": 1024
+  }
+]

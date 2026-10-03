@@ -6,6 +6,7 @@
  */
 
 import { apiFetch, getApiUrl } from '@/lib/api'
+import { englishErrorMessage } from '@/lib/errorMessage'
 import type {
   AniSubsSource,
   AniSubsSearchResult,
@@ -24,7 +25,9 @@ export async function getAniSubsSources(): Promise<AniSubsSource[]> {
     sources?: AniSubsSource[]
   }
   if (!res.ok || !data.success || !Array.isArray(data.sources)) {
-    throw new Error(data.message || '获取数据源失败')
+    throw new Error(
+      englishErrorMessage(data.message, 'Unable to load AniSubs sources.')
+    )
   }
   return data.sources
 }
@@ -43,7 +46,9 @@ export async function searchAniSubs(
     results?: AniSubsSearchResult[]
   }
   if (!res.ok || !data.success || !Array.isArray(data.results)) {
-    throw new Error(data.message || '搜索失败')
+    throw new Error(
+      englishErrorMessage(data.message, 'AniSubs search failed. Try again.')
+    )
   }
   return data.results
 }
@@ -62,7 +67,9 @@ export async function getAniSubsEpisodes(
     episodes?: AniSubsEpisode[]
   }
   if (!res.ok || !data.success || !Array.isArray(data.episodes)) {
-    throw new Error(data.message || '获取集数失败')
+    throw new Error(
+      englishErrorMessage(data.message, 'Unable to load AniSubs episodes.')
+    )
   }
   return data.episodes
 }
@@ -83,7 +90,9 @@ export async function resolveAniSubsEpisode(
     sourceReference?: string
   }
   if (!res.ok || !data.success || !data.sourceReference) {
-    throw new Error(data.message || '解析播放地址失败')
+    throw new Error(
+      englishErrorMessage(data.message, 'Unable to open this AniSubs episode.')
+    )
   }
   return { sourceReference: data.sourceReference }
 }

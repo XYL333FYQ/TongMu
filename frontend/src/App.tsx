@@ -10,10 +10,12 @@ import { useBackendHealth } from '@/hooks/useBackendHealth'
 import HallPage from '@/pages/HallPage'
 import LoginPage from '@/pages/LoginPage'
 import RoomPage from '@/modules/room/RoomPage'
+import { RoomRuntime } from '@/modules/room/RoomRuntime'
 import AdminPage from '@/pages/AdminPage'
 import ProfilePage from '@/pages/ProfilePage'
 import JoinByRoomIdPage from '@/pages/JoinByRoomIdPage'
 import SettingsPage from '@/pages/SettingsPage'
+import { useTranslation } from '@/i18n'
 
 function AuthInitializer() {
   const setUser = useAuthStore((s) => s.setUser)
@@ -193,6 +195,10 @@ function WatchRedirect() {
 }
 
 function App() {
+  const { locale } = useTranslation()
+  useEffect(() => {
+    document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en'
+  }, [locale])
   // 监听后端自动重启：socket 重连后对比 /health.startedAt，变化时在网页内提示
   useBackendHealth()
 
@@ -206,18 +212,20 @@ function App() {
   return (
     <Layout>
       <AuthInitializer />
+      <RoomRuntime />
       <Routes>
-        <Route path="/" element={<HallPage mode="home" />} />
+        <Route path="/" element={<HallPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route
-          path="/room/:roomId?"
+          path="/room"
           element={
             <RequireAuth>
               <RoomPage />
             </RequireAuth>
           }
         />
+        <Route path="/room/:roomId" element={null} />
         <Route path="/share/:roomId?" element={<ShareRedirect />} />
         <Route path="/watch/:roomId?" element={<WatchRedirect />} />
         <Route path="/direct-share" element={<Navigate to="/" replace />} />
@@ -242,7 +250,7 @@ function App() {
           path="/rooms"
           element={
             <RequireAuth>
-              <HallPage mode="discover" />
+              <HallPage />
             </RequireAuth>
           }
         />

@@ -18,7 +18,7 @@ export const ExpectedSchemaV2 = {
     'user', 'user_mount',
   ],
 } as const;
-export const EXPECTED_CURRENT_SCHEMA_FINGERPRINT = '0c3f68f06ea8cfb2bdee7b242f468248319b1ec9e3caace127fcab7bc5cd28d9';
+export const EXPECTED_CURRENT_SCHEMA_FINGERPRINT = '4d71283f3165d231b04856654d2c6b111bad3ee6961ecc4aeb6027f8c4bc7f1e';
 export const ExpectedCurrentSchema = {
   fingerprint: EXPECTED_CURRENT_SCHEMA_FINGERPRINT,
   tables: [...ExpectedSchemaV2.tables, 'movie_create_request'].sort(),
@@ -40,7 +40,8 @@ export const SUPPORTED_DATABASE_SCHEMAS: readonly SupportedDatabaseSchema[] = [
   { id: 'tongmu-98c6e71-realtime', fingerprint: 'd9a3ebbe0570d8b2c780ee6119b9759dfad751417a1ba5b6a9526bd699c90afd', evidence: 'commit 98c6e71 entity snapshot', current: false },
   { id: 'tongmu-0707e78-music', fingerprint: 'e1f8731bc652498a7c85d6688f9a1c67e4eb7776e88c4ef8ead894934cbc861c', evidence: 'commit 0707e78 entity snapshot', current: false },
   { id: 'tongmu-8eea2bc-current-v2', fingerprint: EXPECTED_SCHEMA_V2_FINGERPRINT, evidence: 'commit 8eea2bc and 75ed7bd entity snapshots', current: true },
-  { id: 'tongmu-movie-create-receipts', fingerprint: EXPECTED_CURRENT_SCHEMA_FINGERPRINT, evidence: 'AddMovieCreateRequests1790800000000 migration and MovieCreateRequest entity', current: true },
+  { id: 'tongmu-movie-create-receipts', fingerprint: '0c3f68f06ea8cfb2bdee7b242f468248319b1ec9e3caace127fcab7bc5cd28d9', evidence: 'AddMovieCreateRequests1790800000000 migration and MovieCreateRequest entity', current: true },
+  { id: 'tongmu-room-experience', fingerprint: EXPECTED_CURRENT_SCHEMA_FINGERPRINT, evidence: 'AddRoomExperience1790900000000 migration and Room/MusicRoomState entities', current: true },
 ] as const;
 
 export const ORDERED_MIGRATIONS = [
@@ -54,6 +55,7 @@ export const ORDERED_MIGRATIONS = [
   { timestamp: 1790600000000, name: 'EncryptMoviePasswords1790600000000', schema: false },
   { timestamp: 1790700000000, name: 'ProtectMovieUrls1790700000000', schema: false },
   { timestamp: 1790800000000, name: 'AddMovieCreateRequests1790800000000', schema: true },
+  { timestamp: 1790900000000, name: 'AddRoomExperience1790900000000', schema: true },
 ] as const;
 
 interface MigrationRow {
@@ -347,6 +349,7 @@ async function adoptCurrentSchemaBaseline(dataSource: DataSource, rows: Migratio
       // The recognized pre-receipt V2 schema may adopt its existing tables,
       // but must actually run the new migration before recording it.
       if (migration.name === 'AddMovieCreateRequests1790800000000' && !(await runner.hasTable('movie_create_request'))) continue;
+      if (migration.name === 'AddRoomExperience1790900000000' && !(await runner.hasColumn('room', 'activity'))) continue;
       if (!applied.has(migration.name)) {
         await runner.query(
           'INSERT INTO "migrations" ("timestamp", "name") VALUES (?, ?)',

@@ -66,7 +66,7 @@ function waitForMetadataOrError(
       cleanup()
       reject(
         new Error(
-          `加载超时：源站 ${Math.round(METADATA_TIMEOUT_MS / 1000)}s 无响应`
+          `The media source did not respond within ${Math.round(METADATA_TIMEOUT_MS / 1000)} seconds. Check the connection and try again.`
         )
       )
     }, METADATA_TIMEOUT_MS)
@@ -162,7 +162,10 @@ function canFallbackToProxy(url: string): boolean {
  *
  * @throws Error 带修复指引的错误；非该场景正常返回
  */
-function assertDirectLinkReachable(targetUrl: string, noProxyFallback: boolean): void {
+function assertDirectLinkReachable(
+  targetUrl: string,
+  noProxyFallback: boolean
+): void {
   if (!noProxyFallback) return
   if (window.location.protocol !== 'https:') return
   let u: URL
@@ -173,8 +176,8 @@ function assertDirectLinkReachable(targetUrl: string, noProxyFallback: boolean):
   }
   if (u.protocol !== 'http:') return
   throw new Error(
-    `直链播放失败：挂载源站为 HTTP（${u.host}），HTTPS 页面下浏览器会强制升级协议导致无法直连。` +
-      '解决方式：为源站配置 HTTPS（如反向代理）后重新保存挂载，或删除影片后改用服务器转发模式重新添加'
+    `Direct playback is unavailable because ${u.host} uses HTTP while this page uses HTTPS. ` +
+      'Enable HTTPS on the source and save it again, or add the content with server forwarding enabled.'
   )
 }
 
@@ -249,7 +252,10 @@ export const directEngine: PlayerEngine = {
         }
         throw err
       }
-      console.warn('[direct-engine] 直连失败，回退到服务器代理:', redactMediaError(err))
+      console.warn(
+        '[direct-engine] 直连失败，回退到服务器代理:',
+        redactMediaError(err)
+      )
       if (source.signal?.aborted) throw createPlayerAbortError()
       resetVideoElement(video)
       try {
@@ -259,7 +265,7 @@ export const directEngine: PlayerEngine = {
         // 包装两次失败上下文：cause 挂回退代理的错误（symptom 因果），
         // 首次直连错误已由上方 console.warn 记录
         throw new Error(
-          `直连失败且回退代理仍失败：${
+          `Direct playback and server forwarding both failed: ${
             proxyErr instanceof Error ? proxyErr.message : String(proxyErr)
           }`,
           { cause: proxyErr }

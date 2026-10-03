@@ -43,18 +43,20 @@ export function redactMediaUrl(value: unknown): string {
 
 /** Sanitize an error/string before it is written to a media log. */
 export function redactMediaError(value: unknown): string {
-  const message = value instanceof Error
-    ? `${value.name}: ${value.message}`
-    : String(value)
+  const message =
+    value instanceof Error ? `${value.name}: ${value.message}` : String(value)
   return message
     .replace(/https?:\/\/[^\s"'<>]+/gi, (url) => redactMediaUrl(url))
-    .replace(/\/api\/stream\/media\/[^\s"'<>?]+(?:\?[^\s"'<>]*)?/gi, '/api/stream/media/<redacted>')
+    .replace(
+      /\/api\/stream\/media\/[^\s"'<>?]+(?:\?[^\s"'<>]*)?/gi,
+      '/api/stream/media/<redacted>'
+    )
     .replace(
       /\b(cookie|set-cookie)\b\s*["']?\s*(?::|=)\s*(?:"[^"]*"|'[^']*'|[^,\r\n]*?(?=\s+(?:authorization|proxy-authorization|roomgrant|token|access[_-]?token|signature|sig|status|range|bytes|timing|resolver|engine)\b\s*["']?\s*(?::|=)|$))/gi,
-      (_match, key: string) => `${key}=<redacted>`,
+      (_match, key: string) => `${key}=<redacted>`
     )
     .replace(
       /\b(authorization|proxy-authorization|roomgrant|token|access[_-]?token|signature|sig)\b\s*["']?\s*(?::|=)\s*["']?(?:Bearer\s+)?[^,\s;"'}]+["']?/gi,
-      (_match, key: string) => `${key}=<redacted>`,
+      (_match, key: string) => `${key}=<redacted>`
     )
 }

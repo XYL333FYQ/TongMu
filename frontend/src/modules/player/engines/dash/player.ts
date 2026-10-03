@@ -25,7 +25,10 @@ import dashjs from 'dashjs'
 import type { MediaPlayerClass } from 'dashjs'
 import type { PlayerController, SeekResult } from '../../types'
 import { resolveProxyUrl, isCliProxyUrl } from '../../services/url-proxy'
-import { redactMediaError, redactMediaUrl } from '../../services/media-redaction'
+import {
+  redactMediaError,
+  redactMediaUrl,
+} from '../../services/media-redaction'
 import { findAllSidxInBuffer, findMoovRange } from './mp4-box-parser'
 import { useP2PStatsStore } from '../../services/p2p-stats-store'
 import { createPlayerAbortError } from '../../utils'
@@ -193,7 +196,8 @@ export class DashPlayer implements PlayerController {
    * @returns MPD 的 Blob URL（供调用方在切换时 revokeObjectURL）
    */
   async attach(startTime?: number): Promise<string> {
-    if (this.externalSignal?.aborted) throw createPlayerAbortError('DashPlayer attach 已被取消')
+    if (this.externalSignal?.aborted)
+      throw createPlayerAbortError('DashPlayer attach 已被取消')
     if (this.state !== 'idle') {
       throw new Error(`DashPlayer 状态不允许 attach: ${this.state}`)
     }
@@ -302,11 +306,15 @@ export class DashPlayer implements PlayerController {
         }
         this.lastDashError = {
           code: e.error?.code,
-          message: e.error?.message ? redactMediaError(e.error.message) : undefined,
+          message: e.error?.message
+            ? redactMediaError(e.error.message)
+            : undefined,
         }
         console.warn('[DashPlayer] dash.js ERROR 事件:', {
           code: e.error?.code,
-          message: e.error?.message ? redactMediaError(e.error.message) : undefined,
+          message: e.error?.message
+            ? redactMediaError(e.error.message)
+            : undefined,
           url: redactMediaUrl(e.error?.url ?? e.request?.url),
         })
       })
@@ -610,7 +618,10 @@ export class DashPlayer implements PlayerController {
         `[DashPlayer] P2P 引擎已启用: channelId=${redactMediaUrl(this.videoUrl)}`
       )
     } catch (err) {
-      console.warn('[DashPlayer] P2P 引擎初始化失败，回退到 HTTP:', redactMediaError(err))
+      console.warn(
+        '[DashPlayer] P2P 引擎初始化失败，回退到 HTTP:',
+        redactMediaError(err)
+      )
       useP2PStatsStore.getState().reset()
     }
   }
@@ -755,7 +766,10 @@ export class DashPlayer implements PlayerController {
 
       return info
     } catch (err) {
-      console.warn('[DashPlayer] 预下载 init segment 异常:', redactMediaError(err))
+      console.warn(
+        '[DashPlayer] 预下载 init segment 异常:',
+        redactMediaError(err)
+      )
       return info
     }
   }
@@ -982,7 +996,6 @@ ${timelineEntries}
         </SegmentTimeline>
 ${segmentUrls}
       </SegmentList>`
-
     } else if (sidxRange) {
       // fallback: SegmentBase + indexRange
       const sidxStart = parseInt(sidxRange.split('-')[0], 10)

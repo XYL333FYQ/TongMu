@@ -1,6 +1,9 @@
+import { t, useTranslation } from '@/i18n'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Socket } from 'socket.io-client'
 import { message } from '@/components/ui/message'
+import { englishErrorMessage } from '@/lib/errorMessage'
+import { useRoomExperienceStore } from '@/store/roomExperienceStore'
 import {
   VOICE_CHANNELS,
   VOICE_FRAME_DURATION_US,
@@ -169,12 +172,15 @@ function getUplinkBacklogBytes(socket: Socket): number {
 }
 
 export function useVoiceChat(options: UseVoiceChatOptions): UseVoiceChatResult {
+  useTranslation()
+
   const { socket, roomId, username } = options
   const [joined, setJoined] = useState(false)
   const [joining, setJoining] = useState(false)
   const [micEnabled, setMicEnabled] = useState(true)
   const [members, setMembers] = useState<VoiceMember[]>([])
   const [globalVolume, setGlobalVolumeState] = useState(1)
+  const localMuted = useRoomExperienceStore((state) => state.localMuted)
   const [peerVolumes, setPeerVolumes] = useState<Map<string, number>>(new Map())
   const [monitorEnabled, setMonitorEnabled] = useState(false)
   const [micVolume, setMicVolumeState] = useState(1)
@@ -242,9 +248,10 @@ export function useVoiceChat(options: UseVoiceChatOptions): UseVoiceChatResult {
   }, [socket, roomId, username])
 
   useEffect(() => {
-    globalVolumeRef.current = globalVolume
-    if (masterGainRef.current) masterGainRef.current.gain.value = globalVolume
-  }, [globalVolume])
+    globalVolumeRef.current = localMuted ? 0 : globalVolume
+    if (masterGainRef.current)
+      masterGainRef.current.gain.value = globalVolumeRef.current
+  }, [globalVolume, localMuted])
 
   useEffect(() => {
     peerVolumesRef.current = peerVolumes
@@ -761,7 +768,7 @@ export function useVoiceChat(options: UseVoiceChatOptions): UseVoiceChatResult {
     const currentSocket = socketRef.current
     const currentRoomId = roomIdRef.current
     if (!currentSocket || !currentRoomId) {
-      message.error('未连接到房间')
+      message.error(t('Join a room before starting voice chat.'))
       return
     }
     if (joinedRef.current || joiningRef.current) return
@@ -966,7 +973,10 @@ export function useVoiceChat(options: UseVoiceChatOptions): UseVoiceChatResult {
         const timer = setTimeout(() => {
           if (!settled) {
             settled = true
-            resolve({ success: false, message: '加入语音超时' })
+            resolve({
+              success: false,
+              message: 'Joining voice chat timed out. Try again.',
+            })
           }
         }, 10_000)
         currentSocket.emit(
@@ -990,7 +1000,10 @@ export function useVoiceChat(options: UseVoiceChatOptions): UseVoiceChatResult {
             } else {
               resolve({
                 success: false,
-                message: result.message ?? '加入语音失败',
+                message: englishErrorMessage(
+                  result.message,
+                  'Unable to join voice chat. Check your room permissions and try again.'
+                ),
               })
             }
           }
@@ -1000,7 +1013,9 @@ export function useVoiceChat(options: UseVoiceChatOptions): UseVoiceChatResult {
       if (!response.success) {
         if (!reconnectingRef.current) {
           message.error(
-            'message' in response ? response.message : '加入语音失败'
+            'message' in response
+              ? response.message
+              : t('Unable to join voice chat. Try again.')
           )
         }
         cleanupAll()
@@ -1058,14 +1073,22 @@ export function useVoiceChat(options: UseVoiceChatOptions): UseVoiceChatResult {
           name === 'NotAllowedError' ||
           name === 'PermissionDeniedError'
         ) {
-          message.error('麦克风权限被拒绝，请允许权限后重试')
+          message.error(
+            t(
+              'Microphone access was denied. Allow it in your browser permissions and try again.'
+            )
+          )
         } else if (
           name === 'NotFoundError' ||
           name === 'DevicesNotFoundError'
         ) {
-          message.error('未找到可用的麦克风设备')
+          message.error(
+            t('No microphone was found. Connect one and try again.')
+          )
         } else {
-          message.error('加入语音失败，请稍后重试')
+          message.error(
+            t('Unable to join voice chat. Check your connection and try again.')
+          )
         }
       }
       cleanupAll()
@@ -1109,7 +1132,11 @@ export function useVoiceChat(options: UseVoiceChatOptions): UseVoiceChatResult {
     const next = Math.max(0, Math.min(1, value))
     setGlobalVolumeState(next)
     globalVolumeRef.current = next
-    if (masterGainRef.current) masterGainRef.current.gain.value = next
+    if (masterGainRef.current)
+      masterGainRef.current.gain.value = useRoomExperienceStore.getState()
+        .localMuted
+        ? 0
+        : next
   }, [])
 
   const setPeerVolume = useCallback((socketId: string, value: number) => {
@@ -1334,7 +1361,9 @@ export function useVoiceChat(options: UseVoiceChatOptions): UseVoiceChatResult {
       if (payload.socketId === socketRef.current?.id) {
         selfMutedRef.current = payload.muted
         message[payload.muted ? 'warning' : 'success'](
-          payload.muted ? '您已被管理员语音禁言' : '语音禁言已解除'
+          payload.muted
+            ? 'A moderator muted you in voice chat.'
+            : 'A moderator unmuted you in voice chat.'
         )
       }
     },
@@ -1344,7 +1373,7 @@ export function useVoiceChat(options: UseVoiceChatOptions): UseVoiceChatResult {
   const handleVoiceKicked = useCallback(
     (payload: { roomId?: string }) => {
       if (payload.roomId && payload.roomId !== roomIdRef.current) return
-      message.error('您已被管理员移出语音')
+      message.error(t('A moderator removed you from voice chat.'))
       leave()
     },
     [leave]
@@ -1355,7 +1384,10 @@ export function useVoiceChat(options: UseVoiceChatOptions): UseVoiceChatResult {
       const currentSocket = socketRef.current
       const currentRoomId = roomIdRef.current
       if (!currentSocket || !currentRoomId) {
-        return Promise.resolve({ success: false, message: '未连接' })
+        return Promise.resolve({
+          success: false,
+          message: t('Return to the room to reconnect.'),
+        })
       }
       return new Promise<{ success: boolean; message?: string }>((resolve) => {
         currentSocket.emit(
@@ -1368,7 +1400,17 @@ export function useVoiceChat(options: UseVoiceChatOptions): UseVoiceChatResult {
               : {}),
           },
           (response: { success: boolean; message?: string }) =>
-            resolve(response ?? { success: false, message: '操作失败' })
+            resolve(
+              response?.success
+                ? response
+                : {
+                    success: false,
+                    message: englishErrorMessage(
+                      response?.message,
+                      'Unable to update voice moderation. Try again.'
+                    ),
+                  }
+            )
         )
       })
     },

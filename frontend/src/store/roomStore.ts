@@ -1,6 +1,9 @@
 import { create } from 'zustand'
 import { apiFetch, getApiUrl, safeJson } from '@/lib/api'
-import { createMovieSubmitter, MovieSubmissionError } from '@/lib/movieSubmission'
+import {
+  createMovieSubmitter,
+  MovieSubmissionError,
+} from '@/lib/movieSubmission'
 import { useAuthStore } from './authStore'
 import type {
   ResolvedSource,
@@ -11,6 +14,8 @@ import type { MediaFormat } from '@/lib/mediaFormat'
 import type { WatchTogetherState } from '@/modules/sync-playback/types'
 import type { AniSubsEpisode } from '@/modules/anisubs/types'
 import { getRoomMediaGrant } from '@/modules/media/roomMediaGrant'
+import { t } from '@/i18n'
+import { englishErrorMessage } from '@/lib/errorMessage'
 
 /**
  * ani-subs 番剧源元数据。
@@ -26,19 +31,42 @@ export interface AniSubsSourceMeta {
   originalTitle: string
 }
 
-function jsonHeaders(): Record<string, string> {
-  return { 'Content-Type': 'application/json' }
+function jsonHeaders(roomId?: string): Record<string, string> {
+  const grant = getRoomMediaGrant(roomId)
+  return {
+    'Content-Type': 'application/json',
+    ...(grant ? { 'X-Room-Grant': grant } : {}),
+  }
 }
 
 const submitMovie = createMovieSubmitter(async (body, key, scope) => {
   const [, , roomId] = JSON.parse(scope) as [string, string | null, string]
-  const res = await apiFetch(`/api/rooms/${encodeURIComponent(roomId)}/movies`, {
-    method: 'POST',
-    headers: { ...jsonHeaders(), 'Idempotency-Key': key },
-    body,
-  })
-  const data = await parseResponse<{ success: boolean; message?: string }>(res)
-  if (!res.ok || !data.success) throw new MovieSubmissionError(res.status, data.message || '新增影片失败')
+  const res = await apiFetch(
+    `/api/rooms/${encodeURIComponent(roomId)}/movies`,
+    {
+      method: 'POST',
+      headers: { ...jsonHeaders(roomId), 'Idempotency-Key': key },
+      body,
+    }
+  )
+  const data = await parseResponse<{
+    success: boolean
+    message?: string
+    movie?: MovieDto
+  }>(res)
+  if (!res.ok || !data.success)
+    throw new MovieSubmissionError(
+      res.status,
+      englishErrorMessage(data.message, 'Unable to add this movie. Try again.')
+    )
+  if (!data.movie)
+    throw new MovieSubmissionError(
+      0,
+      t(
+        'The movie was added, but its receipt is missing. Refresh the queue before trying again.'
+      )
+    )
+  return data.movie
 })
 
 export interface Viewer {
@@ -367,7 +395,7 @@ interface RoomState {
       playsvideoEnabled?: boolean
       sourceMeta?: AniSubsSourceMeta | null
     }
-  ) => Promise<void>
+  ) => Promise<MovieDto>
   updateMovie: (
     roomId: string,
     movieId: number,
@@ -573,13 +601,25 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       movies?: MovieDto[]
     }>(res)
     if (!res.ok || !data.success || !Array.isArray(data.movies)) {
-      throw new Error(data.message || '获取影片列表失败')
+      throw new Error(
+        englishErrorMessage(
+          data.message,
+          'Unable to load the watch queue. Refresh to try again.'
+        )
+      )
     }
     set({ movies: data.movies.map(mapDtoToMovie) })
   },
 
   addMovie: async (roomId, payload) => {
-    await submitMovie(JSON.stringify([getApiUrl(), useAuthStore.getState().user?.id ?? null, roomId]), payload)
+    return await submitMovie(
+      JSON.stringify([
+        getApiUrl(),
+        useAuthStore.getState().user?.id ?? null,
+        roomId,
+      ]),
+      payload
+    )
     // 不直接更新本地 state，等待后端广播 movie-list 刷新
   },
 
@@ -588,7 +628,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       `/api/rooms/${encodeURIComponent(roomId)}/movies/${movieId}`,
       {
         method: 'PUT',
-        headers: jsonHeaders(),
+        headers: jsonHeaders(roomId),
         body: JSON.stringify(payload),
       }
     )
@@ -596,7 +636,12 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       res
     )
     if (!res.ok || !data.success) {
-      throw new Error(data.message || '更新影片失败')
+      throw new Error(
+        englishErrorMessage(
+          data.message,
+          'Unable to update this movie. Try again.'
+        )
+      )
     }
     // 不直接更新本地 state，等待后端广播 movie-list 刷新
   },
@@ -606,13 +651,19 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       `/api/rooms/${encodeURIComponent(roomId)}/movies/${movieId}`,
       {
         method: 'DELETE',
+        headers: jsonHeaders(roomId),
       }
     )
     const data = await parseResponse<{ success: boolean; message?: string }>(
       res
     )
     if (!res.ok || !data.success) {
-      throw new Error(data.message || '删除影片失败')
+      throw new Error(
+        englishErrorMessage(
+          data.message,
+          'Unable to remove this movie. Try again.'
+        )
+      )
     }
     // 后端 REST 删除不会广播 current-movie 事件，需要本地清理
     if (get().currentMovieId === movieId) {
@@ -626,7 +677,7 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       `/api/rooms/${encodeURIComponent(roomId)}/movies/reorder`,
       {
         method: 'POST',
-        headers: jsonHeaders(),
+        headers: jsonHeaders(roomId),
         body: JSON.stringify({ orderedIds }),
       }
     )
@@ -634,7 +685,12 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       res
     )
     if (!res.ok || !data.success) {
-      throw new Error(data.message || '重排序失败')
+      throw new Error(
+        englishErrorMessage(
+          data.message,
+          'Unable to reorder the watch queue. Try again.'
+        )
+      )
     }
     // 不直接更新本地 state，等待后端广播 movie-list 刷新
   },

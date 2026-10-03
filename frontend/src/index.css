@@ -270,18 +270,18 @@ video {
 }
 
 .zen-page-enter {
-  animation: zen-page-enter 0.35s var(--ease-out-expo) both;
+  animation: zen-page-enter var(--tm-motion-enter) var(--ease-out-expo) both;
 }
 
 .zen-page-exit {
-  animation: zen-page-exit 0.2s var(--ease-in-expo) forwards;
+  animation: zen-page-exit var(--tm-motion-exit) var(--ease-in-expo) forwards;
 }
 
 /* ---------- 通用容器/卡片交错入场 ---------- */
 @keyframes zen-stagger-fade-up {
   0% {
     opacity: 0;
-    transform: translateY(16px);
+    transform: translateY(8px);
   }
   100% {
     opacity: 1;
@@ -294,7 +294,8 @@ video {
      （opacity 1 / transform none）。不能用 both/forwards——fill 保持的
      transform 动画值会让元素永久成为 Backdrop Root，导致后代玻璃元素的
      backdrop-filter 采样不到元素外的背景而失效 */
-  animation: zen-stagger-fade-up 0.4s var(--ease-out-expo) backwards;
+  animation: zen-stagger-fade-up var(--tm-motion-enter) var(--ease-out-expo)
+    backwards;
   animation-delay: var(--stagger-delay, 0ms);
 }
 
@@ -322,12 +323,13 @@ video {
 }
 
 .zen-item-enter {
-  animation: zen-item-enter 0.32s var(--ease-out-expo) backwards;
+  animation: zen-item-enter var(--tm-motion-enter) var(--ease-out-expo)
+    backwards;
   animation-delay: var(--item-delay, 0ms);
 }
 
 .zen-item-exit {
-  animation: zen-item-exit 0.28s var(--ease-in-expo) forwards;
+  animation: zen-item-exit var(--tm-motion-exit) var(--ease-in-expo) forwards;
   pointer-events: none;
   will-change: transform, opacity;
 }
@@ -345,7 +347,7 @@ video {
 }
 
 .zen-card-delete {
-  animation: zen-card-delete 0.32s var(--ease-in-expo) forwards;
+  animation: zen-card-delete var(--tm-motion-exit) var(--ease-in-expo) forwards;
   pointer-events: none;
 }
 
@@ -558,21 +560,25 @@ video {
 }
 
 .zen-modal-backdrop-enter {
-  animation: zen-modal-backdrop-enter 0.22s var(--ease-out-expo) forwards;
+  animation: zen-modal-backdrop-enter var(--tm-motion-enter)
+    var(--ease-out-expo) forwards;
 }
 
 .zen-modal-backdrop-exit {
-  animation: zen-modal-backdrop-exit 0.18s var(--ease-soft) forwards;
+  animation: zen-modal-backdrop-exit var(--tm-motion-exit) var(--ease-in-expo)
+    forwards;
 }
 
 .zen-modal-content-enter {
-  animation: zen-modal-content-enter 0.3s var(--ease-out-expo) backwards;
+  animation: zen-dropdown-enter var(--tm-motion-enter) var(--ease-out-expo)
+    backwards;
   contain: layout paint;
   will-change: transform, opacity;
 }
 
 .zen-modal-content-exit {
-  animation: zen-modal-content-exit 0.18s var(--ease-soft) forwards;
+  animation: zen-dropdown-exit var(--tm-motion-exit) var(--ease-in-expo)
+    forwards;
   contain: layout paint;
   will-change: transform, opacity;
   backface-visibility: hidden;
@@ -582,11 +588,11 @@ video {
 @keyframes zen-toast-enter {
   0% {
     opacity: 0;
-    transform: translateX(100vw) scale(0.96);
+    transform: translateY(-8px) scale(0.97);
   }
   100% {
     opacity: 1;
-    transform: translateX(0) scale(1);
+    transform: translateY(0) scale(1);
   }
 }
 
@@ -602,16 +608,17 @@ video {
 .zen-toast-enter {
   /* backwards 而非 both：toast 元素自身带 inline backdrop-filter，
      fill 保持的 transform 会使其自身成为 Backdrop Root、模糊失效 */
-  animation: zen-toast-enter 0.32s var(--ease-out-expo) backwards;
+  animation: zen-toast-enter var(--tm-motion-enter) var(--ease-out-expo)
+    backwards;
 }
 
 /* exit 使用 transition 而非 keyframes。高度恒定不收缩（内容不会被压扁），
    通过负 margin-bottom 过渡收起占位空间，让下方消息平滑上移填补空隙。 */
 .zen-toast-exit {
   transition:
-    opacity 0.28s var(--ease-in-expo),
-    transform 0.28s var(--ease-in-expo),
-    margin-bottom 0.28s var(--ease-in-expo);
+    opacity var(--tm-motion-exit) var(--ease-in-expo),
+    transform var(--tm-motion-exit) var(--ease-in-expo),
+    margin-bottom var(--tm-motion-exit) var(--ease-in-expo);
   will-change: transform, opacity, margin-bottom;
 }
 
@@ -647,12 +654,14 @@ video {
   /* backwards 而非 both：主题面板等下拉容器内有 glass 面板，
      fill 保持的 transform + will-change 会把容器变成 Backdrop Root，
      内层面板的 backdrop-filter 采样不到容器外的背景图而失效 */
-  animation: zen-dropdown-enter 0.24s var(--ease-out-expo) backwards;
+  animation: zen-dropdown-enter var(--tm-motion-enter) var(--ease-out-expo)
+    backwards;
   transform-origin: top right;
 }
 
 .zen-dropdown-exit {
-  animation: zen-dropdown-exit 0.16s var(--ease-in-expo) forwards;
+  animation: zen-dropdown-exit var(--tm-motion-exit) var(--ease-in-expo)
+    forwards;
   transform-origin: top right;
   will-change: transform, opacity;
 }
@@ -672,7 +681,8 @@ video {
 }
 
 .zen-overlay-fade-in {
-  animation: zen-overlay-fade-in 0.22s var(--ease-out-expo) backwards;
+  animation: zen-overlay-fade-in var(--tm-motion-enter) var(--ease-out-expo)
+    backwards;
 }
 
 /* 从左侧弹出的面板动画（用于自定义背景二级面板） */
@@ -699,12 +709,14 @@ video {
 }
 
 .zen-panel-enter-left {
-  animation: zen-panel-enter-left 0.24s var(--ease-out-expo) backwards;
+  animation: zen-panel-enter-left var(--tm-motion-enter) var(--ease-out-expo)
+    backwards;
   transform-origin: top right;
 }
 
 .zen-panel-exit-left {
-  animation: zen-panel-exit-left 0.16s var(--ease-in-expo) forwards;
+  animation: zen-panel-exit-left var(--tm-motion-exit) var(--ease-in-expo)
+    forwards;
   transform-origin: top right;
   will-change: transform, opacity;
 }
@@ -722,8 +734,9 @@ video {
 }
 
 .zen-dropdown-item {
-  animation: zen-dropdown-item-enter 0.24s var(--ease-out-expo) backwards;
-  animation-delay: var(--item-delay, 0ms);
+  animation: zen-dropdown-item-enter var(--tm-motion-enter) var(--ease-out-expo)
+    backwards;
+  animation-delay: calc(var(--item-index, 0) * var(--tm-motion-stagger));
 }
 
 /* ---------- 输入框 focus 光晕（流光边框） ---------- */
@@ -827,11 +840,13 @@ video {
 }
 
 .zen-switch-knob-on {
-  animation: zen-switch-knob-on 0.26s var(--ease-out-expo) forwards;
+  animation: zen-switch-knob-on var(--tm-motion-enter) var(--ease-out-expo)
+    forwards;
 }
 
 .zen-switch-knob-off {
-  animation: zen-switch-knob-off 0.26s var(--ease-out-expo) forwards;
+  animation: zen-switch-knob-off var(--tm-motion-enter) var(--ease-out-expo)
+    forwards;
 }
 
 /* ---------- 脉冲与呼吸效果 ---------- */
@@ -903,7 +918,8 @@ video {
 }
 
 .zen-text-reveal {
-  animation: zen-text-reveal 0.35s var(--ease-out-expo) backwards;
+  animation: zen-text-reveal var(--tm-motion-enter) var(--ease-out-expo)
+    backwards;
   animation-delay: var(--text-delay, 0ms);
 }
 
@@ -1015,7 +1031,8 @@ video {
 }
 
 .zen-comment-enter {
-  animation: zen-comment-enter 0.32s var(--ease-out-expo) backwards;
+  animation: zen-comment-enter var(--tm-motion-enter) var(--ease-out-expo)
+    backwards;
   animation-delay: var(--item-delay, 0ms);
 }
 
@@ -1044,7 +1061,7 @@ video {
 @keyframes zen-notification-enter {
   0% {
     opacity: 0;
-    transform: translateY(-24px) scale(0.96);
+    transform: translateY(-8px) scale(0.97);
   }
   100% {
     opacity: 1;
@@ -1064,11 +1081,13 @@ video {
 }
 
 .zen-notification-enter {
-  animation: zen-notification-enter 0.34s var(--ease-out-expo) backwards;
+  animation: zen-notification-enter var(--tm-motion-enter) var(--ease-out-expo)
+    backwards;
 }
 
 .zen-notification-exit {
-  animation: zen-notification-exit 0.26s var(--ease-in-expo) forwards;
+  animation: zen-notification-exit var(--tm-motion-exit) var(--ease-in-expo)
+    forwards;
   will-change: transform, opacity;
 }
 
@@ -1109,7 +1128,7 @@ video {
 /* =====================================================
    精简动画模式：[data-reduced-motion="true"] 时启用
    - 去除 stagger 延时（--item-delay / --stagger-delay 归零）
-   - 压缩动画持续时间为 150ms
+   - 去除位移和等待，保留近乎即时的状态反馈
    - 去除 hover scale / translateY
    - 去除装饰层（::before / ::after）
    - 仅保留基础 opacity 淡入
@@ -1120,7 +1139,8 @@ video {
 [data-reduced-motion='true'] .zen-comment-enter,
 [data-reduced-motion='true'] .zen-text-reveal {
   animation-delay: 0ms !important;
-  animation-duration: 0.18s !important;
+  animation-duration: 1ms !important;
+  transform: none !important;
 }
 
 [data-reduced-motion='true'] .zen-page-enter,
@@ -1137,8 +1157,9 @@ video {
 [data-reduced-motion='true'] .zen-notification-exit,
 [data-reduced-motion='true'] .zen-overlay-fade-in,
 [data-reduced-motion='true'] .zen-card-delete {
-  animation-duration: 0.18s !important;
-  transition-duration: 0.18s !important;
+  animation-duration: 1ms !important;
+  animation-delay: 0ms !important;
+  transition-duration: 1ms !important;
 }
 
 /* 精简模式：去除 hover transform / 装饰层 */
@@ -1180,6 +1201,7 @@ video {
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }

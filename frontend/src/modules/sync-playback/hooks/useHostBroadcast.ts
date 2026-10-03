@@ -2,6 +2,7 @@ import { useCallback, useRef } from 'react'
 import type { RefObject } from 'react'
 import { useSocket } from '@/hooks/useSocket'
 import { useRoomStore } from '@/store/roomStore'
+import { useRoomExperienceStore } from '@/store/roomExperienceStore'
 import { getBilibiliParseOptions } from '@/modules/bilibili/parseOptions'
 import type { WatchTogetherState, ControlAction } from '../types'
 import { SOCKET_EVENT } from '../constants'
@@ -48,25 +49,48 @@ export function useHostBroadcast({
   // 错位导致的字段静默发散。
   const seqRef = useRef(0)
   const nextMutationId = () => {
-    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
+    if (
+      typeof crypto !== 'undefined' &&
+      typeof crypto.randomUUID === 'function'
+    )
+      return crypto.randomUUID()
     return `${Date.now()}-${Math.random().toString(36).slice(2)}`
   }
   const applyAckMetadata = (response: {
     success?: boolean
-    data?: { version?: number; sourceGeneration?: number; serverTimestamp?: number; state?: WatchTogetherState }
+    data?: {
+      version?: number
+      sourceGeneration?: number
+      serverTimestamp?: number
+      state?: WatchTogetherState
+    }
   }) => {
     if (!response?.success || !response.data) return
     const current = useRoomStore.getState().watchTogether
     useRoomStore.getState().setWatchTogether({
       ...(response.data.state ?? current),
-      version: response.data.version ?? response.data.state?.version ?? current.version,
-      sourceGeneration: response.data.sourceGeneration ?? response.data.state?.sourceGeneration ?? current.sourceGeneration,
-      serverTimestamp: response.data.serverTimestamp ?? response.data.state?.serverTimestamp ?? current.serverTimestamp,
+      version:
+        response.data.version ??
+        response.data.state?.version ??
+        current.version,
+      sourceGeneration:
+        response.data.sourceGeneration ??
+        response.data.state?.sourceGeneration ??
+        current.sourceGeneration,
+      serverTimestamp:
+        response.data.serverTimestamp ??
+        response.data.state?.serverTimestamp ??
+        current.serverTimestamp,
     })
   }
 
   const broadcastState = useCallback(
     (state: WatchTogetherState) => {
+      if (
+        useRoomExperienceStore.getState().snapshot?.activity !== undefined &&
+        useRoomExperienceStore.getState().snapshot?.activity !== 'watch'
+      )
+        return
       if (!socket || !isHostRef.current) return
       // 注入房主 CLI 标记：让观众知道房主是否启用了 CLI 高画质代理，
       // 从而决定是否需要强制走 MP4（观众无法使用房主的 CLI 代理）
@@ -84,38 +108,56 @@ export function useHostBroadcast({
       const diff = computeStateDiff(lastStateRef.current, stateWithCli)
       lastStateRef.current = stateWithCli
       seqRef.current += 1
-      socket.emit(SOCKET_EVENT.STATE, {
-        roomId,
-        state: stateWithCli,
-        diff,
-        seq: seqRef.current,
-        baseVersion: stateWithCli.version,
-        sourceGeneration: stateWithCli.sourceGeneration,
-        mutationId: nextMutationId(),
-        clientTimestamp: Date.now(),
-      }, applyAckMetadata)
+      socket.emit(
+        SOCKET_EVENT.STATE,
+        {
+          roomId,
+          state: stateWithCli,
+          diff,
+          seq: seqRef.current,
+          baseVersion: stateWithCli.version,
+          sourceGeneration: stateWithCli.sourceGeneration,
+          mutationId: nextMutationId(),
+          clientTimestamp: Date.now(),
+        },
+        applyAckMetadata
+      )
     },
     [socket, roomId, isHostRef]
   )
 
   const sendControl = useCallback(
     (action: ControlAction, value?: number) => {
+      if (
+        useRoomExperienceStore.getState().snapshot?.activity !== undefined &&
+        useRoomExperienceStore.getState().snapshot?.activity !== 'watch'
+      )
+        return
       if (!socket || !isHostRef.current) return
       const current = useRoomStore.getState().watchTogether
-      socket.emit(SOCKET_EVENT.CONTROL, {
-        roomId,
-        action,
-        value,
-        baseVersion: current.version,
-        sourceGeneration: current.sourceGeneration,
-        mutationId: nextMutationId(),
-        clientTimestamp: Date.now(),
-      }, applyAckMetadata)
+      socket.emit(
+        SOCKET_EVENT.CONTROL,
+        {
+          roomId,
+          action,
+          value,
+          baseVersion: current.version,
+          sourceGeneration: current.sourceGeneration,
+          mutationId: nextMutationId(),
+          clientTimestamp: Date.now(),
+        },
+        applyAckMetadata
+      )
     },
     [socket, roomId, isHostRef]
   )
 
   const forceSync = useCallback(() => {
+    if (
+      useRoomExperienceStore.getState().snapshot?.activity !== undefined &&
+      useRoomExperienceStore.getState().snapshot?.activity !== 'watch'
+    )
+      return
     if (!socket || !isHostRef.current) return
     const video = videoRef.current
     const storeState = useRoomStore.getState().watchTogether
@@ -128,15 +170,19 @@ export function useHostBroadcast({
     // forceSync 总是广播，跳过浅比较；seq 递增以触发观众端无条件全量应用
     lastStateRef.current = newState
     seqRef.current += 1
-    socket.emit(SOCKET_EVENT.STATE, {
-      roomId,
-      state: newState,
-      seq: seqRef.current,
-      baseVersion: newState.version,
-      sourceGeneration: newState.sourceGeneration,
-      mutationId: nextMutationId(),
-      clientTimestamp: Date.now(),
-    }, applyAckMetadata)
+    socket.emit(
+      SOCKET_EVENT.STATE,
+      {
+        roomId,
+        state: newState,
+        seq: seqRef.current,
+        baseVersion: newState.version,
+        sourceGeneration: newState.sourceGeneration,
+        mutationId: nextMutationId(),
+        clientTimestamp: Date.now(),
+      },
+      applyAckMetadata
+    )
   }, [socket, roomId, isHostRef, videoRef])
 
   return {

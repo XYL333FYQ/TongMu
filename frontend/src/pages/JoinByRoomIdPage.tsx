@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { LogIn } from 'lucide-react'
@@ -8,6 +9,7 @@ import { Input } from '@/components/ui/Input'
 import { roomPath } from '@/lib/roomDirectory'
 
 export default function JoinByRoomIdPage() {
+  useTranslation()
   const navigate = useNavigate()
   const [roomIdInput, setRoomIdInput] = useState('')
 
@@ -30,16 +32,17 @@ export default function JoinByRoomIdPage() {
             <LogIn className="h-6 w-6" />
           </div>
           <Title level={3} className="m-0">
-            加入房间
+            {t('Join a room')}
           </Title>
           <Paragraph type="secondary" className="mt-2">
-            输入房主分享的房间号
+            {t('Enter the room ID shared by the host.')}
           </Paragraph>
 
           <div className="mt-6 flex w-full gap-2">
             <Input
               size="lg"
-              placeholder="输入房间号"
+              placeholder={t('Room ID')}
+              aria-label={t('Room ID')}
               value={roomIdInput}
               onChange={(e) => setRoomIdInput(e.target.value)}
               onKeyDown={(e) => {
@@ -56,7 +59,7 @@ export default function JoinByRoomIdPage() {
               disabled={!roomIdInput.trim()}
               className="shrink-0 whitespace-nowrap"
             >
-              加入
+              {t('Join')}
             </Button>
           </div>
         </div>

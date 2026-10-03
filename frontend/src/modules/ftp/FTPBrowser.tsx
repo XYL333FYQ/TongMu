@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import MountBrowserBase from '@/modules/mounts/MountBrowserBase'
 import { browseFTPMount } from './ftpApi'
 import type { FTPDirectoryEntry } from './types'
@@ -16,9 +17,11 @@ export default function FTPBrowser({
   onClose,
   onSelectFiles,
 }: FTPBrowserProps) {
+  useTranslation()
+
   return (
     <MountBrowserBase<FTPDirectoryEntry>
-      title="浏览 FTP 目录"
+      title={t('Browse FTP folders')}
       mountId={mountId}
       open={open}
       onClose={onClose}

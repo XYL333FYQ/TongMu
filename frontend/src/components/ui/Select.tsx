@@ -1,8 +1,10 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { forwardRef } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronDown, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { t, useTranslation } from '@/i18n'
+import { disclosureExitDuration } from './motion'
 
 export interface SelectOption {
   label: string
@@ -14,13 +16,13 @@ export interface SelectProps {
   error?: string
   options: SelectOption[]
   onChange?: (value: string) => void
-  /** 当前选中值 */
+  /** Current选中值 */
   value?: string | number
   /** 占位文本 */
   placeholder?: string
   /** 是否禁用 */
   disabled?: boolean
-  /** 尺寸：md 默认，sm 紧凑（用于视频控制栏等空间受限场景） */
+  /** 尺寸：md Default，sm 紧凑（用于视频控制栏等空间受限场景） */
   size?: 'sm' | 'md'
   className?: string
   /** 透传到 trigger 按钮上的 ARIA 属性 */
@@ -48,7 +50,7 @@ export const Select = forwardRef<HTMLButtonElement, SelectProps>(
       options,
       onChange,
       value,
-      placeholder = '请选择',
+      placeholder = 'Choose an option',
       disabled = false,
       size = 'md',
       className,
@@ -56,7 +58,9 @@ export const Select = forwardRef<HTMLButtonElement, SelectProps>(
     },
     ref
   ) => {
+    useTranslation()
     const [open, setOpen] = useState(false)
+    const [modalOwner, setModalOwner] = useState<string>()
     const [closing, setClosing] = useState(false)
     const [position, setPosition] = useState<{
       top: number
@@ -68,10 +72,9 @@ export const Select = forwardRef<HTMLButtonElement, SelectProps>(
     const rafRef = useRef<number | null>(null)
     const lastRectRef = useRef<DOMRect | null>(null)
 
-    const selectedLabel = useMemo(() => {
-      const found = options.find((opt) => String(opt.value) === String(value))
-      return found?.label ?? placeholder
-    }, [options, value, placeholder])
+    const selectedLabel =
+      options.find((opt) => String(opt.value) === String(value))?.label ??
+      t(placeholder)
 
     /**
      * 计算下拉菜单位置。
@@ -138,7 +141,7 @@ export const Select = forwardRef<HTMLButtonElement, SelectProps>(
         setClosing(false)
         setPosition(null)
         lastRectRef.current = null
-      }, 160)
+      }, disclosureExitDuration())
     }, [open, closing])
 
     // 打开菜单后持续跟踪触发按钮位置，修正 hover/滚动导致的错位
@@ -275,6 +278,11 @@ export const Select = forwardRef<HTMLButtonElement, SelectProps>(
               if (open || closing) {
                 closeMenu()
               } else {
+                setModalOwner(
+                  triggerRef.current?.closest<HTMLElement>(
+                    '[data-tongmu-modal]'
+                  )?.dataset.tongmuModal
+                )
                 setOpen(true)
                 setClosing(false)
               }
@@ -296,7 +304,7 @@ export const Select = forwardRef<HTMLButtonElement, SelectProps>(
         </div>
         {error && (
           <p className="mt-1 text-xs text-[var(--md-sys-color-error)]">
-            {error}
+            {t(error)}
           </p>
         )}
 
@@ -304,6 +312,7 @@ export const Select = forwardRef<HTMLButtonElement, SelectProps>(
           createPortal(
             <div
               ref={menuRef}
+              data-tongmu-modal-owner={modalOwner}
               className={cn(
                 'glass-strong fixed max-h-72 overflow-auto rounded-[var(--md-sys-shape-corner)] p-1.5 shadow-lg',
                 closing ? 'zen-dropdown-exit' : 'zen-dropdown-enter'
@@ -317,7 +326,7 @@ export const Select = forwardRef<HTMLButtonElement, SelectProps>(
                   '0 8px 24px -8px color-mix(in srgb, var(--md-sys-color-primary) 25%, transparent)',
               }}
             >
-              {options.map((opt) => {
+              {options.map((opt, index) => {
                 const active = String(opt.value) === String(value)
                 return (
                   <button
@@ -330,7 +339,11 @@ export const Select = forwardRef<HTMLButtonElement, SelectProps>(
                         ? 'bg-[var(--md-sys-color-primary-container)] text-[var(--md-sys-color-on-primary-container)]'
                         : 'text-[var(--md-sys-color-on-surface)] hover:bg-[var(--md-sys-color-surface-container-highest)]'
                     )}
-                    style={{ '--item-delay': '0ms' } as React.CSSProperties}
+                    style={
+                      {
+                        '--item-index': Math.min(index, 5),
+                      } as React.CSSProperties
+                    }
                   >
                     <span className="truncate">{opt.label}</span>
                     {active && <Check className="h-3.5 w-3.5 shrink-0" />}

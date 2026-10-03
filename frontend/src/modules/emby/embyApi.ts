@@ -4,6 +4,7 @@
  * 与 webdav/openlist/ftp 挂载 API 结构对齐，路由前缀 /api/emby。
  */
 import { apiFetch } from '@/lib/api'
+import { englishErrorMessage } from '@/lib/errorMessage'
 import { buildProxyUrl } from '@/modules/direct-link/directLinkApi'
 import type { MediaFormat } from '@/lib/mediaFormat'
 import type {
@@ -26,7 +27,9 @@ export async function getEmbyMounts(): Promise<EmbyMount[]> {
     message?: string
   }
   if (!res.ok || !data.success) {
-    throw new Error(data.message || '获取 Emby 挂载列表失败')
+    throw new Error(
+      englishErrorMessage(data.message, 'Unable to load Emby sources.')
+    )
   }
   return data.mounts || []
 }
@@ -46,7 +49,9 @@ export async function createEmbyMount(
     warning?: string
   }
   if (!res.ok || !data.success || !data.mount) {
-    throw new Error(data.message || '创建 Emby 挂载失败')
+    throw new Error(
+      englishErrorMessage(data.message, 'Unable to add this Emby source.')
+    )
   }
   return { ...data.mount, warning: data.warning }
 }
@@ -67,7 +72,9 @@ export async function updateEmbyMount(
     warning?: string
   }
   if (!res.ok || !data.success || !data.mount) {
-    throw new Error(data.message || '更新 Emby 挂载失败')
+    throw new Error(
+      englishErrorMessage(data.message, 'Unable to update this Emby source.')
+    )
   }
   return { ...data.mount, warning: data.warning }
 }
@@ -78,7 +85,9 @@ export async function deleteEmbyMount(id: number): Promise<void> {
   })
   const data = (await res.json()) as { success: boolean; message?: string }
   if (!res.ok || !data.success) {
-    throw new Error(data.message || '删除 Emby 挂载失败')
+    throw new Error(
+      englishErrorMessage(data.message, 'Unable to remove this Emby source.')
+    )
   }
 }
 
@@ -99,7 +108,12 @@ export async function testEmbyMount(
     code?: string
   }
   if (!res.ok || !data.success) {
-    throw new Error(data.message || '测试 Emby 连接失败')
+    throw new Error(
+      englishErrorMessage(
+        data.message,
+        'Unable to connect to Emby. Check the address and credentials.'
+      )
+    )
   }
   return {
     success: true,
@@ -121,7 +135,9 @@ export async function browseEmbyMount(
     message?: string
   }
   if (!res.ok || !data.success) {
-    throw new Error(data.message || '浏览 Emby 挂载失败')
+    throw new Error(
+      englishErrorMessage(data.message, 'Unable to browse this Emby library.')
+    )
   }
   return data.entries || []
 }
@@ -148,7 +164,9 @@ export async function resolveEmby(
     audioTranscodeDisabled?: boolean
   }
   if (!res.ok || !data.success || !data.videoUrl) {
-    throw new Error(data.message || '解析 Emby 条目失败')
+    throw new Error(
+      englishErrorMessage(data.message, 'Unable to open this Emby item.')
+    )
   }
   return {
     title: data.title || '',

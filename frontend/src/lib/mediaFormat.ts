@@ -102,7 +102,11 @@ export function getUnsupportedFormatMessage(
   format?: MediaFormat | string | null
 ): string {
   if (!format || format === 'unknown') {
-    return '该文件格式未知，浏览器无法播放'
+    return t('This file format is unknown. Choose a supported media file.')
   }
-  return `该文件格式（${format.toUpperCase()}）不被浏览器原生支持，请选择 MP4/WebM/MOV/MKV 文件`
+  return t(
+    'This browser cannot play {format} natively. Choose MP4, WebM, MOV or a compatible MKV file.',
+    { format: format.toUpperCase() }
+  )
 }
+import { t } from '@/i18n'

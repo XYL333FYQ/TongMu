@@ -1,3 +1,4 @@
+import { t } from '@/i18n'
 /**
  * WebDAV / OpenList 挂载 API 工厂
  *
@@ -6,6 +7,7 @@
  * 各模块类型独立，保证调用方类型安全。
  */
 import { apiFetch } from '@/lib/api'
+import { englishErrorMessage } from '@/lib/errorMessage'
 import { buildProxyUrl } from '@/modules/direct-link/directLinkApi'
 import type { MediaFormat } from '@/lib/mediaFormat'
 import type {
@@ -81,7 +83,9 @@ export function createMountApi<
         message?: string
       }
       if (!res.ok || !data.success) {
-        throw new Error(data.message || `获取 ${label} 挂载列表失败`)
+        throw new Error(
+          englishErrorMessage(data.message, `Unable to load ${label} sources.`)
+        )
       }
       return data.mounts || []
     },
@@ -99,9 +103,24 @@ export function createMountApi<
         warning?: string
       }
       if (!res.ok || !data.success || !data.mount) {
-        throw new Error(data.message || `创建 ${label} 挂载失败`)
+        throw new Error(
+          englishErrorMessage(
+            data.message,
+            `Unable to add this ${label} source.`
+          )
+        )
       }
-      return { ...data.mount, warning: data.warning }
+      return {
+        ...data.mount,
+        warning: data.warning
+          ? englishErrorMessage(
+              data.warning,
+              t(
+                'This source was saved, but direct access is unavailable. Use server forwarding or check the source HTTPS settings.'
+              )
+            )
+          : undefined,
+      }
     },
 
     async updateMount(
@@ -120,9 +139,24 @@ export function createMountApi<
         warning?: string
       }
       if (!res.ok || !data.success || !data.mount) {
-        throw new Error(data.message || `更新 ${label} 挂载失败`)
+        throw new Error(
+          englishErrorMessage(
+            data.message,
+            `Unable to update this ${label} source.`
+          )
+        )
       }
-      return { ...data.mount, warning: data.warning }
+      return {
+        ...data.mount,
+        warning: data.warning
+          ? englishErrorMessage(
+              data.warning,
+              t(
+                'This source was saved, but direct access is unavailable. Use server forwarding or check the source HTTPS settings.'
+              )
+            )
+          : undefined,
+      }
     },
 
     async deleteMount(id: number): Promise<void> {
@@ -131,7 +165,12 @@ export function createMountApi<
       })
       const data = (await res.json()) as { success: boolean; message?: string }
       if (!res.ok || !data.success) {
-        throw new Error(data.message || `删除 ${label} 挂载失败`)
+        throw new Error(
+          englishErrorMessage(
+            data.message,
+            `Unable to remove this ${label} source.`
+          )
+        )
       }
     },
 
@@ -150,7 +189,12 @@ export function createMountApi<
         code?: string
       }
       if (!res.ok || !data.success) {
-        throw new Error(data.message || `测试 ${label} 连接失败`)
+        throw new Error(
+          englishErrorMessage(
+            data.message,
+            `Unable to connect to ${label}. Check the address and credentials.`
+          )
+        )
       }
       return {
         success: true,
@@ -167,7 +211,12 @@ export function createMountApi<
         message?: string
       }
       if (!res.ok || !data.success) {
-        throw new Error(data.message || `浏览 ${label} 挂载失败`)
+        throw new Error(
+          englishErrorMessage(
+            data.message,
+            `Unable to browse this ${label} folder.`
+          )
+        )
       }
       return data.entries || []
     },
@@ -188,7 +237,12 @@ export function createMountApi<
         size?: number
       }
       if (!res.ok || !data.success || !data.videoUrl) {
-        throw new Error(data.message || `解析 ${label} 文件失败`)
+        throw new Error(
+          englishErrorMessage(
+            data.message,
+            `Unable to open this ${label} file.`
+          )
+        )
       }
       return {
         title: data.title || '',
@@ -218,7 +272,12 @@ export function createMountApi<
         directUrl?: string
       }
       if (!res.ok || !data.success || !data.directUrl) {
-        throw new Error(data.message || `获取 ${label} 直链失败`)
+        throw new Error(
+          englishErrorMessage(
+            data.message,
+            `Unable to obtain a direct link from ${label}.`
+          )
+        )
       }
       return data.directUrl
     },

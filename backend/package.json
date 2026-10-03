@@ -11,7 +11,7 @@
     "database:restore": "node dist/cli/database-restore.js",
     "build:exe": "node ../scripts/build-exe.js",
     "test": "npm run build && node --test test/*.test.js && npm run test:migrations",
-    "test:migrations": "node --no-force-async-hooks-checks test/phase6a-database-migrations.suite.js && node --no-force-async-hooks-checks test/movie-idempotency.suite.js"
+    "test:migrations": "node --no-force-async-hooks-checks test/phase6a-database-migrations.suite.js && node --no-force-async-hooks-checks test/movie-idempotency.suite.js && node --no-force-async-hooks-checks test/room-experience.suite.js"
   },
   "keywords": [],
   "author": "",

@@ -1,23 +1,25 @@
+import { t, useTranslation } from '@/i18n'
 import { useCallback, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { X, Check, ChevronRight } from 'lucide-react'
 import { Button } from './Button'
 import { cn } from '@/lib/utils'
+import { disclosureExitDuration } from './motion'
 
 export interface RequestNotificationItem {
-  /** 唯一标识，用于 React key 与状态管理 */
+  /** 唯一标识，用于 React key 与状态Manage */
   id: string
-  /** 通知标题，如「跳转申请」「暂停申请」「观看请求」 */
+  /** 通知标题，如「Seek request」「Pause request」「Join request」 */
   title: string
-  /** 通知正文（ReactNode 允许高亮用户名/时间等关键字） */
+  /** 通知正文（ReactNode Allow高亮Username/时间等关键字） */
   content: React.ReactNode
-  /** 同意按钮文本，默认「同意」 */
+  /** Accept按钮文本，Default「Accept」 */
   okText?: string
-  /** 拒绝按钮文本，默认「拒绝」 */
+  /** Decline按钮文本，Default「Decline」 */
   cancelText?: string
-  /** 同意回调 */
+  /** Accept回调 */
   onOk?: () => void
-  /** 拒绝回调 */
+  /** Decline回调 */
   onCancel?: () => void
   /**
    * 自动关闭延时（毫秒），0 表示不自动关闭。
@@ -27,9 +29,9 @@ export interface RequestNotificationItem {
 }
 
 export interface RequestNotificationProps {
-  /** 当前展示的通知列表（通常同时只展示 1-3 条） */
+  /** Current展示的通知List（通常同时只展示 1-3 ) */
   items: RequestNotificationItem[]
-  /** 通知被关闭（手动 X 或自动超时）时的统一回调，参数为对应 item.id */
+  /** 通知被Close（手动 X 或自动超时）时的统一回调，参数为对应 item.id */
   onClose: (id: string) => void
 }
 
@@ -48,6 +50,8 @@ export function RequestNotification({
   items,
   onClose,
 }: RequestNotificationProps) {
+  useTranslation()
+
   // ESC 关闭最新一条（仅当有通知时）
   useEffect(() => {
     if (items.length === 0) return
@@ -86,6 +90,8 @@ interface NotificationCardProps {
 }
 
 function NotificationCard({ item, onClose }: NotificationCardProps) {
+  useTranslation()
+
   const [leaving, setLeaving] = useState(false)
   const { autoCloseMs = 8000 } = item
 
@@ -100,7 +106,7 @@ function NotificationCard({ item, onClose }: NotificationCardProps) {
         item.onCancel?.()
       }
       // 等待动画结束后再从列表中移除
-      setTimeout(() => onClose(item.id), 380)
+      setTimeout(() => onClose(item.id), disclosureExitDuration())
     },
     [leaving, item, onClose]
   )
@@ -128,7 +134,7 @@ function NotificationCard({ item, onClose }: NotificationCardProps) {
       role="dialog"
       aria-live="polite"
     >
-      {/* 顶部自动关闭进度条 */}
+      {/* Top自动Close进度 comments */}
       {autoCloseMs > 0 && (
         <div className="relative h-0.5 w-full overflow-hidden bg-[var(--md-sys-color-surface-container-highest)]">
           <div
@@ -159,7 +165,7 @@ function NotificationCard({ item, onClose }: NotificationCardProps) {
           <button
             type="button"
             onClick={() => handleAction(false)}
-            aria-label="关闭"
+            aria-label={t('Close')}
             className="rounded-[var(--md-sys-radius-small)] p-0.5 text-[var(--md-sys-color-on-surface-variant)] transition-all hover:bg-[var(--md-sys-color-surface-container)] hover:text-[var(--md-sys-color-on-surface)] hover:scale-110 active:scale-95"
           >
             <X className="h-4 w-4" />
@@ -180,7 +186,7 @@ function NotificationCard({ item, onClose }: NotificationCardProps) {
             className="h-8 px-3 text-xs"
             onClick={() => handleAction(false)}
           >
-            {item.cancelText ?? '拒绝'}
+            {item.cancelText ?? t('Decline')}
           </Button>
           <Button
             variant="primary"
@@ -189,17 +195,16 @@ function NotificationCard({ item, onClose }: NotificationCardProps) {
             icon={<Check className="h-3.5 w-3.5" />}
             onClick={() => handleAction(true)}
           >
-            {item.okText ?? '同意'}
+            {item.okText ?? t('Accept')}
           </Button>
         </div>
       </div>
 
-      <style>{`
-        @keyframes request-notification-shrink {
-          from { width: 100%; }
-          to { width: 0%; }
+      <style>
+        {
+          '\n        @keyframes request-notification-shrink {\n          from { width: 100%; }\n          to { width: 0%; }\n        }\n      '
         }
-      `}</style>
+      </style>
     </div>
   )
 }

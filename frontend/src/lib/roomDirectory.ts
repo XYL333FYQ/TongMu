@@ -9,6 +9,10 @@ export interface RoomListItem {
   viewerCount: number
   sharerOnline: boolean
   mode: 'screen-share' | 'watch-together'
+  activity?: 'watch' | 'listen' | 'screen'
+  visibility?: 'public' | 'private'
+  lifetime?: 'temporary' | 'persistent'
+  allowGuests?: boolean
   lastAccessedAt: string
   createdAt: string
 }

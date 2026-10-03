@@ -9,6 +9,7 @@ import {
 import { Session } from "./Session";
 import { Movie } from "./Movie";
 import { MusicQueueItem } from './MusicQueueItem';
+import type { RoomActivity } from '../modules/room/room-policy';
 
 export type RoomStatus = "active" | "closed";
 export type RoomMode = "screen-share" | "watch-together";
@@ -44,6 +45,16 @@ export class Room {
     default: "screen-share",
   })
   mode!: RoomMode;
+
+  // Keep mode for older clients. Listen maps to watch-together there.
+  @Column({ type: 'varchar', default: 'watch' })
+  activity!: RoomActivity;
+
+  @Column({ type: 'text', default: '{}' })
+  policyJson!: string;
+
+  @Column({ type: 'datetime', nullable: true })
+  emptySince!: Date | null;
 
   /**
    * 投屏模式（mode === 'screen-share'）下的子模式：

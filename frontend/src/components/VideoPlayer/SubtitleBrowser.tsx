@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 /**
  * 字幕目录浏览器组件。
  *
@@ -18,6 +19,7 @@ import {
 } from 'lucide-react'
 import { apiFetch } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { englishErrorMessage } from '@/lib/errorMessage'
 
 interface BrowseEntry {
   name: string
@@ -49,6 +51,8 @@ interface SubtitleBrowserProps {
 }
 
 export function SubtitleBrowser({ movieId, onSelect }: SubtitleBrowserProps) {
+  useTranslation()
+
   const [entries, setEntries] = useState<BrowseEntry[]>([])
   const [currentPath, setCurrentPath] = useState<string>('')
   const [parentPath, setParentPath] = useState<string | null>(null)
@@ -66,7 +70,12 @@ export function SubtitleBrowser({ movieId, onSelect }: SubtitleBrowserProps) {
         const res = await apiFetch(`/api/subtitles/browse?${params}`)
         const data = (await res.json()) as BrowseResponse
         if (!res.ok || !data.success) {
-          setError(data.message || '浏览目录失败')
+          setError(
+            englishErrorMessage(
+              data.message,
+              'Unable to browse this folder. Try again.'
+            )
+          )
           setEntries([])
           return
         }
@@ -74,7 +83,7 @@ export function SubtitleBrowser({ movieId, onSelect }: SubtitleBrowserProps) {
         setCurrentPath(data.currentPath || '')
         setParentPath(data.parentPath ?? null)
       } catch (err) {
-        setError(err instanceof Error ? err.message : '网络错误')
+        setError(englishErrorMessage(err, 'Connection failed. Try again.'))
         setEntries([])
       } finally {
         setLoading(false)
@@ -105,7 +114,12 @@ export function SubtitleBrowser({ movieId, onSelect }: SubtitleBrowserProps) {
         const res = await apiFetch(`/api/subtitles/load?${params}`)
         const data = (await res.json()) as LoadResponse
         if (!res.ok || !data.success || !data.content) {
-          setError(data.message || '加载字幕失败')
+          setError(
+            englishErrorMessage(
+              data.message,
+              'Unable to load these subtitles. Try another file.'
+            )
+          )
           return
         }
         onSelect(
@@ -114,7 +128,7 @@ export function SubtitleBrowser({ movieId, onSelect }: SubtitleBrowserProps) {
           data.format || 'srt'
         )
       } catch (err) {
-        setError(err instanceof Error ? err.message : '网络错误')
+        setError(englishErrorMessage(err, 'Connection failed. Try again.'))
       } finally {
         setLoadingFile(null)
       }
@@ -140,6 +154,7 @@ export function SubtitleBrowser({ movieId, onSelect }: SubtitleBrowserProps) {
       <div className="mb-2 flex items-center gap-1.5">
         <button
           type="button"
+          aria-label={t('Parent folder')}
           onClick={handleBack}
           disabled={!parentPath || loading}
           className={cn(
@@ -156,7 +171,7 @@ export function SubtitleBrowser({ movieId, onSelect }: SubtitleBrowserProps) {
           style={{ color: 'var(--md-sys-color-on-surface)' }}
           title={currentPath}
         >
-          {shortPath || '根目录'}
+          {shortPath || t('Root folder')}
         </span>
       </div>
 
@@ -171,14 +186,14 @@ export function SubtitleBrowser({ movieId, onSelect }: SubtitleBrowserProps) {
             className="py-4 text-center text-[11px]"
             style={{ color: 'var(--md-sys-color-error)' }}
           >
-            {error}
+            {t(error)}
           </div>
         ) : entries.length === 0 ? (
           <div
             className="py-4 text-center text-[11px]"
             style={{ color: 'var(--md-sys-color-on-surface-variant)' }}
           >
-            目录为空
+            {t('This folder is empty.')}
           </div>
         ) : (
           <div className="flex flex-col gap-0.5">

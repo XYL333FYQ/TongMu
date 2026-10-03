@@ -27,6 +27,8 @@ import { roomPermissionService } from '../room-permission.service';
 import { roomSessionService } from '../room-session.service';
 import { roomStateService } from '../room-state.service';
 import { playbackMemoryService } from '../../playback-memory';
+import { roomExperienceService } from '../room-experience.service';
+import { validateRoomPolicy } from '../room-policy';
 
 /** 8 位 roomId 生成器（数字 + 大小写字母） */
 const generateRoomId = customAlphabet(
@@ -41,6 +43,7 @@ interface CreateRoomPayload {
   maxViewers?: number;
   requireApproval?: boolean;
   mode?: 'screen-share' | 'watch-together';
+  policy?: unknown;
 }
 
 /** admin-close-room 事件 payload */
@@ -64,6 +67,16 @@ export class RoomLifecycleHandler implements SocketEventHandler {
           const userId: number = socket.data.userId;
           const role: UserRole = socket.data.role;
           const settings = await getSystemSettings();
+          // Legacy clients did not require a name. New policy-aware clients do.
+          const name = payload?.name === undefined && payload?.policy === undefined ? 'TongMu room' : payload?.name;
+          if (!payload || typeof name !== 'string' || !name.trim() || name.length > 120 ||
+            (payload.maxViewers !== undefined && (!Number.isInteger(payload.maxViewers) || payload.maxViewers < 1 || payload.maxViewers > 100)) ||
+            (payload.password !== undefined && (typeof payload.password !== 'string' || payload.password.length > 128)) ||
+            (payload.requireApproval !== undefined && typeof payload.requireApproval !== 'boolean') ||
+            (payload.mode !== undefined && !['screen-share', 'watch-together'].includes(payload.mode))) {
+            return safeAck(callback, { success: false, message: '请填写房间名称并检查加入规则' });
+          }
+          const policy = validateRoomPolicy(payload.policy ?? {});
           if (!roomPermissionService.canCreateRoom(role, settings)) {
             const hint =
               role === 'guest'
@@ -80,16 +93,16 @@ export class RoomLifecycleHandler implements SocketEventHandler {
           // 创建新房间前，查找并离开用户当前活跃的旧房间（sharer session）。
           // 否则 socket 会同时存在于新旧两个房间，收到旧房间的 movie-list 等
           // 广播事件，导致新房间显示旧房间的影片列表。
-          const oldSharer = await roomPermissionService.getSharerBySocketId(socket.id);
+          const oldSharer = await roomPermissionService.getActiveSession(socket);
           if (oldSharer && oldSharer.roomId) {
             socket.leave(oldSharer.roomId);
             // 结束旧 session，避免旧房间的状态残留
-            oldSharer.endedAt = new Date();
-            await AppDataSource.getRepository(Session).save(oldSharer);
+            await roomSessionService.endSession(socket.id);
             // 失效权限缓存：旧 socket 的 isRoomHost 缓存应立即清除
             roomPermissionService.invalidatePermissionCache(oldSharer.socketId, oldSharer.roomId);
             // 通知旧房间（如有观众）房主已离开
             roomStateService.cancelReconnectTimer(oldSharer.roomId);
+            await roomExperienceService.memberLeft(io, oldSharer.roomId, socket.id, oldSharer.role === 'sharer');
           }
 
           const roomRepo = AppDataSource.getRepository(Room);
@@ -106,11 +119,14 @@ export class RoomLifecycleHandler implements SocketEventHandler {
 
           const room = roomRepo.create({
             roomId,
-            name: payload.name?.trim() || `房间 ${roomId}`,
+            name: name.trim(),
             password: passwordHash,
             maxViewers: payload.maxViewers ?? 10,
             status: 'active',
-            mode: payload.mode ?? 'screen-share',
+            mode: payload.mode ?? 'watch-together',
+            activity: payload.mode === 'screen-share' ? 'screen' : 'watch',
+            policyJson: JSON.stringify(policy),
+            emptySince: null,
             requireApproval: payload.requireApproval ?? false,
             ownerUserId: userId || null,
           });
@@ -122,7 +138,7 @@ export class RoomLifecycleHandler implements SocketEventHandler {
 
           return safeAck(callback, {
             success: true,
-            data: { roomId, mode: room.mode, mediaGrant: hostSession?.mediaGrant },
+            data: { roomId, mode: room.mode, activity: room.activity, mediaGrant: hostSession?.mediaGrant },
           });
         } catch (err) {
           console.error('[create-room] error:', err);
@@ -152,16 +168,7 @@ export class RoomLifecycleHandler implements SocketEventHandler {
 
         // 清空 hostSocketId，但保留播放状态（playback 仍在内存/DB）
         // 服务器将继续推算播放进度并广播给观众，观众可继续观看
-        await playbackMemoryService.updateHostSocket(roomId, null);
-
-        // 广播 host-disconnected 给房间内所有成员
-        // 观众端据此进入"自主控制模式"
-        io.to(roomId).emit('host-disconnected', { roomId });
-
-        // 启动重连定时器：超时（10 分钟）则关闭房间
-        roomStateService.startReconnectTimer(roomId, () => {
-          void roomStateService.closeRoomAndNotify(io, roomId, socket.id);
-        });
+        await roomExperienceService.memberLeft(io, roomId, socket.id, true);
 
         // 房主 socket 主动离开房间（保持 socket 连接，允许房主浏览其他页面）
         await socket.leave(roomId);
@@ -182,10 +189,9 @@ export class RoomLifecycleHandler implements SocketEventHandler {
           return safeAck(callback, { success: false, message: '无权限关闭房间' });
         }
 
-        // 取消可能的重连定时器，避免重复触发关闭
-        roomStateService.cancelReconnectTimer(sharer.roomId);
-
-        await roomStateService.closeRoomAndNotify(io, sharer.roomId, socket.id);
+        if (!(await roomStateService.closeRoomAndNotify(io, sharer.roomId, socket.id))) {
+          return safeAck(callback, { success: false, message: '无权限关闭房间' });
+        }
         socket.leave(sharer.roomId);
         return safeAck(callback, { success: true });
       } catch (err) {
@@ -222,14 +228,13 @@ export class RoomLifecycleHandler implements SocketEventHandler {
             });
           }
 
-          // 取消可能的重连定时器
-          roomStateService.cancelReconnectTimer(payload.roomId);
-
-          await roomStateService.closeRoomAndNotify(
+          const closed = await roomStateService.closeRoomAndNotify(
             io,
             payload.roomId,
             sharer.socketId,
+            { adminSocketId: socket.id },
           );
+          if (!closed) return safeAck(callback, { success: false, message: '无权限：仅管理员可关闭房间' });
           return safeAck(callback, { success: true });
         } catch (err) {
           console.error('[admin-close-room] error:', err);

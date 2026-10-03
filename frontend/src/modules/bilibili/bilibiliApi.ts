@@ -1,5 +1,7 @@
+import { t } from '@/i18n'
 import { apiFetch } from '@/lib/api'
 import { redactMediaError } from '@/modules/player/services/media-redaction'
+import { englishErrorMessage } from '@/lib/errorMessage'
 import type {
   BilibiliQrData,
   BilibiliUserInfo,
@@ -49,7 +51,12 @@ export async function getBilibiliQrCode(): Promise<BilibiliQrData> {
     qrDataUrl?: string
   }
   if (!res.ok || !data.success || !data.qrcodeKey || !data.qrDataUrl) {
-    throw new Error(data.message || '获取二维码失败')
+    throw new Error(
+      englishErrorMessage(
+        data.message,
+        'Unable to load a Bilibili sign-in QR code. Try again.'
+      )
+    )
   }
   return {
     qrcodeKey: data.qrcodeKey,
@@ -71,11 +78,21 @@ export async function pollBilibiliQrCode(
     loggedIn?: boolean
   }
   if (!res.ok || !data.success) {
-    throw new Error(data.message || '轮询二维码状态失败')
+    throw new Error(
+      englishErrorMessage(
+        data.message,
+        'Unable to check Bilibili sign-in status. Try again.'
+      )
+    )
   }
   return {
     status: data.status ?? -1,
-    message: data.message || '',
+    message: data.message
+      ? englishErrorMessage(
+          data.message,
+          t('Waiting for Bilibili sign-in confirmation.')
+        )
+      : '',
     loggedIn: !!data.loggedIn,
   }
 }
@@ -114,7 +131,7 @@ export async function loginBilibiliWithCookie(
   const contentType = res.headers.get('content-type') || ''
   if (!contentType.includes('application/json')) {
     throw new Error(
-      `服务器返回了非 JSON 响应 (${res.status})，请确认后端服务已正常运行`
+      `The server returned an invalid response (${res.status}). Check that the backend is available.`
     )
   }
   const data = (await res.json()) as {
@@ -124,7 +141,12 @@ export async function loginBilibiliWithCookie(
     avatar?: string
   }
   if (!res.ok || !data.success) {
-    throw new Error(data.message || 'Cookie 登录失败')
+    throw new Error(
+      englishErrorMessage(
+        data.message,
+        'Bilibili cookie sign-in failed. Check the cookie and try again.'
+      )
+    )
   }
   return {
     name: data.name || '',
@@ -192,7 +214,10 @@ async function parseNdjsonStream(
     text = await res.text()
   } catch (err) {
     console.warn('[resolveBilibili] 读取响应体失败:', redactMediaError(err))
-    throw new Error('解析响应失败', { cause: err })
+    throw new Error(
+      'Unable to read the media resolution response. Try again.',
+      { cause: err }
+    )
   }
 
   let resolved: ResolvedSource | null = null
@@ -204,18 +229,35 @@ async function parseNdjsonStream(
     try {
       const data = JSON.parse(line) as ResolveProgressLine
       if (data.status === 'parsing' && data.step && data.message) {
-        onProgress?.(data.step, data.message)
+        onProgress?.(
+          data.step,
+          englishErrorMessage(data.message, t('Resolving Bilibili media…'))
+        )
       } else if (data.status === 'done' && data.videoUrl) {
         resolved = mapResolvedBilibili(data)
       } else if (data.status === 'error') {
         if (data.code === 'NO_PERMISSION') {
-          streamError = new Error(data.message || '无权限播放，可能需要大会员')
+          streamError = new Error(
+            englishErrorMessage(
+              data.message,
+              'This video requires account access or a Bilibili Premium subscription.'
+            )
+          )
         } else {
-          streamError = new Error(data.message || '解析 B站 视频失败')
+          streamError = new Error(
+            englishErrorMessage(
+              data.message,
+              'Unable to resolve this Bilibili video. Try again.'
+            )
+          )
         }
       }
     } catch (err) {
-      console.warn('[resolveBilibili] 解析进度行失败:', redactMediaError(line), redactMediaError(err))
+      console.warn(
+        '[resolveBilibili] 解析进度行失败:',
+        redactMediaError(line),
+        redactMediaError(err)
+      )
     }
   }
 
@@ -227,7 +269,7 @@ async function parseNdjsonStream(
     return resolved
   }
 
-  throw new Error('解析 B站 视频未完成')
+  throw new Error('Bilibili media resolution did not finish. Try again.')
 }
 
 /**
@@ -280,14 +322,26 @@ export async function resolveBilibili(
     const data = (await res.json()) as ResolveProgressLine
     if (!res.ok || !data.success || !data.videoUrl) {
       if (data.code === 'NO_PERMISSION') {
-        throw new Error(data.message || '无权限播放，可能需要登录或大会员')
+        throw new Error(
+          englishErrorMessage(
+            data.message,
+            'This video requires a signed-in Bilibili account or a Premium subscription.'
+          )
+        )
       }
-      throw new Error(data.message || '解析 B站 视频失败')
+      throw new Error(
+        englishErrorMessage(
+          data.message,
+          'Unable to resolve this Bilibili video. Try again.'
+        )
+      )
     }
     return mapResolvedBilibili(data)
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') {
-      throw new Error('解析 B站 视频超时，请稍后重试', { cause: err })
+      throw new Error('Bilibili media resolution timed out. Try again.', {
+        cause: err,
+      })
     }
     throw err
   } finally {

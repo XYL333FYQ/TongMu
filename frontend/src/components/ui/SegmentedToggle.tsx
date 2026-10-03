@@ -1,4 +1,3 @@
-import { useRef, useEffect, useState } from 'react'
 import { cn } from '@/lib/utils'
 
 export interface SegmentedToggleOption {
@@ -21,55 +20,16 @@ export function SegmentedToggle({
   disabled = false,
   className,
 }: SegmentedToggleProps) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const [indicatorStyle, setIndicatorStyle] = useState<{
-    left: number
-    width: number
-  }>({
-    left: 0,
-    width: 0,
-  })
-
-  useEffect(() => {
-    if (!containerRef.current) return
-    const activeIndex = options.findIndex((o) => o.value === value)
-    if (activeIndex < 0) return
-    const buttons = containerRef.current.querySelectorAll(
-      'button[data-segment]'
-    )
-    const activeBtn = buttons[activeIndex] as HTMLElement | undefined
-    if (activeBtn) {
-      setIndicatorStyle({
-        left: activeBtn.offsetLeft,
-        width: activeBtn.offsetWidth,
-      })
-    }
-  }, [value, options])
-
   return (
     <div
-      ref={containerRef}
       className={cn(
-        'glass-strong relative flex items-center gap-1 rounded-full p-1 shadow-lg',
-        'border border-[var(--md-sys-color-outline)] ring-1 ring-[var(--md-sys-color-outline-variant)]/40',
-        disabled && 'pointer-events-none opacity-50',
+        'flex min-w-0 items-center gap-1 rounded-xl border border-[var(--md-sys-color-outline-variant)] bg-[var(--md-sys-color-surface-container-low)] p-1',
+        disabled && 'opacity-50',
         className
       )}
       role="group"
       aria-disabled={disabled}
     >
-      {/* 滑动指示器（带光晕） */}
-      <div
-        className="absolute top-1 bottom-1 rounded-full transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)] shadow-md ring-1 ring-[var(--md-sys-color-outline-variant)]"
-        style={{
-          left: indicatorStyle.left,
-          width: indicatorStyle.width,
-          backgroundColor: 'var(--md-sys-color-primary)',
-          boxShadow:
-            '0 2px 8px -1px color-mix(in srgb, var(--md-sys-color-primary) 40%, transparent), 0 0 12px color-mix(in srgb, var(--md-sys-color-primary) 30%, transparent)',
-        }}
-      />
-
       {options.map((option) => {
         const isActive = option.value === value
         return (
@@ -78,13 +38,13 @@ export function SegmentedToggle({
             type="button"
             data-segment={option.value}
             onClick={() => onChange(option.value)}
-            disabled={disabled || isActive}
+            disabled={disabled}
             aria-pressed={isActive}
             className={cn(
-              'relative z-10 rounded-full px-4 py-1.5 text-xs font-medium transition-all duration-300',
+              'min-w-0 flex-1 rounded-lg px-3 py-2 text-xs font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--md-sys-color-primary)] disabled:cursor-not-allowed',
               isActive
-                ? 'text-[var(--md-sys-color-on-primary)]'
-                : 'text-[var(--md-sys-color-on-surface-variant)] hover:text-[var(--md-sys-color-on-surface)] hover:bg-[var(--md-sys-color-surface-container-high)]/50 hover:scale-105'
+                ? 'bg-[var(--md-sys-color-primary)] text-[var(--md-sys-color-on-primary)] shadow-sm'
+                : 'text-[var(--md-sys-color-on-surface-variant)] hover:text-[var(--md-sys-color-on-surface)] hover:bg-[var(--md-sys-color-surface-container-high)] active:bg-[var(--md-sys-color-secondary-container)]'
             )}
           >
             {option.label}

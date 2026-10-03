@@ -180,7 +180,11 @@ export function appendAuthToken(url: string): string {
   let hasQuery: boolean
   try {
     const u = new URL(url, window.location.origin)
-    if (!u.pathname.startsWith('/api/') || (!isLocalUrl(url) && !isConfiguredApiUrl(url) && !isRelativeUrl(url))) return url
+    if (
+      !u.pathname.startsWith('/api/') ||
+      (!isLocalUrl(url) && !isConfiguredApiUrl(url) && !isRelativeUrl(url))
+    )
+      return url
     if (u.searchParams.has('token')) return appendRoomMediaGrant(url)
     hasQuery = !!u.search
   } catch {

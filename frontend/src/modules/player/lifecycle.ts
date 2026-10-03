@@ -95,7 +95,9 @@ export function getPlayerResourceSnapshot(): PlayerResourceSnapshot {
 
 /** Test-only reset hook; production code should only release owned resources. */
 export function resetPlayerResourceInstrumentation(): void {
-  for (const key of Object.keys(resourceCounts) as Array<keyof PlayerResourceSnapshot>) {
+  for (const key of Object.keys(resourceCounts) as Array<
+    keyof PlayerResourceSnapshot
+  >) {
     resourceCounts[key] = 0
   }
 }

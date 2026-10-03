@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 /**
  * PlayerControlBar —— 一起看播放器底部自定义玻璃拟态控制栏。
  *
@@ -26,15 +27,21 @@ import {
   EyeOff,
 } from 'lucide-react'
 import { cn, formatDuration } from '@/lib/utils'
-import { clearUserPaused, markUserPaused } from '@/modules/player/services/pause-intent'
+import { LanguageSwitch } from '@/components/LanguageSwitch'
+import {
+  clearUserPaused,
+  markUserPaused,
+} from '@/modules/player/services/pause-intent'
 import { DanmakuInput } from '@/components/VideoPlayer/parts/DanmakuInput'
 import type { WatchTogetherState } from '@/modules/sync-playback/types'
 
 const RATES = [0.5, 0.75, 1, 1.25, 1.5, 2]
 const VOLUME_STORAGE_KEY = 'zc-player-volume'
 
-/** 弹幕开关图标：圆角屏幕内带"弹"字，关闭时叠加斜线。 */
+/** On-screen comments开关图标：Corner radius屏幕内带"弹"字，Close时叠加斜线。 */
 function DanmakuIcon({ off }: { off?: boolean }) {
+  useTranslation()
+
   return (
     <svg
       width="18"
@@ -57,7 +64,7 @@ function DanmakuIcon({ off }: { off?: boolean }) {
         fontWeight="600"
         fontFamily="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
       >
-        弹
+        ···
       </text>
       {off && <line x1="5" y1="5" x2="19" y2="19" />}
     </svg>
@@ -67,6 +74,8 @@ function DanmakuIcon({ off }: { off?: boolean }) {
 function useVideoCurrentTime(
   videoRef: React.RefObject<HTMLVideoElement | null>
 ) {
+  useTranslation()
+
   const [currentTime, setCurrentTime] = useState(0)
 
   useEffect(() => {
@@ -86,6 +95,8 @@ function useVideoCurrentTime(
 }
 
 function useVideoVolume(videoRef: React.RefObject<HTMLVideoElement | null>) {
+  useTranslation()
+
   const [volume, setVolume] = useState(1)
   const [muted, setMuted] = useState(false)
 
@@ -107,6 +118,8 @@ function useVideoVolume(videoRef: React.RefObject<HTMLVideoElement | null>) {
 function useVideoPlaybackRate(
   videoRef: React.RefObject<HTMLVideoElement | null>
 ) {
+  useTranslation()
+
   const [rate, setRate] = useState(1)
 
   useEffect(() => {
@@ -125,6 +138,8 @@ function useVideoBuffered(
   videoRef: React.RefObject<HTMLVideoElement | null>,
   duration: number
 ) {
+  useTranslation()
+
   const [bufferedEnd, setBufferedEnd] = useState(0)
 
   useEffect(() => {
@@ -156,6 +171,8 @@ function useVideoDuration(
   videoRef: React.RefObject<HTMLVideoElement | null>,
   storeDuration?: number
 ) {
+  useTranslation()
+
   const [duration, setDuration] = useState(() => {
     if (Number.isFinite(storeDuration) && (storeDuration as number) > 0)
       return storeDuration as number
@@ -206,7 +223,7 @@ function useVideoDuration(
 
 interface PlayerControlBarProps {
   isHost: boolean
-  /** 房主已离线：观众进入自主控制模式，可直接 play/pause/seek */
+  /** 房主已Offline：Members进入自主控制模式，可直接 play/pause/seek */
   hostOffline?: boolean
   videoRef: React.RefObject<HTMLVideoElement | null>
   watchTogether: WatchTogetherState
@@ -260,6 +277,8 @@ export function PlayerControlBar({
   controlBarHideMode = false,
   onToggleHideMode,
 }: PlayerControlBarProps) {
+  useTranslation()
+
   const currentTime = useVideoCurrentTime(videoRef)
   const duration = useVideoDuration(videoRef, watchTogether.duration)
   const progress =
@@ -416,18 +435,37 @@ export function PlayerControlBar({
 
   const handleProgressKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
-      if (!controlBarVisible || duration <= 0 || (!canControl && !onRequestSeek)) return
-      const actualTime = canControl ? videoRef.current?.currentTime : currentTime
-      const position = typeof actualTime === 'number' && Number.isFinite(actualTime) ? actualTime : 0
+      if (
+        !controlBarVisible ||
+        duration <= 0 ||
+        (!canControl && !onRequestSeek)
+      )
+        return
+      const actualTime = canControl
+        ? videoRef.current?.currentTime
+        : currentTime
+      const position =
+        typeof actualTime === 'number' && Number.isFinite(actualTime)
+          ? actualTime
+          : 0
       let nextTime: number
       switch (event.key) {
         case 'ArrowLeft':
-        case 'ArrowDown': nextTime = position - 5; break
+        case 'ArrowDown':
+          nextTime = position - 5
+          break
         case 'ArrowRight':
-        case 'ArrowUp': nextTime = position + 5; break
-        case 'Home': nextTime = 0; break
-        case 'End': nextTime = duration; break
-        default: return
+        case 'ArrowUp':
+          nextTime = position + 5
+          break
+        case 'Home':
+          nextTime = 0
+          break
+        case 'End':
+          nextTime = duration
+          break
+        default:
+          return
       }
       event.preventDefault()
       event.stopPropagation()
@@ -439,7 +477,14 @@ export function PlayerControlBar({
         onRequestSeek?.(target)
       }
     },
-    [canControl, controlBarVisible, currentTime, duration, onRequestSeek, videoRef]
+    [
+      canControl,
+      controlBarVisible,
+      currentTime,
+      duration,
+      onRequestSeek,
+      videoRef,
+    ]
   )
 
   const handlePlayPauseClick = useCallback(() => {
@@ -544,17 +589,31 @@ export function PlayerControlBar({
           controlBarVisible ? 'zart-controlbar-enter' : 'zart-controlbar-exit'
         )}
       >
-        {/* 进度条：轨道 + 缓冲 + 已播放 + 服务器同步线 */}
+        {/* 进度 comments：轨道 + 缓冲 + 已Play + 服务器同步线 */}
         <div
           ref={progressRef}
           role="slider"
-          aria-label={canControl ? '播放进度' : onRequestSeek ? '播放进度（申请房主跳转）' : '播放进度（仅房主可拖动）'}
+          aria-label={
+            canControl
+              ? t('Playback position')
+              : onRequestSeek
+                ? t('Playback position (request a seek)')
+                : t('Playback position (host controls seeking)')
+          }
           aria-valuemin={0}
           aria-valuemax={duration}
           aria-valuenow={currentTime}
           aria-valuetext={`${formatDuration(currentTime)} / ${formatDuration(duration)}`}
-          aria-disabled={!controlBarVisible || duration <= 0 || (!canControl && !onRequestSeek)}
-          tabIndex={controlBarVisible && duration > 0 && (canControl || onRequestSeek) ? 0 : -1}
+          aria-disabled={
+            !controlBarVisible ||
+            duration <= 0 ||
+            (!canControl && !onRequestSeek)
+          }
+          tabIndex={
+            controlBarVisible && duration > 0 && (canControl || onRequestSeek)
+              ? 0
+              : -1
+          }
           className={cn(
             'group relative h-1.5 md:h-2 w-full cursor-pointer overflow-visible rounded-full transition-all focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--md-sys-color-primary)]',
             canControl && 'hover:h-2 md:hover:h-2.5'
@@ -571,12 +630,12 @@ export function PlayerControlBar({
               backgroundColor: 'rgba(255, 255, 255, 0.35)',
             }}
           />
-          {/* 已播放进度 */}
+          {/* 已Playback position */}
           <div
             className="absolute top-0 h-full rounded-full bg-[var(--md-sys-color-primary)] transition-[width] duration-100"
             style={{ width: `${progress * 100}%` }}
           />
-          {/* 服务器/房主进度同步线：始终显示，差异越大越明显，带平滑位移动画 */}
+          {/* 服务器/Host position同步线：始终显示，差异越大越明显，带平滑位移动画 */}
           {serverProgress !== null && duration > 0 && (
             <div
               className="pointer-events-none absolute top-1/2 z-10 flex -translate-y-1/2 flex-col items-center transition-all duration-150 ease-linear"
@@ -584,9 +643,9 @@ export function PlayerControlBar({
                 left: `${serverProgress * 100}%`,
                 opacity: Math.min(1, Math.max(0.35, absDiffSeconds / 3)),
               }}
-              title={`${canControl ? '服务器进度' : '房主进度'}: ${formatDuration(watchTogether.currentTime)}${
+              title={`${canControl ? t('Server position') : t('Host position')}: ${formatDuration(watchTogether.currentTime)}${
                 absDiffSeconds > 0.5
-                  ? ` (${serverTimeDiff > 0 ? '落后' : '超前'} ${formatDuration(absDiffSeconds)})`
+                  ? ` (${serverTimeDiff > 0 ? t('Behind ') : t('Ahead ')} ${formatDuration(absDiffSeconds)})`
                   : ''
               }`}
             >
@@ -622,23 +681,26 @@ export function PlayerControlBar({
           />
         </div>
 
-        {/* 移动端弹幕输入行：放在进度条与按钮行之间，避免与按钮竞争空间 */}
+        {/* 移动端On-screen comments输入行：放在进度 comments与按钮行之间，避免与按钮竞争空间 */}
         <div className="flex items-center gap-1 md:hidden">
-          <DanmakuInput onSend={onSendDanmaku} placeholder="发弹幕" />
+          <DanmakuInput
+            onSend={onSendDanmaku}
+            placeholder={t('Send comment')}
+          />
         </div>
 
         {/* 控制按钮行 */}
         <div className="flex items-center gap-1 md:gap-1.5">
-          {/* 播放 / 暂停 */}
+          {/* Play / Pause */}
           <ControlButton
             label={
               canControl
                 ? isPlaying
-                  ? '暂停'
-                  : '播放'
+                  ? t('Pause')
+                  : t('Play')
                 : isPlaying
-                  ? '申请暂停'
-                  : '申请继续播放'
+                  ? t('Request pause')
+                  : t('Request play')
             }
             disabled={!canControl && (isPlaying ? pausePending : playPending)}
             onClick={handlePlayPauseClick}
@@ -653,23 +715,30 @@ export function PlayerControlBar({
             <span className="opacity-80">{formatDuration(duration)}</span>
           </div>
 
-          {/* 弹幕开关：开启时不显示底色，通过图标是否带斜线区分状态 */}
+          {/* On-screen comments开关：On时不显示底色，通过图标是否带斜线区分状态 */}
           <ControlButton
-            label={danmakuEnabled ? '关闭弹幕' : '开启弹幕'}
+            label={
+              danmakuEnabled
+                ? t('Close on-screen comments')
+                : t('Show live comments')
+            }
             onClick={onToggleDanmaku}
           >
             <DanmakuIcon off={!danmakuEnabled} />
           </ControlButton>
 
-          {/* 弹幕输入框（桌面端显示） */}
+          {/* On-screen comments输入框（桌面端显示） */}
           <div className="hidden min-w-0 flex-1 items-center gap-1 md:flex">
-            <DanmakuInput onSend={onSendDanmaku} placeholder="发个友善的弹幕" />
+            <DanmakuInput
+              onSend={onSendDanmaku}
+              placeholder={t('Send a friendly comment')}
+            />
           </div>
 
           {/* 倍速 */}
           <div ref={rateContainerRef} className="relative">
             <ControlButton
-              label="播放倍速"
+              label={t('Playback speed')}
               disabled={!canControl}
               active={rateOpen}
               onClick={() => canControl && setRateOpen((v) => !v)}
@@ -703,14 +772,14 @@ export function PlayerControlBar({
             )}
           </div>
 
-          {/* 音量：容器包含按钮和弹窗，使用延迟关闭避免移动鼠标到弹窗时隐藏 */}
+          {/* 音量：容器包含按钮和弹窗，使用延迟Close避免移动鼠标到弹窗时隐藏 */}
           <div
             className="relative flex items-center"
             onMouseEnter={openVolume}
             onMouseLeave={scheduleCloseVolume}
           >
             <ControlButton
-              label={muted || volume === 0 ? '取消静音' : '静音'}
+              label={muted || volume === 0 ? t('Unmute') : t('Mute')}
               onClick={toggleMute}
             >
               <VolumeIcon size={18} />
@@ -738,45 +807,46 @@ export function PlayerControlBar({
             )}
           </div>
 
-          {/* 房主专属：同步进度（桌面端直接显示） */}
+          {/* 房主专属：Sync position（桌面端直接显示） */}
           {isHost && (
             <div className="hidden md:block">
-              <ControlButton label="同步进度" onClick={onSync}>
+              <ControlButton label={t('Sync position')} onClick={onSync}>
                 <RotateCcw size={18} />
               </ControlButton>
             </div>
           )}
 
-          {/* 重载视频：桌面端直接显示 */}
+          {/* Reload video：桌面端直接显示 */}
           <div className="hidden md:block">
-            <ControlButton label="重载视频" onClick={onReload}>
+            <ControlButton label={t('Reload video')} onClick={onReload}>
               <RotateCw size={18} />
             </ControlButton>
           </div>
 
-          {/* 隐藏/显示控制栏 */}
+          {/* 隐藏/Show controls */}
           <ControlButton
-            label={controlBarHideMode ? '显示控制栏' : '隐藏控制栏'}
+            label={controlBarHideMode ? t('Show controls') : t('Hide controls')}
             active={controlBarHideMode}
             onClick={onToggleHideMode}
           >
             {controlBarHideMode ? <Eye size={18} /> : <EyeOff size={18} />}
           </ControlButton>
 
-          {/* 设置 */}
+          {/* Settings */}
+          {(isFullscreen || isWebFullscreen) && <LanguageSwitch />}
           <ControlButton
             ref={settingsButtonRef}
-            label="设置"
+            label={t('Settings')}
             active={settingsOpen}
             onClick={onToggleSettings}
           >
             <Settings size={18} />
           </ControlButton>
 
-          {/* 网页全屏：桌面端直接显示 */}
+          {/* Cinema mode：桌面端直接显示 */}
           <div className="hidden md:block">
             <ControlButton
-              label={isWebFullscreen ? '退出网页全屏' : '网页全屏'}
+              label={isWebFullscreen ? t('Exit cinema mode') : t('Cinema mode')}
               onClick={onToggleWebFullscreen}
             >
               {isWebFullscreen ? (
@@ -787,10 +857,10 @@ export function PlayerControlBar({
             </ControlButton>
           </div>
 
-          {/* 移动端“更多”菜单：收纳同步/重载/网页全屏 */}
+          {/* 移动端“More”菜单：收纳同步/重载/Cinema mode */}
           <div ref={moreContainerRef} className="relative md:hidden">
             <ControlButton
-              label="更多"
+              label={t('More')}
               active={moreOpen}
               onClick={() => setMoreOpen((v) => !v)}
             >
@@ -808,7 +878,7 @@ export function PlayerControlBar({
                     className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-[var(--md-sys-color-on-surface)] transition-colors hover:bg-[var(--md-sys-color-surface-container-highest)]"
                   >
                     <RotateCcw size={14} />
-                    同步进度
+                    {t('Sync position')}
                   </button>
                 )}
                 <button
@@ -820,7 +890,7 @@ export function PlayerControlBar({
                   className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-[var(--md-sys-color-on-surface)] transition-colors hover:bg-[var(--md-sys-color-surface-container-highest)]"
                 >
                   <RotateCw size={14} />
-                  重载视频
+                  {t('Reload video')}
                 </button>
                 <button
                   type="button"
@@ -835,15 +905,15 @@ export function PlayerControlBar({
                   ) : (
                     <Maximize size={14} />
                   )}
-                  {isWebFullscreen ? '退出网页全屏' : '网页全屏'}
+                  {isWebFullscreen ? t('Exit cinema mode') : t('Cinema mode')}
                 </button>
               </div>
             )}
           </div>
 
-          {/* 全屏 */}
+          {/* Fullscreen */}
           <ControlButton
-            label={isFullscreen ? '退出全屏' : '全屏'}
+            label={isFullscreen ? t('Exit fullscreen') : t('Fullscreen')}
             onClick={onToggleFullscreen}
           >
             {isFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
@@ -864,6 +934,8 @@ interface ControlButtonProps {
 
 const ControlButton = forwardRef<HTMLButtonElement, ControlButtonProps>(
   function ControlButton({ label, active, disabled, onClick, children }, ref) {
+    useTranslation()
+
     return (
       <button
         ref={ref}

@@ -20,6 +20,9 @@ import {
 } from '../../socket';
 import { isBoundedIdentifier } from '../../realtime-sync-core';
 import { roomPermissionService } from '../room-permission.service';
+import { roomExperienceService } from '../room-experience.service';
+import { validateRoomPolicy } from '../room-policy';
+import { realtimeSyncCore } from '../../realtime-sync-core';
 
 /** update-room-name 事件 payload */
 interface UpdateRoomNamePayload {
@@ -36,9 +39,11 @@ interface UpdateRoomModePayload {
 /** update-room-settings 事件 payload */
 interface UpdateRoomSettingsPayload {
   roomId: string;
+  name?: string;
   password?: string | null;
   maxViewers?: number;
   requireApproval?: boolean;
+  policy?: unknown;
 }
 
 /** p2p-mode-change 事件 payload */
@@ -62,34 +67,35 @@ export class RoomSettingsHandler implements SocketEventHandler {
           if (!payload || !isBoundedIdentifier(payload.roomId, 128) || typeof payload.name !== 'string' || payload.name.length > 120) {
             return safeAck(callback, { success: false, code: 'INVALID_PAYLOAD', message: '房间名称 payload 无效' });
           }
-          const permission = await roomPermissionService.canPerform(socket, payload.roomId, 'room.settings');
-          if (!permission.allowed) {
-            return safeAck(callback, {
-              success: false,
-              message: permission.reason,
-            });
-          }
-          const roomRepo = AppDataSource.getRepository(Room);
-          const room = await roomRepo.findOneBy({ roomId: payload.roomId });
-          if (!room) {
-            return safeAck(callback, { success: false, message: '房间不存在' });
-          }
+          await realtimeSyncCore.withRoomLock(payload.roomId, async () => {
+            const permission = await roomPermissionService.canPerform(socket, payload.roomId, 'room.settings');
+            if (!permission.allowed) {
+              return safeAck(callback, {
+                success: false,
+                message: permission.reason,
+              });
+            }
+            const roomRepo = AppDataSource.getRepository(Room);
+            const room = await roomRepo.findOneBy({ roomId: payload.roomId });
+            if (!room) {
+              return safeAck(callback, { success: false, message: '房间不存在' });
+            }
 
-          const trimmed = payload.name?.trim();
-          if (!trimmed) {
-            return safeAck(callback, { success: false, message: '房间名称不能为空' });
-          }
+            const trimmed = payload.name?.trim();
+            if (!trimmed) {
+              return safeAck(callback, { success: false, message: '房间名称不能为空' });
+            }
 
-          room.name = trimmed;
-          await roomRepo.save(room);
+            await roomRepo.update({ roomId: payload.roomId }, { name: trimmed });
 
-          // 广播给房间内所有成员
-          io.to(payload.roomId).emit('room-name-updated', {
-            roomId: payload.roomId,
-            name: trimmed,
+            // 广播给房间内所有成员
+            io.to(payload.roomId).emit('room-name-updated', {
+              roomId: payload.roomId,
+              name: trimmed,
           });
 
           return safeAck(callback, { success: true });
+          });
         } catch (err) {
           console.error('[update-room-name] error:', err);
           return safeAck(callback, { success: false, message: '修改房间名称失败' });
@@ -116,10 +122,8 @@ export class RoomSettingsHandler implements SocketEventHandler {
             return safeAck(callback, { success: false, message: '房间不存在' });
           }
 
-          await roomRepo.update({ roomId: payload.roomId }, { mode: payload.mode });
-
-          // 广播给房间内所有成员
-          io.to(payload.roomId).emit('room-mode-changed', { mode: payload.mode });
+          if (!['screen-share', 'watch-together'].includes(payload.mode)) throw new Error('房间模式无效');
+          await roomExperienceService.switchActivity(socket, io, payload.roomId, payload.mode === 'screen-share' ? 'screen' : 'watch');
 
           return safeAck(callback, {
             success: true,
@@ -136,6 +140,12 @@ export class RoomSettingsHandler implements SocketEventHandler {
     socket.on(
       'update-room-settings',
       async (payload: UpdateRoomSettingsPayload, callback: AckCallback) => {
+        if (!payload || !isBoundedIdentifier(payload.roomId, 128) ||
+          (payload.name !== undefined && (typeof payload.name !== 'string' || !payload.name.trim() || payload.name.length > 120)) ||
+          (payload.password !== undefined && payload.password !== null && (typeof payload.password !== 'string' || payload.password.length > 128))) {
+          return safeAck(callback, { success: false, message: '房间设置无效' });
+        }
+        await realtimeSyncCore.withRoomLock(payload.roomId, async () => {
         try {
           const permission = await roomPermissionService.canPerform(socket, payload.roomId, 'room.settings');
           if (!permission.allowed) {
@@ -151,13 +161,14 @@ export class RoomSettingsHandler implements SocketEventHandler {
             return safeAck(callback, { success: false, message: '房间不存在' });
           }
 
+          if (payload.name !== undefined) room.name = payload.name.trim();
           // 密码：trim 后为空字符串则清空，否则 bcrypt 加密
           if (typeof payload.password === 'string') {
             const trimmed = payload.password.trim();
             room.password = trimmed ? await bcrypt.hash(trimmed, 10) : null;
           }
           if (typeof payload.maxViewers === 'number') {
-            if (payload.maxViewers < 1 || payload.maxViewers > 100) {
+            if (!Number.isInteger(payload.maxViewers) || payload.maxViewers < 1 || payload.maxViewers > 100) {
               return safeAck(callback, {
                 success: false,
                 message: '观众上限必须在 1-100 之间',
@@ -168,20 +179,26 @@ export class RoomSettingsHandler implements SocketEventHandler {
           if (typeof payload.requireApproval === 'boolean') {
             room.requireApproval = payload.requireApproval;
           }
+          if (payload.policy !== undefined) room.policyJson = JSON.stringify(validateRoomPolicy(payload.policy));
           await roomRepo.save(room);
+          if (payload.name !== undefined) io.to(payload.roomId).emit('room-name-updated', { roomId: payload.roomId, name: room.name });
+          roomPermissionService.invalidatePermissionCache(undefined, payload.roomId);
 
           // 广播给房间内所有成员，前端 roomStore 同步
           io.to(payload.roomId).emit('room-settings-updated', {
-            password: room.password,
+            password: room.password ? 'configured' : null,
+            hasPassword: !!room.password,
             maxViewers: room.maxViewers,
             requireApproval: room.requireApproval,
           });
+          await roomExperienceService.broadcast(io, payload.roomId);
 
           return safeAck(callback, { success: true });
         } catch (err) {
           console.error('[update-room-settings] error:', err);
           return safeAck(callback, { success: false, message: '修改房间设置失败' });
         }
+        });
       },
     );
 

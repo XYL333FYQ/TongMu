@@ -14,6 +14,8 @@
  * 对外 props 契约与重构前完全一致（RoomPage / WatchPage 无需改动）。
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { getLocale, useTranslation } from '@/i18n'
+import { updateArtLocale } from '@/modules/art-player/artLocale'
 import Artplayer from 'artplayer'
 import type { MediaFormat } from '@/lib/mediaFormat'
 import {
@@ -72,11 +74,11 @@ interface WatchTogetherPanelProps {
 
 /** ArtPlayer 插槽集合：Core 通过 createPortal 向其中渲染组件 */
 export interface ArtSlots {
-  /** 弹幕图层根（art layer） */
+  /** On-screen comments图层根（art layer） */
   danmakuRoot: HTMLDivElement
   /** 覆盖层根（加载动画，art layer） */
   overlayRoot: HTMLDivElement
-  /** 浮动面板根（设置 / 空源占位，append 到 $player） */
+  /** 浮动面板根（Settings / 空源占位，append 到 $player） */
   panelRoot: HTMLDivElement
 }
 
@@ -87,6 +89,7 @@ export function WatchTogetherPanel({
   onToggleWebFullscreen: controlledToggleWebFullscreen,
   initialPlayback,
 }: WatchTogetherPanelProps) {
+  const { locale } = useTranslation()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const stageRef = useRef<HTMLDivElement | null>(null)
@@ -139,7 +142,7 @@ export function WatchTogetherPanel({
       // 源加载完全由引擎层驱动（usePlayerSource → art.video），
       // 保持 url 为空可避免 ArtPlayer 内置 error-reconnect 用裸 URL 覆盖引擎管理的 src。
       url: '',
-      lang: 'zh-cn',
+      lang: getLocale() === 'zh' ? 'zh-cn' : 'en',
       theme: 'var(--md-sys-color-primary, #6e9bff)',
       volume: 1,
       isLive: false,
@@ -244,6 +247,10 @@ export function WatchTogetherPanel({
     // isHost 在房间会话期间固定，实例无需重建
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    if (ready) updateArtLocale(ready.art, locale)
+  }, [ready, locale])
 
   const stage = (
     <div

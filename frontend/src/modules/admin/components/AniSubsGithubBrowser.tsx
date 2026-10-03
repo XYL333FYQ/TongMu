@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import { useState, useCallback } from 'react'
 import { Folder, FileJson, ChevronRight, Globe, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
@@ -85,8 +86,10 @@ export function AniSubsGithubBrowser({
   onAddUrls,
   repoUrl = 'https://github.com/creamycake-anime/ani-subs',
   defaultPath = '',
-  title = '从 GitHub 仓库导入订阅',
+  title = 'Import subscriptions from GitHub',
 }: AniSubsGithubBrowserProps) {
+  useTranslation()
+
   const [repoInput, setRepoInput] = useState(repoUrl)
   const [currentPath, setCurrentPath] = useState(defaultPath)
   const [items, setItems] = useState<GithubContentItem[]>([])
@@ -103,7 +106,7 @@ export function AniSubsGithubBrowser({
       const info = parseGithubRepoUrl(repoInput)
       if (!info) {
         setError(
-          '无法解析 GitHub 仓库地址，请使用 https://github.com/owner/repo 格式'
+          t('Use a GitHub repository URL: https://github.com/owner/repo')
         )
         return
       }
@@ -122,7 +125,10 @@ export function AniSubsGithubBrowser({
         })
         if (!res.ok) {
           const data = (await res.json()) as { message?: string }
-          throw new Error(data.message || `请求失败 (${res.status})`)
+          throw new Error(
+            data.message ||
+              t('Request failed ({value1}).', { value1: res.status })
+          )
         }
         const data = (await res.json()) as GithubContentItem[]
         setItems(
@@ -137,7 +143,11 @@ export function AniSubsGithubBrowser({
         setCurrentPath(path)
       } catch (err) {
         console.error('[AniSubsGithubBrowser] fetch error:', err)
-        setError(err instanceof Error ? err.message : '加载仓库内容失败')
+        setError(
+          err instanceof Error
+            ? err.message
+            : t('Could not load repository contents.')
+        )
         setItems([])
       } finally {
         setLoading(false)
@@ -153,11 +163,11 @@ export function AniSubsGithubBrowser({
         buildRawUrl(parsed.owner, parsed.repo, parsed.branch, item.path)
     )
     if (existingUrls.includes(rawUrl)) {
-      message.info('该订阅地址已存在')
+      message.info(t('This subscription already exists.'))
       return
     }
     onAddUrls([rawUrl])
-    message.success('已添加订阅地址')
+    message.success(t('Subscription added.'))
   }
 
   const handleAddAllJson = () => {
@@ -166,7 +176,7 @@ export function AniSubsGithubBrowser({
       (item) => item.type === 'file' && item.name.endsWith('.json')
     )
     if (jsonFiles.length === 0) {
-      message.info('当前目录没有 JSON 文件')
+      message.info(t('No JSON files in this folder.'))
       return
     }
     const newUrls = jsonFiles
@@ -179,11 +189,13 @@ export function AniSubsGithubBrowser({
       )
       .filter((url) => !existingUrls.includes(url))
     if (newUrls.length === 0) {
-      message.info('所有 JSON 订阅地址已存在')
+      message.info(t('These JSON subscriptions already exist.'))
       return
     }
     onAddUrls(newUrls)
-    message.success(`已添加 ${newUrls.length} 个订阅地址`)
+    message.success(
+      t('Added  {value1}  subscriptions', { value1: newUrls.length })
+    )
   }
 
   const isJsonFile = (item: GithubContentItem) =>
@@ -220,13 +232,13 @@ export function AniSubsGithubBrowser({
           loading={loading}
           disabled={loading}
         >
-          浏览
+          {t('Browse')}
         </Button>
       </div>
 
       {error && (
         <Paragraph type="danger" className="m-0 mb-3 text-xs">
-          {error}
+          {t(error)}
         </Paragraph>
       )}
 
@@ -251,7 +263,7 @@ export function AniSubsGithubBrowser({
                 }}
                 className="text-[var(--md-sys-color-primary)] hover:underline"
               >
-                返回根目录
+                {t('Back to root folder')}
               </button>
             )}
             <button
@@ -259,7 +271,7 @@ export function AniSubsGithubBrowser({
               onClick={handleAddAllJson}
               className="text-[var(--md-sys-color-primary)] hover:underline"
             >
-              添加全部 JSON
+              {t('Add all JSON files')}
             </button>
           </div>
         </div>
@@ -306,7 +318,7 @@ export function AniSubsGithubBrowser({
                         void fetchContents(item.path)
                       }}
                     >
-                      打开
+                      {t('Open')}
                     </Button>
                   ) : isJson ? (
                     <Button
@@ -317,7 +329,7 @@ export function AniSubsGithubBrowser({
                       onClick={() => handleAddFile(item)}
                       disabled={alreadyAdded}
                     >
-                      {alreadyAdded ? '已添加' : '添加'}
+                      {alreadyAdded ? t('Added ') : t('Add')}
                     </Button>
                   ) : null}
                 </div>

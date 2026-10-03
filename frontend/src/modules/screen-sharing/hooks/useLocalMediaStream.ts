@@ -1,6 +1,12 @@
+import { t, useTranslation } from '@/i18n'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import { message } from '@/components/ui/message'
+import {
+  ROOM_MEDIA_TEARDOWN_EVENT,
+  ROOM_STOP_SCREEN_EVENT,
+  type RoomMediaTeardownDetail,
+} from '@/lib/mediaTeardown'
 
 export interface UseLocalMediaStreamOptions {
   frameRate: number
@@ -39,6 +45,8 @@ export interface UseLocalMediaStreamResult {
 export function useLocalMediaStream(
   options: UseLocalMediaStreamOptions
 ): UseLocalMediaStreamResult {
+  useTranslation()
+
   const {
     frameRate,
     shareSystemAudio,
@@ -77,6 +85,22 @@ export function useLocalMediaStream(
     setIsPaused(false)
   }, [localVideoRef])
 
+  useEffect(() => {
+    const teardown = (event: Event) => {
+      if ((event as CustomEvent<RoomMediaTeardownDetail>).detail.full) stop()
+      else
+        localStreamRef.current?.getTracks().forEach((track) => {
+          track.enabled = false
+        })
+    }
+    window.addEventListener(ROOM_STOP_SCREEN_EVENT, stop)
+    window.addEventListener(ROOM_MEDIA_TEARDOWN_EVENT, teardown)
+    return () => {
+      window.removeEventListener(ROOM_STOP_SCREEN_EVENT, stop)
+      window.removeEventListener(ROOM_MEDIA_TEARDOWN_EVENT, teardown)
+    }
+  }, [stop])
+
   const start = useCallback(async () => {
     // 防重复点击：正在启动或正在共享时直接返回
     if (starting || isSharing) return
@@ -91,19 +115,16 @@ export function useLocalMediaStream(
         window.location.hostname === '127.0.0.1'
       let reason: string
       if (window.isSecureContext || isLocalhost) {
-        reason =
-          '当前浏览器不支持屏幕共享 API，请使用最新版 Chrome / Edge / Firefox'
+        reason = t(
+          'Screen sharing is unavailable in this browser. Try a current desktop version of Chrome, Edge or Firefox.'
+        )
       } else {
-        reason =
-          `屏幕共享 (getDisplayMedia) 需要安全上下文（HTTPS 或 localhost），当前页面为 HTTP 来源，浏览器已禁用该 API。\n\n` +
-          `解决方案（任选其一）：\n` +
-          `1. 【推荐】将站点部署为 HTTPS：可使用 Let's Encrypt 申请免费证书，或通过 Nginx/Caddy 反向代理终止 TLS。\n` +
-          `2. 【临时方案】在 Chrome/Edge 地址栏访问 chrome://flags/#unsafely-treat-insecure-origin-as-secure，` +
-          `在输入框添加 ${window.location.origin} 并点击启用，然后完全重启浏览器。\n` +
-          `3. 【本地代理】在本地通过 SSH 隧道将远程服务映射到 localhost，再通过 https://localhost 访问。`
+        reason = t(
+          'Your browser requires HTTPS or localhost for screen sharing. Open the secure TongMu address, or ask the administrator to enable HTTPS.'
+        )
       }
       setError(reason)
-      message.error('屏幕共享不可用：当前为非安全上下文')
+      message.error(reason)
       return
     }
 
@@ -129,15 +150,14 @@ export function useLocalMediaStream(
           .allowedFeatures()
           .includes('display-capture')
       if (!allowed) {
-        const reason =
-          `当前页面运行在 iframe 嵌套环境中，浏览器禁止调用屏幕共享 API（需要父页面通过 allow="display-capture" 授权）。\n\n` +
-          `常见场景：IDE 内置预览、嵌入式开发服务器预览页等。\n\n` +
-          `解决方案：\n` +
-          `1. 【推荐】点击「在新窗口打开」按钮，或在浏览器中直接访问 ${window.location.origin}\n` +
-          `2. 复制下方链接到外部浏览器（Chrome / Edge）地址栏打开：\n` +
-          `   ${window.location.href}`
+        const reason = t(
+          'This embedded page cannot capture your screen. Open this room in a separate browser window: {url}',
+          { url: window.location.href }
+        )
         setError(reason)
-        message.error('屏幕共享不可用：iframe 环境未获授权')
+        message.error(
+          t('Open this room in a separate window to share your screen.')
+        )
         return
       }
     }
@@ -165,7 +185,9 @@ export function useLocalMediaStream(
 
       let mediaStream: MediaStream
       if (useTestStream) {
-        message.info('测试模式：使用摄像头画面代替屏幕共享')
+        message.info(
+          t('Test mode: using the camera instead of screen sharing.')
+        )
         mediaStream = await navigator.mediaDevices.getUserMedia({
           video: {
             ...videoConstraints,
@@ -190,7 +212,11 @@ export function useLocalMediaStream(
           setMicStream(nextMicStream)
         } catch (err) {
           console.error('[useLocalMediaStream] getUserMedia mic error:', err)
-          message.warning('无法获取麦克风权限，将仅共享屏幕')
+          message.warning(
+            t(
+              'Microphone access was unavailable. Your screen will still be shared.'
+            )
+          )
         }
       }
 
@@ -291,17 +317,27 @@ export function useLocalMediaStream(
       console.error('[useLocalMediaStream] getDisplayMedia error:', err)
       // 区分错误类型给出明确提示
       const errName = (err as { name?: string })?.name
-      let reason = '无法获取屏幕共享权限'
+      let reason = t(
+        'Unable to start screen sharing. Check your browser permissions and try again.'
+      )
       if (errName === 'NotAllowedError') {
-        reason = '已取消屏幕共享授权，或浏览器未授予屏幕共享权限'
+        reason = t(
+          'Screen sharing was cancelled or denied. Choose a screen, window or tab and try again.'
+        )
       } else if (errName === 'NotFoundError') {
-        reason = '未找到可用的屏幕共享源'
+        reason = t('No screen, window or tab is available to share.')
       } else if (errName === 'NotReadableError') {
-        reason = '屏幕共享源被其他程序占用，无法捕获'
+        reason = t(
+          'Your screen could not be captured. Close other capture apps and try again.'
+        )
       } else if (errName === 'OverconstrainedError') {
-        reason = '请求的约束条件无法满足，请降低帧率或分辨率后重试'
+        reason = t(
+          'These capture settings are unavailable. Lower the frame rate or resolution and try again.'
+        )
       } else if (errName === 'TypeError') {
-        reason = '请求参数错误，请检查媒体设置'
+        reason = t(
+          'The capture settings are invalid. Check the media settings and try again.'
+        )
       } else if (errName === 'NotSupportedError') {
         // 兜底：iframe 未授权 / 浏览器不支持 / 系统未启用屏幕捕获
         const inIframe = (() => {
@@ -312,8 +348,13 @@ export function useLocalMediaStream(
           }
         })()
         reason = inIframe
-          ? `当前 iframe 环境未授权屏幕共享，请在独立浏览器窗口中打开本页面：\n${window.location.href}`
-          : '当前浏览器或系统不支持屏幕共享，请使用最新版 Chrome / Edge 并确认系统已启用屏幕捕获权限'
+          ? t(
+              'This embedded page cannot capture your screen. Open this room in a separate browser window: {url}',
+              { url: window.location.href }
+            )
+          : t(
+              'Screen capture is unavailable. Try a current desktop browser and enable screen capture in your system permissions.'
+            )
       }
       setError(reason)
       message.error(reason)

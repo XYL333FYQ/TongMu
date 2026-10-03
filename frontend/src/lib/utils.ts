@@ -1,5 +1,6 @@
 import { type ClassValue, clsx } from 'clsx'
 import { twMerge } from 'tailwind-merge'
+import { getLocale } from '@/i18n'
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -35,9 +36,10 @@ export function formatFileSize(size?: number | null): string {
  */
 export function formatIsoTime(iso: string): string {
   const date = new Date(iso)
-  return date.toLocaleTimeString('zh-CN', {
+  return date.toLocaleTimeString(getLocale() === 'zh' ? 'zh-CN' : 'en-US', {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
+    hour12: false,
   })
 }

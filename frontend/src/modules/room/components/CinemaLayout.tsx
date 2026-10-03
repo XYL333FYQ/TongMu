@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import { type ReactNode } from 'react'
 import { ArrowLeft } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
@@ -8,9 +9,9 @@ interface CinemaLayoutProps {
   children: ReactNode
   /** 房间信息面板（watch-together 模式使用） */
   roomInfoPanel?: ReactNode
-  /** 影片列表面板（watch-together 模式使用） */
+  /** Queue面板（watch-together 模式使用） */
   movieListPanel?: ReactNode
-  /** 添加影片面板（watch-together 模式使用） */
+  /** Add content面板（watch-together 模式使用） */
   moviePushPanel?: ReactNode
   /**
    * 投屏状态面板（screen-share 模式使用）。
@@ -35,6 +36,8 @@ export function CinemaLayout({
   chatPanel,
   webFullscreen = false,
 }: CinemaLayoutProps) {
+  useTranslation()
+
   const { guardNavigate, confirmModal } = useRoomExitGuard()
   // Only render supplied panels. OBS viewers have room info but no movie tools.
   const bottomPanels = statsPanel
@@ -74,7 +77,7 @@ export function CinemaLayout({
               borderColor: 'var(--tm-border)',
             }}
           >
-            返回大厅
+            {t('Back to Hall')}
           </Button>
         </div>
         <div
@@ -85,7 +88,7 @@ export function CinemaLayout({
         >
           {/* 主区域 */}
           <div className="flex min-w-0 flex-1 flex-col gap-4">
-            {/* 播放器区域 */}
+            {/* Play器区域 */}
             <div
               className={cn(
                 'relative w-full overflow-hidden rounded-2xl',
@@ -104,7 +107,7 @@ export function CinemaLayout({
               {children}
             </div>
 
-            {/* 底部信息/控制/添加区（或投屏状态面板）—— 网页全屏时隐藏 */}
+            {/* Bottom信息/控制/Add区（或投屏状态面板）—— Cinema mode时隐藏 */}
             {visiblePanels.length > 0 && (
               <div
                 className={cn(
@@ -122,7 +125,7 @@ export function CinemaLayout({
             )}
           </div>
 
-          {/* 右侧聊天区 —— 网页全屏时隐藏 */}
+          {/* 右侧聊天区 —— Cinema mode时隐藏 */}
           <div
             className={cn(
               'min-h-[320px] w-full flex-shrink-0 lg:min-h-0 lg:w-[320px]',

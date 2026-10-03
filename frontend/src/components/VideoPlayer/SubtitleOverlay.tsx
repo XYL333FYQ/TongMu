@@ -22,14 +22,14 @@ interface SubtitleOverlayProps {
   enabled: boolean
   fontSize: number
   offset: number // 秒，正值延迟显示
-  shiftX?: number // 百分比，-50~50，正值右移
-  shiftY?: number // 百分比，-50~50，正值下移
-  strokeWidth?: number // 描边宽度（px，0~4），0 表示无描边
-  shadowBlur?: number // 阴影模糊半径（px，0~12），0 表示无阴影
-  fontFamily?: string // CSS font-family，空串表示默认
+  shiftX?: number // 百分比，-50~50，正值Right
+  shiftY?: number // 百分比，-50~50，正值Move down
+  strokeWidth?: number // Outline宽度（px，0~4），0 表示无Outline
+  shadowBlur?: number // Shadow模糊半径（px，0~12），0 表示无Shadow
+  fontFamily?: string // CSS font-family，空串表示Default
 }
 
-/** 计算字幕元素的 CSS transform */
+/** 计算Subtitles元素的 CSS transform */
 function getTransform(
   line: number,
   align: 'left' | 'center' | 'right'
@@ -42,7 +42,7 @@ function getTransform(
 
 /** 同一槽位判定阈值：line 差值小于该值视为同一区域（百分比高度） */
 const LINE_SLOT_THRESHOLD = 7
-/** 槽位步进：重叠 cue 逐条下移的间距（百分比高度） */
+/** 槽位步进：重叠 cue 逐 commentsMove down的间距（百分比高度） */
 const LINE_SLOT_STEP = 9
 
 /**
@@ -55,7 +55,9 @@ const LINE_SLOT_STEP = 9
  * 策略：按 line 升序遍历，每条 cue 分配到不低于前一条（+ 步进）的槽位，
  * 使重叠的 cue 垂直依次排列；无重叠的 cue 保持原始位置不变。
  */
-function layoutCues(cues: ParsedCue[]): Array<ParsedCue & { resolvedLine: number }> {
+function layoutCues(
+  cues: ParsedCue[]
+): Array<ParsedCue & { resolvedLine: number }> {
   const sorted = [...cues].sort((a, b) => (a.line ?? 100) - (b.line ?? 100))
   const result: Array<ParsedCue & { resolvedLine: number }> = []
   for (const cue of sorted) {

@@ -1,5 +1,6 @@
-import { forwardRef } from 'react'
+import { forwardRef, useId } from 'react'
 import { cn } from '@/lib/utils'
+import { t, useTranslation } from '@/i18n'
 
 export interface InputNumberProps extends Omit<
   React.InputHTMLAttributes<HTMLInputElement>,
@@ -14,6 +15,9 @@ export interface InputNumberProps extends Omit<
 
 export const InputNumber = forwardRef<HTMLInputElement, InputNumberProps>(
   ({ label, error, min, max, onChange, className, ...props }, ref) => {
+    useTranslation()
+    const generatedId = useId()
+    const inputId = props.id ?? generatedId
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       const value = e.target.value
       if (value === '') {
@@ -32,7 +36,10 @@ export const InputNumber = forwardRef<HTMLInputElement, InputNumberProps>(
     return (
       <div className={cn('w-full text-left', className)}>
         {label && (
-          <label className="mb-1.5 block text-sm font-medium text-[var(--md-sys-color-on-surface-variant)]">
+          <label
+            htmlFor={inputId}
+            className="mb-1.5 block text-sm font-medium text-[var(--md-sys-color-on-surface-variant)]"
+          >
             {label}
           </label>
         )}
@@ -47,11 +54,12 @@ export const InputNumber = forwardRef<HTMLInputElement, InputNumberProps>(
               'border-[var(--md-sys-color-error)] focus:border-[var(--md-sys-color-error)] focus:ring-[var(--md-sys-color-error)]'
           )}
           {...props}
+          id={inputId}
           onChange={handleChange}
         />
         {error && (
           <p className="mt-1 text-xs text-[var(--md-sys-color-error)]">
-            {error}
+            {t(error)}
           </p>
         )}
       </div>

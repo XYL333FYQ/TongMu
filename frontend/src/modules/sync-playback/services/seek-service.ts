@@ -156,7 +156,10 @@ export async function executeSeek(params: ExecuteSeekParams): Promise<boolean> {
           await onSeekFailed(video, target)
           return true
         } catch (reloadErr) {
-          console.error('[seek-service] forceReload 也失败:', redactMediaError(reloadErr))
+          console.error(
+            '[seek-service] forceReload 也失败:',
+            redactMediaError(reloadErr)
+          )
         }
       }
       setCurrentTimeSafe(video, target)

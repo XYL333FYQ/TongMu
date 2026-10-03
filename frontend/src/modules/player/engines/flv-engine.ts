@@ -22,7 +22,9 @@ export const flvEngine: PlayerEngine = {
   ): Promise<EngineAttachResult> {
     if (source.signal?.aborted) throw createPlayerAbortError()
     if (!flvjs.isSupported()) {
-      throw new Error('当前浏览器不支持 FLV 播放且 flv.js 不可用')
+      throw new Error(
+        'FLV playback is unavailable in this browser. Try a supported browser.'
+      )
     }
 
     resetVideoElement(video)

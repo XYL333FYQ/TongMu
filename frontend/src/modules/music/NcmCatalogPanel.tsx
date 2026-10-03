@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
@@ -84,13 +85,13 @@ const navOptions: Array<{
   icon: typeof Search
   private?: boolean
 }> = [
-  { value: 'search', label: '搜索', icon: Search },
-  { value: 'playlists', label: '歌单', icon: ListMusic, private: true },
-  { value: 'albums', label: '专辑', icon: ListMusic },
-  { value: 'artists', label: '歌手', icon: ListMusic },
-  { value: 'liked', label: '我喜欢', icon: Heart, private: true },
-  { value: 'fm', label: '私人 FM', icon: Radio, private: true },
-  { value: 'cloud', label: '云盘', icon: Cloud, private: true },
+  { value: 'search', label: 'Search', icon: Search },
+  { value: 'playlists', label: 'Playlists', icon: ListMusic, private: true },
+  { value: 'albums', label: 'Albums', icon: ListMusic },
+  { value: 'artists', label: 'Artist', icon: ListMusic },
+  { value: 'liked', label: 'Liked', icon: Heart, private: true },
+  { value: 'fm', label: 'Personal FM', icon: Radio, private: true },
+  { value: 'cloud', label: 'Cloud music', icon: Cloud, private: true },
 ]
 
 function unwrap<T>(body: CatalogApiBody | null): T | null {
@@ -167,6 +168,8 @@ export function NcmCatalogPanel({
   loggedIn,
   onAddTrack,
 }: NcmCatalogPanelProps) {
+  useTranslation()
+
   const accountId = useAuthStore((state) => state.user?.id || null)
   const catalog = useNcmCatalogStore()
   const musicPositionSec = useMusicStore((state) => state.positionSec)
@@ -239,7 +242,7 @@ export function NcmCatalogPanel({
           }
           const page = pageFrom<MusicCatalogSearchItem>(result.data)
           if (!page) {
-            setError('网易云返回的搜索结果格式无效')
+            setError(t('The music service returned an invalid search result.'))
             return
           }
           const normalizedItems: MusicCatalogSearchItem[] = []
@@ -256,7 +259,7 @@ export function NcmCatalogPanel({
             .setSearchResults({ ...page, items: normalizedItems })
         })
         .catch(() => {
-          if (!controller.signal.aborted) setError('网易云搜索失败')
+          if (!controller.signal.aborted) setError(t('Could not search music.'))
         })
         .finally(() => {
           if (
@@ -282,7 +285,7 @@ export function NcmCatalogPanel({
     const view = catalog.view
     if (!['playlists', 'liked', 'fm', 'cloud'].includes(view)) return
     if (!loggedIn || !accountId) {
-      setError('请先扫码登录网易云音乐')
+      setError(t('Connect your NetEase Music account first.'))
       return
     }
     const controller = new AbortController()
@@ -314,13 +317,14 @@ export function NcmCatalogPanel({
           result.data
         )
         if (!page) {
-          setError('网易云返回的私有音乐数据格式无效')
+          setError(t('The music service returned an invalid collection.'))
           return
         }
         useNcmCatalogStore.getState().setPrivatePage(page)
       })
       .catch(() => {
-        if (!controller.signal.aborted) setError('私有音乐数据加载失败')
+        if (!controller.signal.aborted)
+          setError(t('Could not load your collection.'))
       })
       .finally(() => {
         if (
@@ -362,7 +366,7 @@ export function NcmCatalogPanel({
           | MusicCatalogArtistDetail
         >(result.data)
         if (!value) {
-          setError('网易云返回的详情格式无效')
+          setError(t('The music service returned invalid details.'))
           return
         }
         if (detailTarget.kind === 'playlist' && 'playlist' in value)
@@ -379,7 +383,8 @@ export function NcmCatalogPanel({
             .setArtistDetail(value as MusicCatalogArtistDetail)
       })
       .catch(() => {
-        if (!controller.signal.aborted) setError('网易云详情加载失败')
+        if (!controller.signal.aborted)
+          setError(t('Could not load music details.'))
       })
       .finally(() => {
         if (
@@ -438,7 +443,7 @@ export function NcmCatalogPanel({
             if (value) {
               useNcmCatalogStore.getState().setLyrics(track.trackId, value)
               setError(null)
-            } else setError('歌词数据格式无效')
+            } else setError(t('Invalid lyrics.'))
           } else {
             const value = unwrap<MusicCatalogCommentPage>(result.data)
             if (value) {
@@ -446,12 +451,16 @@ export function NcmCatalogPanel({
                 .getState()
                 .setComments(`${track.trackId}:song`, value)
               setError(null)
-            } else setError('评论数据格式无效')
+            } else setError(t('Invalid comments.'))
           }
         })
         .catch(() => {
           if (!controller.signal.aborted)
-            setError(kind === 'lyrics' ? '歌词加载失败' : '评论加载失败')
+            setError(
+              kind === 'lyrics'
+                ? t('Could not load lyrics.')
+                : t('Could not load comments.')
+            )
         })
     },
     [commentMode, setError]
@@ -466,11 +475,15 @@ export function NcmCatalogPanel({
   const addTrack = useCallback(
     (track: MusicCatalogTrack) => {
       if (!isHost) {
-        setError('只有房主可以把歌曲加入房间队列')
+        setError(t('Queue permission required.'))
         return
       }
       if (!isQualityAvailable(track, preferredQuality)) {
-        setError(`“${qualityLabel(preferredQuality)}”不可用，请先选择可用音质`)
+        setError(
+          t('“{value1}” is unavailable. Choose an available quality.', {
+            value1: qualityLabel(preferredQuality),
+          })
+        )
         return
       }
       const accepted = onAddTrack({
@@ -487,7 +500,7 @@ export function NcmCatalogPanel({
         },
       })
       if (accepted) {
-        setNotice(`已加入队列：${track.title}`)
+        setNotice(t('Added to queue: {title}', { title: track.title }))
         window.setTimeout(() => setNotice(null), 2_500)
       }
     },
@@ -527,9 +540,9 @@ export function NcmCatalogPanel({
       return (
         <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5 text-[10px] text-[var(--md-sys-color-on-surface-variant)]">
           <label className="flex min-w-0 items-center gap-1">
-            <span className="shrink-0">音质</span>
+            <span className="shrink-0">{t('Audio quality')}</span>
             <select
-              aria-label={`${track.title} 音质`}
+              aria-label={t('{value1} Quality', { value1: track.title })}
               value={preferredQuality}
               onChange={(event) => chooseQuality(event.target.value)}
               className="max-w-[8rem] rounded border border-[var(--md-sys-color-outline)] bg-[var(--md-sys-color-surface-container-high)] px-1.5 py-1 text-[10px] text-[var(--md-sys-color-on-surface)]"
@@ -541,7 +554,9 @@ export function NcmCatalogPanel({
                   disabled={!isQualityAvailable(track, quality)}
                 >
                   {qualityLabel(quality)}
-                  {isQualityAvailable(track, quality) ? '' : '（不可用）'}
+                  {isQualityAvailable(track, quality)
+                    ? ''
+                    : t(' (unavailable)')}
                 </option>
               ))}
             </select>
@@ -556,7 +571,11 @@ export function NcmCatalogPanel({
               )}
             </span>
           ) : (
-            <span>可用音质未知，服务器将按请求音质严格校验</span>
+            <span>
+              {t(
+                'Available quality is unknown. Your choice will be checked before playback.'
+              )}
+            </span>
           )}
         </div>
       )
@@ -589,7 +608,7 @@ export function NcmCatalogPanel({
               {track.title}
             </p>
             <p className="truncate text-[11px] text-[var(--md-sys-color-on-surface-variant)]">
-              {track.artist || '未知歌手'}
+              {track.artist || t('Unknown artist')}
               {track.album ? ` · ${track.album}` : ''}
               {track.durationMs
                 ? ` · ${formatMusicTime(track.durationMs / 1000)}`
@@ -605,9 +624,9 @@ export function NcmCatalogPanel({
               disableAnimation
               onClick={() => addTrack(track)}
               disabled={!isHost}
-              aria-label={`添加 ${track.title} 到队列`}
+              aria-label={t('Add {value1} to queue', { value1: track.title })}
             >
-              加入队列
+              {t('Add to queue')}
             </Button>
             <Button
               type="button"
@@ -615,7 +634,7 @@ export function NcmCatalogPanel({
               variant="ghost"
               disableAnimation
               onClick={() => loadAuxiliary('lyrics', track)}
-              aria-label={`查看 ${track.title} 歌词`}
+              aria-label={t('View {value1} Lyrics', { value1: track.title })}
               icon={<FileText className="h-3.5 w-3.5" />}
             />
             <Button
@@ -624,7 +643,7 @@ export function NcmCatalogPanel({
               variant="ghost"
               disableAnimation
               onClick={() => loadAuxiliary('comments', track)}
-              aria-label={`查看 ${track.title} 评论`}
+              aria-label={t('View {value1} Comments', { value1: track.title })}
               icon={<MessageCircle className="h-3.5 w-3.5" />}
             />
           </div>
@@ -662,8 +681,8 @@ export function NcmCatalogPanel({
             {playlist.title}
           </span>
           <span className="block truncate text-[10px] text-[var(--md-sys-color-on-surface-variant)]">
-            {playlist.creatorName || '未知创建者'} ·{' '}
-            {playlist.trackCount ?? '?'} 首
+            {playlist.creatorName || t('Unknown creator')} ·{' '}
+            {playlist.trackCount ?? '?'} {t('tracks')}
           </span>
         </span>
       </button>
@@ -687,10 +706,11 @@ export function NcmCatalogPanel({
               {item.title}
             </span>
             <span className="block truncate text-[10px] text-[var(--md-sys-color-on-surface-variant)]">
-              {item.artist || '未知歌手'} · {item.trackCount ?? '?'} 首
+              {item.artist || t('Unknown artist')} · {item.trackCount ?? '?'}{' '}
+              {t('tracks')}
             </span>
           </span>
-          <span className="shrink-0 text-[10px]">打开专辑</span>
+          <span className="shrink-0 text-[10px]">{t('Open album')}</span>
         </button>
       )
     return (
@@ -705,10 +725,11 @@ export function NcmCatalogPanel({
             {item.name}
           </span>
           <span className="block truncate text-[10px] text-[var(--md-sys-color-on-surface-variant)]">
-            {item.trackCount ?? '?'} 首 · {item.albumCount ?? '?'} 张专辑
+            {item.trackCount ?? '?'} {t('tracks ·')} {item.albumCount ?? '?'}{' '}
+            {t('albums')}
           </span>
         </span>
-        <span className="shrink-0 text-[10px]">打开歌手</span>
+        <span className="shrink-0 text-[10px]">{t('Open artist')}</span>
       </button>
     )
   }
@@ -722,13 +743,14 @@ export function NcmCatalogPanel({
               {catalog.playlistDetail.playlist.title}
             </p>
             <p className="mt-0.5 text-[10px] text-[var(--md-sys-color-on-surface-variant)]">
-              {catalog.playlistDetail.playlist.description || '暂无简介'}
+              {catalog.playlistDetail.playlist.description ||
+                t('No description')}
             </p>
           </div>
           {catalog.playlistDetail.tracks.map(renderTrack)}
           {catalog.playlistDetail.hasMore && (
             <p className="text-[10px] text-[var(--md-sys-color-on-surface-variant)]">
-              已按页加载，更多歌曲可继续从歌单进入。
+              {t('Open the playlist to browse more tracks.')}
             </p>
           )}
         </div>
@@ -740,8 +762,8 @@ export function NcmCatalogPanel({
           <div className="rounded-lg bg-[var(--md-sys-color-surface-container-low)] p-2">
             <p className="text-xs font-medium">{catalog.albumDetail.title}</p>
             <p className="text-[10px] text-[var(--md-sys-color-on-surface-variant)]">
-              {catalog.albumDetail.artist || '未知歌手'} ·{' '}
-              {catalog.albumDetail.description || '暂无简介'}
+              {catalog.albumDetail.artist || t('Unknown artist')} ·{' '}
+              {catalog.albumDetail.description || t('No description')}
             </p>
           </div>
           {catalog.albumDetail.tracks.map(renderTrack)}
@@ -755,8 +777,10 @@ export function NcmCatalogPanel({
               {catalog.artistDetail.artist.name}
             </p>
             <p className="text-[10px] text-[var(--md-sys-color-on-surface-variant)]">
-              热门歌曲 {catalog.artistDetail.artist.topTracks.length} 首 · 专辑{' '}
-              {catalog.artistDetail.artist.albums.length} 张
+              {t('Popular tracks:')}{' '}
+              {catalog.artistDetail.artist.topTracks.length}{' '}
+              {t('tracks · Albums')} {catalog.artistDetail.artist.albums.length}{' '}
+              {t('albums')}
             </p>
           </div>
           {catalog.artistDetail.artist.topTracks.map(renderTrack)}
@@ -769,7 +793,8 @@ export function NcmCatalogPanel({
               }
               className="block w-full truncate rounded-lg bg-[var(--md-sys-color-surface-container-low)] p-2 text-left text-xs"
             >
-              专辑：{album.title} · {album.artist || '未知歌手'}
+              {t('Albums：')}
+              {album.title} · {album.artist || t('Unknown artist')}
             </button>
           ))}
         </div>
@@ -798,40 +823,45 @@ export function NcmCatalogPanel({
           aria-live="polite"
         >
           <div className="mb-1 flex items-center justify-between gap-2">
-            <p className="text-xs font-medium">歌词 · {track.title}</p>
+            <p className="text-xs font-medium">
+              {t('Lyrics ·')} {track.title}
+            </p>
             <button
               type="button"
               className="text-[10px] underline"
               onClick={() => setAuxiliaryTarget(null)}
             >
-              关闭
+              {t('Close')}
             </button>
           </div>
           {!lyrics ? (
             <p className="text-[10px] text-[var(--md-sys-color-on-surface-variant)]">
-              歌词加载中…
+              {t('Loading lyrics…')}
             </p>
           ) : (
             <div className="max-h-48 space-y-0.5 overflow-y-auto text-[11px]">
               {(
                 [
-                  ['原文', lyrics.original],
-                  ['翻译', lyrics.translated],
-                  ['罗马音', lyrics.romanized],
+                  ['Original', lyrics.original],
+                  ['Translation', lyrics.translated],
+                  ['Romanized', lyrics.romanized],
                 ] as const
               ).map(([label, lines]) => (
                 <section key={label} className="mb-1">
                   <p className="mb-0.5 text-[10px] text-[var(--md-sys-color-on-surface-variant)]">
-                    {label}
+                    {t(label)}
                   </p>
                   {lines.length === 0 ? (
-                    <p className="px-1 text-[10px]">暂无{label}歌词</p>
+                    <p className="px-1 text-[10px]">
+                      {t('No {kind} lyrics.', { kind: t(label) })}
+                    </p>
                   ) : (
                     lines.map((line, index) => (
                       <p
                         key={`${label}-${line.timestampMs ?? 'u'}-${index}`}
                         className={
-                          label === '原文' && line.timestampMs === activeLine
+                          label === 'Original' &&
+                          line.timestampMs === activeLine
                             ? 'rounded bg-[var(--md-sys-color-primary-container)] px-1'
                             : 'px-1'
                         }
@@ -855,13 +885,15 @@ export function NcmCatalogPanel({
         aria-live="polite"
       >
         <div className="mb-1 flex items-center justify-between gap-2">
-          <p className="text-xs font-medium">评论 · {track.title}</p>
+          <p className="text-xs font-medium">
+            {t('Comments ·')} {track.title}
+          </p>
           <button
             type="button"
             className="text-[10px] underline"
             onClick={() => setAuxiliaryTarget(null)}
           >
-            关闭
+            {t('Close')}
           </button>
         </div>
         <div className="mb-1 flex gap-1">
@@ -875,7 +907,7 @@ export function NcmCatalogPanel({
               loadAuxiliary('comments', track, 'latest')
             }}
           >
-            最新
+            {t('Newest')}
           </Button>
           <Button
             type="button"
@@ -887,17 +919,17 @@ export function NcmCatalogPanel({
               loadAuxiliary('comments', track, 'hot')
             }}
           >
-            热门
+            {t('Popular')}
           </Button>
         </div>
         {!comments ? (
           <p className="text-[10px] text-[var(--md-sys-color-on-surface-variant)]">
-            评论加载中…
+            {t('Loading comments…')}
           </p>
         ) : (
           <div className="max-h-48 space-y-1.5 overflow-y-auto">
             {comments.items.length === 0 ? (
-              <p className="text-[10px]">暂无评论</p>
+              <p className="text-[10px]">{t('No comments yet.')}</p>
             ) : (
               comments.items.map((comment) => (
                 <div
@@ -909,7 +941,7 @@ export function NcmCatalogPanel({
                     {comment.text}
                   </p>
                   <p className="text-[9px] text-[var(--md-sys-color-on-surface-variant)]">
-                    赞 {comment.likedCount}
+                    {t('Likes:')} {comment.likedCount}
                     {loggedIn && (
                       <Button
                         type="button"
@@ -927,7 +959,7 @@ export function NcmCatalogPanel({
                           })
                         }}
                       >
-                        点赞
+                        {t('Like')}
                       </Button>
                     )}
                   </p>
@@ -966,7 +998,7 @@ export function NcmCatalogPanel({
           disabled={page.offset === 0}
           onClick={() => setOffset(Math.max(0, page.offset - page.pageSize))}
         >
-          上一页
+          {t('Previous page')}
         </Button>
         <span>
           {page.offset + 1}–{page.offset + page.items.length}
@@ -980,7 +1012,7 @@ export function NcmCatalogPanel({
           disabled={!page.hasMore}
           onClick={() => setOffset(page.offset + page.pageSize)}
         >
-          下一页
+          {t('Next page')}
         </Button>
       </div>
     )
@@ -991,16 +1023,18 @@ export function NcmCatalogPanel({
       <div className="mb-2 flex min-w-0 items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-1.5">
           <Search className="h-3.5 w-3.5 shrink-0" />
-          <p className="truncate text-xs font-medium">网易云音乐目录</p>
+          <p className="truncate text-xs font-medium">{t('Find your music')}</p>
         </div>
         <span className="shrink-0 text-[10px] text-[var(--md-sys-color-on-surface-variant)]">
-          {loggedIn ? '当前账号私有数据已隔离' : '公开目录可搜索'}
+          {loggedIn
+            ? t('Your personal collection')
+            : t('Search the public catalog')}
         </span>
       </div>
       <div
         className="flex min-w-0 gap-1 overflow-x-auto pb-1"
         role="tablist"
-        aria-label="音乐目录分类"
+        aria-label={t('Music categories')}
       >
         {navOptions.map((option) => {
           const Icon = option.icon
@@ -1020,8 +1054,8 @@ export function NcmCatalogPanel({
               className={`inline-flex shrink-0 items-center gap-1 rounded px-2 py-1 text-[10px] ${selected ? 'bg-[var(--md-sys-color-primary-container)] text-[var(--md-sys-color-on-primary-container)]' : 'bg-[var(--md-sys-color-surface-container-low)] text-[var(--md-sys-color-on-surface-variant)]'}`}
             >
               <Icon className="h-3 w-3" />
-              {option.label}
-              {option.private && !loggedIn ? ' · 登录' : ''}
+              {t(option.label)}
+              {option.private && !loggedIn ? t(' · Sign in') : ''}
             </button>
           )
         })}
@@ -1040,7 +1074,7 @@ export function NcmCatalogPanel({
           role="status"
           className="mb-1 text-[10px] text-[var(--md-sys-color-primary)]"
         >
-          {notice}
+          {t(notice)}
         </p>
       )}
 
@@ -1060,10 +1094,10 @@ export function NcmCatalogPanel({
                 catalog.setArtistDetail(null)
               }}
             >
-              返回
+              {t('Back')}
             </Button>
             <span className="truncate text-xs font-medium">
-              {detailTitle || '详情'}
+              {detailTitle || t('Details')}
             </span>
           </div>
           {renderDetails()}
@@ -1073,31 +1107,32 @@ export function NcmCatalogPanel({
           {catalog.view === 'search' && (
             <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-1.5">
               <Input
-                aria-label="音乐目录搜索"
+                aria-label={t('Search music')}
                 size="sm"
-                placeholder="搜索歌曲、歌单、专辑或歌手"
+                placeholder={t('Search songs, playlists, albums or artists')}
                 value={catalog.searchQuery}
                 onChange={(event) => changeSearchQuery(event.target.value)}
               />
               <select
-                aria-label="音乐目录类型"
+                aria-label={t('Search category')}
                 value={catalog.searchType}
                 onChange={(event) =>
                   changeSearchType(event.target.value as NcmCatalogSearchType)
                 }
                 className="max-w-[5.5rem] rounded border border-[var(--md-sys-color-outline)] bg-[var(--md-sys-color-surface-container-high)] px-1.5 text-xs"
               >
-                <option value="song">歌曲</option>
-                <option value="playlist">歌单</option>
-                <option value="album">专辑</option>
-                <option value="artist">歌手</option>
+                <option value="song">{t('Songs')}</option>
+                <option value="playlist">{t('Playlists')}</option>
+                <option value="album">{t('Albums')}</option>
+                <option value="artist">{t('Artist')}</option>
               </select>
             </div>
           )}
           {showPrivate && !loggedIn ? (
             <div className="rounded-lg bg-[var(--md-sys-color-surface-container-low)] p-3 text-center text-[11px] text-[var(--md-sys-color-on-surface-variant)]">
-              请先在上方扫码登录网易云音乐。私有歌单、我喜欢、私人 FM
-              和云盘不会使用其他账号的数据。
+              {t(
+                'Connect your NetEase Music account above to browse playlists, liked songs, Personal FM and cloud music from your own account.'
+              )}
             </div>
           ) : showPrivate ? (
             <div className="mt-2 space-y-1.5">
@@ -1120,11 +1155,16 @@ export function NcmCatalogPanel({
                                 { trackId: track.trackId }
                               ).then((result) => {
                                 if (!result.ok) setError(errorFrom(result))
-                                else setNotice('已从私人 FM 中标记为不喜欢')
+                                else
+                                  setNotice(
+                                    t(
+                                      'Removed from your Personal FM recommendations.'
+                                    )
+                                  )
                               })
                             }}
                           >
-                            不喜欢
+                            {t('Dislike')}
                           </Button>
                         </div>
                       )}
@@ -1137,14 +1177,18 @@ export function NcmCatalogPanel({
               {searchPage?.items.map(renderSearchItem)}
               {!catalog.searchQuery.trim() && (
                 <p className="py-2 text-[10px] text-[var(--md-sys-color-on-surface-variant)]">
-                  输入关键词后搜索。选择音质时，如果目录提供了可用列表，不可用的音质不会被自动替换。
+                  {t(
+                    'Search for music, then choose a track and quality. Unavailable quality options stay disabled.'
+                  )}
                 </p>
               )}
-              {catalog.loading && <p className="text-[10px]">加载中…</p>}
+              {catalog.loading && (
+                <p className="text-[10px]">{t('Loading……')}</p>
+              )}
               {searchPage &&
                 searchPage.items.length === 0 &&
                 !catalog.loading && (
-                  <p className="text-[10px]">没有找到结果。</p>
+                  <p className="text-[10px]">{t('No results found.')}</p>
                 )}
             </div>
           )}
@@ -1152,13 +1196,9 @@ export function NcmCatalogPanel({
           {auxiliaryTarget && renderAuxiliary()}
         </>
       )}
-      <p className="mt-2 text-[9px] text-[var(--md-sys-color-on-surface-variant)]">
-        目录只保存安全的歌曲元数据和稳定引用；播放音频、房间权限与权威进度仍由
-        Together Listen 统一处理。
-      </p>
       <span className="sr-only">
-        当前默认音质为 {qualityLabel(preferredQuality)}，可选音质共{' '}
-        {MUSIC_QUALITY_VALUES.length} 种
+        {t('Default quality:')} {qualityLabel(preferredQuality)}.{' '}
+        {t('Quality choices:')} {MUSIC_QUALITY_VALUES.length} {t('options')}
       </span>
     </div>
   )

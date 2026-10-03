@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 /**
  * FlvPlayer —— HTTP-FLV 拉流播放器（ArtPlayer 版）。
  *
@@ -50,11 +51,11 @@ import '@/modules/art-player/art-overrides.css'
  * 总码率近似为 speed（下载速度 KB/s）× 8。
  */
 export interface FlvStatistics {
-  /** 网络下载速度 (KB/s) */
+  /** 网络DownloadSpeed (KB/s) */
   speed: number
-  /** 当前近似总码率 (Kbps)，由 speed × 8 计算得出 */
+  /** Current近似总Bitrate (Kbps)，由 speed × 8 计算得出 */
   totalDataRate: number
-  /** 当前帧率（fps），由 decodedFrames 差值 / 时间差计算） */
+  /** CurrentFrame rate（fps），由 decodedFrames 差值 / 时间差计算） */
   fps: number
   /** 已解码帧数 */
   decodedFrames: number
@@ -65,9 +66,9 @@ export interface FlvStatistics {
 interface FlvPlayerProps {
   /** 拉流地址（HTTP-FLV），例如 http://host:3335/live/xxx.flv */
   src: string
-  /** 是否自动播放 */
+  /** 是否自动Play */
   autoPlay?: boolean
-  /** 是否静音（默认 true，处理浏览器自动播放策略） */
+  /** 是否Mute（Default true，处理Browse器自动Play策略） */
   muted?: boolean
   /** 附加 className */
   className?: string
@@ -79,9 +80,9 @@ interface FlvPlayerProps {
   ) => void
   /** 统计信息回调（每秒触发） */
   onStatistics?: (stats: FlvStatistics) => void
-  /** 网页全屏状态（受控） */
+  /** Cinema mode状态（受控） */
   isWebFullscreen?: boolean
-  /** 切换网页全屏 */
+  /** 切换Cinema mode */
   onToggleWebFullscreen?: () => void
 }
 
@@ -99,6 +100,8 @@ export function FlvPlayer({
   isWebFullscreen = false,
   onToggleWebFullscreen,
 }: FlvPlayerProps): JSX.Element {
+  useTranslation()
+
   const containerRef = useRef<HTMLDivElement | null>(null)
   const stageRef = useRef<HTMLDivElement | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
@@ -135,7 +138,7 @@ export function FlvPlayer({
     const container = containerRef.current
     if (!container || !src) return
     if (!flvjs.isSupported()) {
-      const err = new Error('当前浏览器不支持 MSE / flv.js')
+      const err = new Error('Live streaming is unavailable in this browser.')
       // eslint-disable-next-line react-hooks/set-state-in-effect -- 错误处理
       setErrorMsg(err.message)
       onErrorRef.current?.(err)
@@ -264,9 +267,15 @@ export function FlvPlayer({
         }, delay)
       } else {
         const err = new Error(
-          `拉流失败（${errorType}/${errorDetail}），已重试 ${MAX_RETRY} 次`
+          `Streaming failed (${errorType}/${errorDetail}). Attempts: ${MAX_RETRY}.`
         )
-        setErrorMsg(err.message)
+        setErrorMsg(
+          t('Streaming failed ({value1}/{value2}). Attempts: {value3}.', {
+            value1: errorType,
+            value2: errorDetail,
+            value3: MAX_RETRY,
+          })
+        )
         onErrorRef.current?.(err)
         onStatusChangeRef.current?.('error')
         setStreamStatus('error')
@@ -492,28 +501,30 @@ export function FlvPlayer({
 
       {loading && !errorMsg && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/80">
-          <Spinner tip="正在连接直播流..." size={32} />
+          <Spinner tip={t('Connecting to the stream…')} size={32} />
         </div>
       )}
       {errorMsg && (
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black/90 p-6 text-center">
           <div className="text-base font-medium text-[var(--md-sys-color-error)]">
-            {errorMsg}
+            {t(errorMsg)}
           </div>
           <div className="text-sm text-[var(--md-sys-color-on-surface-variant)]">
-            请检查网络连接或房主推流状态
+            {t(
+              'Check your connection and ask the host if the stream has started.'
+            )}
           </div>
           <button
             type="button"
             className="mt-1 rounded-lg border border-white/20 px-4 py-1.5 text-sm text-white transition-colors hover:bg-white/10"
             onClick={handleRefresh}
           >
-            重新连接
+            {t('Reconnect')}
           </button>
         </div>
       )}
 
-      {/* 自定义玻璃拟态控制栏（与 WebRTC 控制栏风格一致） */}
+      {/* Custom玻璃拟态控制栏（与 WebRTC 控制栏风格一致） */}
       {!loading && !errorMsg && (
         <div
           className={cn(
@@ -532,27 +543,29 @@ export function FlvPlayer({
             <div className="flex flex-wrap items-center vc-gap">
               <IconButton
                 icon={isPlaying ? <Pause /> : <Play />}
-                label={isPlaying ? '暂停' : '播放'}
+                label={isPlaying ? t('Pause') : t('Play')}
                 onClick={handleTogglePlayPause}
               />
               <IconButton
                 icon={isMuted ? <VolumeX /> : <Volume2 />}
-                label={isMuted ? '取消静音' : '静音'}
+                label={isMuted ? t('Unmute') : t('Mute')}
                 onClick={handleToggleMute}
               />
               <IconButton
                 icon={isWebFullscreen ? <Minimize /> : <Maximize />}
-                label={isWebFullscreen ? '退出网页全屏' : '网页全屏'}
+                label={
+                  isWebFullscreen ? t('Exit cinema mode') : t('Cinema mode')
+                }
                 onClick={onToggleWebFullscreen}
               />
               <IconButton
                 icon={isFullscreen ? <Minimize2 /> : <Maximize2 />}
-                label={isFullscreen ? '退出全屏' : '全屏'}
+                label={isFullscreen ? t('Exit fullscreen') : t('Fullscreen')}
                 onClick={handleFullscreen}
               />
               <IconButton
                 icon={<RefreshCw />}
-                label="刷新连接"
+                label={t('Refresh connection')}
                 onClick={handleRefresh}
               />
             </div>
@@ -567,18 +580,18 @@ export function FlvPlayer({
                 }
               >
                 {streamStatus === 'playing'
-                  ? '直播中'
+                  ? t('Live')
                   : streamStatus === 'error'
-                    ? '连接失败'
+                    ? t('Connection failed')
                     : streamStatus === 'stopped'
-                      ? '已停止'
-                      : '连接中'}
+                      ? t('Stopped')
+                      : t('Connecting')}
               </Tag>
-              <Tag color="primary">OBS 推流</Tag>
+              <Tag color="primary">{t('OBS stream')}</Tag>
               {isMuted ? (
-                <Tag color="default">静音中</Tag>
+                <Tag color="default">{t('Muted')}</Tag>
               ) : (
-                <Tag color="cyan">音频开启</Tag>
+                <Tag color="cyan">{t('Audio on')}</Tag>
               )}
             </div>
           </div>

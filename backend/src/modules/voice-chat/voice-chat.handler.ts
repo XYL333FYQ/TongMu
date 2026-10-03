@@ -227,7 +227,7 @@ function removeMember(
   return entry;
 }
 
-function removeBySocketId(
+export function leaveRoomVoice(
   io: SocketIOServer,
   socket: Socket,
   roomId?: string,
@@ -370,7 +370,7 @@ export class VoiceChatHandler implements SocketEventHandler {
       "voice-leave",
       (payload: unknown, callback?: (response: unknown) => void) => {
         const roomId = (payload as { roomId?: unknown })?.roomId;
-        if (isRoomId(roomId)) removeBySocketId(io, socket, roomId);
+        if (isRoomId(roomId)) leaveRoomVoice(io, socket, roomId);
         callback?.({ success: true });
       },
     );
@@ -530,7 +530,7 @@ export class VoiceChatHandler implements SocketEventHandler {
     );
 
     socket.on("disconnect", () => {
-      removeBySocketId(io, socket);
+      leaveRoomVoice(io, socket);
       packetRates.delete(socket.id);
       packetRates.delete(`${socket.id}:codec`);
     });

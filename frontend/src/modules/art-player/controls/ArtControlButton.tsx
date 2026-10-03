@@ -11,7 +11,7 @@ interface ArtControlButtonProps {
   label: string
   onClick?: () => void
   disabled?: boolean
-  /** 激活态（如弹幕开关开启中） */
+  /** 激活态（如On-screen comments开关On中） */
   active?: boolean
 }
 

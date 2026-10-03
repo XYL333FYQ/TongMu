@@ -14,12 +14,12 @@ export class MovieSubmissionError extends Error {
 }
 
 /** In-memory only: credentials/URLs must never be written to browser storage. */
-export function createMovieSubmitter(
-  send: (body: string, key: string, scope: string) => Promise<void>,
+export function createMovieSubmitter<T = void>(
+  send: (body: string, key: string, scope: string) => Promise<T>,
   newKey = requestKey
 ) {
-  const requests = new Map<string, { key: string; pending?: Promise<void> }>()
-  return (scope: string, payload: unknown): Promise<void> => {
+  const requests = new Map<string, { key: string; pending?: Promise<T> }>()
+  return (scope: string, payload: unknown): Promise<T> => {
     const body = JSON.stringify(payload)
     const identity = JSON.stringify([scope, body])
     let entry = requests.get(identity)
@@ -30,7 +30,13 @@ export function createMovieSubmitter(
         const failed = [...requests].find(([, candidate]) => !candidate.pending)
         if (failed) requests.delete(failed[0])
         else
-          return Promise.reject(new Error('添加请求过多，请等待当前请求完成'))
+          return Promise.reject(
+            new Error(
+              t(
+                'Too many pending selections. Wait for the current requests to finish.'
+              )
+            )
+          )
       }
       entry = { key: newKey() }
       requests.set(identity, entry)
@@ -38,8 +44,9 @@ export function createMovieSubmitter(
     const current = entry
     const pending = Promise.resolve()
       .then(() => send(body, current.key, scope))
-      .then(() => {
+      .then((result) => {
         requests.delete(identity)
+        return result
       })
       .catch((error) => {
         // A conflict/deleted receipt requires a new explicit attempt. A lost
@@ -54,7 +61,9 @@ export function createMovieSubmitter(
           ? error
           : new MovieSubmissionError(
               0,
-              '添加结果尚未确认，请再次点击添加；重试不会重复创建影片'
+              t(
+                'The selection is not confirmed yet. Try again; retrying will not add a duplicate.'
+              )
             )
       })
       .finally(() => {
@@ -64,3 +73,4 @@ export function createMovieSubmitter(
     return pending
   }
 }
+import { t } from '@/i18n'

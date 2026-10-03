@@ -4,6 +4,7 @@
  * 路由前缀 /api/jellyfin。Jellyfin 是 Emby 开源分支，接口与 emby 一致。
  */
 import { apiFetch } from '@/lib/api'
+import { englishErrorMessage } from '@/lib/errorMessage'
 import { buildProxyUrl } from '@/modules/direct-link/directLinkApi'
 import type { MediaFormat } from '@/lib/mediaFormat'
 import type {
@@ -26,7 +27,9 @@ export async function getJellyfinMounts(): Promise<JellyfinMount[]> {
     message?: string
   }
   if (!res.ok || !data.success) {
-    throw new Error(data.message || '获取 Jellyfin 挂载列表失败')
+    throw new Error(
+      englishErrorMessage(data.message, 'Unable to load Jellyfin sources.')
+    )
   }
   return data.mounts || []
 }
@@ -46,7 +49,9 @@ export async function createJellyfinMount(
     warning?: string
   }
   if (!res.ok || !data.success || !data.mount) {
-    throw new Error(data.message || '创建 Jellyfin 挂载失败')
+    throw new Error(
+      englishErrorMessage(data.message, 'Unable to add this Jellyfin source.')
+    )
   }
   return { ...data.mount, warning: data.warning }
 }
@@ -67,7 +72,12 @@ export async function updateJellyfinMount(
     warning?: string
   }
   if (!res.ok || !data.success || !data.mount) {
-    throw new Error(data.message || '更新 Jellyfin 挂载失败')
+    throw new Error(
+      englishErrorMessage(
+        data.message,
+        'Unable to update this Jellyfin source.'
+      )
+    )
   }
   return { ...data.mount, warning: data.warning }
 }
@@ -78,7 +88,12 @@ export async function deleteJellyfinMount(id: number): Promise<void> {
   })
   const data = (await res.json()) as { success: boolean; message?: string }
   if (!res.ok || !data.success) {
-    throw new Error(data.message || '删除 Jellyfin 挂载失败')
+    throw new Error(
+      englishErrorMessage(
+        data.message,
+        'Unable to remove this Jellyfin source.'
+      )
+    )
   }
 }
 
@@ -99,7 +114,12 @@ export async function testJellyfinMount(
     code?: string
   }
   if (!res.ok || !data.success) {
-    throw new Error(data.message || '测试 Jellyfin 连接失败')
+    throw new Error(
+      englishErrorMessage(
+        data.message,
+        'Unable to connect to Jellyfin. Check the address and credentials.'
+      )
+    )
   }
   return {
     success: true,
@@ -121,7 +141,12 @@ export async function browseJellyfinMount(
     message?: string
   }
   if (!res.ok || !data.success) {
-    throw new Error(data.message || '浏览 Jellyfin 挂载失败')
+    throw new Error(
+      englishErrorMessage(
+        data.message,
+        'Unable to browse this Jellyfin library.'
+      )
+    )
   }
   return data.entries || []
 }
@@ -148,7 +173,9 @@ export async function resolveJellyfin(
     audioTranscodeDisabled?: boolean
   }
   if (!res.ok || !data.success || !data.videoUrl) {
-    throw new Error(data.message || '解析 Jellyfin 条目失败')
+    throw new Error(
+      englishErrorMessage(data.message, 'Unable to open this Jellyfin item.')
+    )
   }
   return {
     title: data.title || '',

@@ -1,3 +1,4 @@
+import { t } from '@/i18n'
 /**
  * playsvideo 引擎：浏览器端容器重封装 + 音轨转码。
  *
@@ -126,7 +127,9 @@ export function isPlaysVideoSupported(): boolean {
  * 换来的是任意容器/编码都能播。
  */
 function resolvePlaysVideoUrl(source: PlayerSource): string {
-  return resolveProxyUrl(source.url, source.headers, source.format, { noProxyFallback: source.noProxyFallback })
+  return resolveProxyUrl(source.url, source.headers, source.format, {
+    noProxyFallback: source.noProxyFallback,
+  })
 }
 
 /**
@@ -171,7 +174,9 @@ class PlaysVideoController implements PlayerController {
 
   async attach(startTime?: number): Promise<string> {
     if (!isPlaysVideoSupported()) {
-      throw new Error('浏览器不支持 MSE/WebWorker，无法启用浏览器端转码')
+      throw new Error(
+        'The browser compatibility engine requires MediaSource and workers. Try a supported browser.'
+      )
     }
     installMediaSourceDiagnostics()
 
@@ -279,7 +284,12 @@ class PlaysVideoController implements PlayerController {
       const onError = (e: Event) => {
         cleanup()
         const detail = (e as CustomEvent<{ message?: string }>).detail
-        reject(new Error(detail?.message || 'playsvideo 引擎启动失败'))
+        reject(
+          new Error(
+            detail?.message ||
+              'The browser compatibility engine could not start. Reload the content to try again.'
+          )
+        )
       }
       const onAbort = () => {
         cleanup()
@@ -287,9 +297,15 @@ class PlaysVideoController implements PlayerController {
       }
       const timer = setTimeout(() => {
         cleanup()
-        reject(new Error('playsvideo 引擎准备超时（60s）'))
+        reject(
+          new Error(
+            'The browser compatibility engine did not start within 60 seconds. Reload the content to try again.'
+          )
+        )
       }, READY_TIMEOUT_MS)
-      const releaseTimer = trackPlayerResource('timers', () => clearTimeout(timer))
+      const releaseTimer = trackPlayerResource('timers', () =>
+        clearTimeout(timer)
+      )
 
       engine.addEventListener('ready', onReady)
       engine.addEventListener('error', onError)
@@ -306,7 +322,11 @@ class PlaysVideoController implements PlayerController {
    */
   async seekTo(targetTime: number): Promise<SeekResult> {
     if (!this.engine || this.engine.phase !== 'ready') {
-      return { success: false, needReload: true, message: '未挂载' }
+      return {
+        success: false,
+        needReload: true,
+        message: t('No media source is attached.'),
+      }
     }
     try {
       this.video.currentTime = targetTime
@@ -368,7 +388,7 @@ class PlaysVideoController implements PlayerController {
     const abort = this.subtitleAbort ?? new AbortController()
     this.subtitleAbort = abort
 
-    const label = element.label || '未命名轨道'
+    const label = element.label || 'Untitled track'
     let cues
     try {
       cues = await fetchPlaysVideoTrackCues(element, abort.signal)
@@ -387,7 +407,7 @@ class PlaysVideoController implements PlayerController {
 
     publishPlaysVideoSubtitle(gen, {
       index: ordinal,
-      label: element.label || `轨道 ${ordinal + 1}`,
+      label: element.label || t('Track {value1}', { value1: ordinal + 1 }),
       language: element.srclang || info?.language || null,
       codec: info?.codec ?? 'unknown',
       cues,

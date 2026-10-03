@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Activity, Copy, Terminal, X } from 'lucide-react'
@@ -11,13 +12,13 @@ export interface VideoStatsMenuProps {
   videoElement: HTMLVideoElement | null
   pc?: RTCPeerConnection | null
   sourceType: 'bilibili' | 'custom' | 'webrtc'
-  /** MSE 路径下由调用方提供的真实视频编码（如 avc/hevc/av1），避免依赖非标准 API */
+  /** MSE Path下由调用方提供的真实视频Codec（如 avc/hevc/av1），避免依赖非标准 API */
   videoCodec?: string
-  /** MSE 路径下的真实播放地址（避免显示 blob: URL） */
+  /** MSE Path下的真实Playback URL（避免显示 blob: URL） */
   sourceUrl?: string
-  /** 当前清晰度 qn（B站） */
+  /** CurrentQuality qn（B站） */
   currentQuality?: number | null
-  /** 可用清晰度列表（B站） */
+  /** 可用QualityList（B站） */
   availableQualities?: { id: number; label: string; resolution?: string }[]
   /**
    * B站 媒体容器格式：
@@ -50,20 +51,20 @@ interface VideoStats {
   bufferHealth: string
   url: string
   sourceLabel: string
-  /** 当前清晰度标签（B站） */
+  /** CurrentQuality标签（B站） */
   quality: string
-  /** 当前 CDN 提供商标签（B站 DASH 流根据 URL 子串识别） */
+  /** Current CDN 提供商标签（B站 DASH 流根据 URL 子串识别） */
   cdnProvider: string
 }
 
 const SOURCE_LABELS: Record<VideoStatsMenuProps['sourceType'], string> = {
-  bilibili: 'B 站',
-  custom: '自定义源',
-  webrtc: 'WebRTC 屏幕共享',
+  bilibili: 'Bilibili',
+  custom: 'Custom source',
+  webrtc: 'Share your screen',
 }
 
 const LOADING_STATS: VideoStats = {
-  codec: '加载中…',
+  codec: 'Loading……',
   resolution: '-',
   frameRate: '-',
   bitrate: '-',
@@ -92,16 +93,16 @@ function detectBilibiliCdnProvider(url: string): string {
   const lower = url.toLowerCase()
   if (lower.includes('.mcdn.bilivideo.cn')) return 'P2P CDN'
   if (lower.includes('mirrorali') || lower.includes('alibilibili'))
-    return '阿里云'
+    return 'Alibaba Cloud'
   if (lower.includes('mirrorcos') || lower.includes('cosbilibili'))
-    return '腾讯云'
+    return 'Tencent Cloud'
   if (lower.includes('mirrorhw') || lower.includes('hwbilibili'))
-    return '华为云'
+    return 'Huawei Cloud'
   if (lower.includes('upos-sz-mirror') || lower.includes('upos-sz'))
-    return '主站 CDN'
+    return 'Primary CDN'
   if (lower.includes('bilivideo.com') || lower.includes('bilivideo.cn'))
-    return 'B站 CDN'
-  return '未知'
+    return 'Bilibili CDN'
+  return 'Unknown'
 }
 
 /**
@@ -237,6 +238,8 @@ export function VideoStatsMenu({
   format,
   directLink,
 }: VideoStatsMenuProps) {
+  useTranslation()
+
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState<Position>({ x: 0, y: 0 })
   const [stats, setStats] = useState<VideoStats | null>(null)
@@ -330,7 +333,9 @@ export function VideoStatsMenu({
         rtt: formatMs(extras?.rtt ?? null),
         jitter: formatMs(extras?.jitter ?? null),
         bufferHealth:
-          bufferHealth != null ? formatSeconds(bufferHealth) : '直播流无缓冲',
+          bufferHealth != null
+            ? formatSeconds(bufferHealth)
+            : 'Live stream has no buffered range',
         url,
         sourceLabel: SOURCE_LABELS[sourceType],
         quality: '-',
@@ -495,34 +500,34 @@ export function VideoStatsMenu({
   const handleCopy = useCallback(async () => {
     if (!stats) return
     const lines: string[] = [
-      '视频统计信息',
-      `来源: ${stats.sourceLabel}`,
+      'Video statistics',
+      `Source: ${stats.sourceLabel}`,
       `URL: ${stats.url || '-'}`,
     ]
     const playMode = detectPlayMode(sourceType, format, sourceUrl)
     if (playMode) {
-      lines.push(`播放模式: ${playMode}`)
+      lines.push(`Playback mode: ${playMode}`)
     }
     if (sourceType === 'custom') {
-      lines.push(`访问模式: ${directLink ? '直链' : '服务器中转'}`)
+      lines.push(`Connection: ${directLink ? 'Direct' : 'Server relay'}`)
     }
-    lines.push(`编码: ${stats.codec}`, `分辨率: ${stats.resolution}`)
+    lines.push(`Codec: ${stats.codec}`, `Resolution: ${stats.resolution}`)
     if (sourceType === 'bilibili' && format !== 'mp4') {
-      lines.push(`清晰度: ${stats.quality}`)
+      lines.push(`Quality: ${stats.quality}`)
     }
-    lines.push(`帧率: ${stats.frameRate}`, `码率: ${stats.bitrate}`)
+    lines.push(`Frame rate: ${stats.frameRate}`, `Bitrate: ${stats.bitrate}`)
     if (isWebRtc) {
-      lines.push(`丢包率: ${stats.packetLossRate}`)
+      lines.push(`Packet loss: ${stats.packetLossRate}`)
       lines.push(`RTT: ${stats.rtt}`)
-      lines.push(`抖动: ${stats.jitter}`)
+      lines.push(`Jitter: ${stats.jitter}`)
     }
-    lines.push(`缓冲健康度: ${stats.bufferHealth}`)
+    lines.push(`Buffer health: ${stats.bufferHealth}`)
     try {
       await navigator.clipboard.writeText(lines.join('\n'))
-      message.success('统计信息已复制到剪贴板')
+      message.success(t('Statistics copied.'))
     } catch (err) {
       console.error('[VideoStatsMenu] copy error:', err)
-      message.error('复制失败，请检查浏览器剪贴板权限')
+      message.error(t('Could not copy. Check clipboard permissions.'))
     }
   }, [stats, isWebRtc, sourceType, format, directLink, sourceUrl])
 
@@ -567,10 +572,12 @@ export function VideoStatsMenu({
     console.log('[VideoStatsMenu] Developer stats:', detail)
     if (isWebRtc) {
       message.info(
-        '已输出详细统计到控制台；如需更深入分析可访问 chrome://webrtc-internals/'
+        t(
+          'Detailed statistics are in the developer console. Further diagnostics: chrome://webrtc-internals/'
+        )
       )
     } else {
-      message.info('已输出详细统计到浏览器开发者控制台')
+      message.info(t('Detailed statistics are in the developer console.'))
     }
   }, [videoElement, pc, sourceType, isWebRtc, stats])
 
@@ -613,7 +620,7 @@ export function VideoStatsMenu({
             className="text-xs font-semibold"
             style={{ color: 'var(--md-sys-color-on-surface)' }}
           >
-            视频统计信息
+            {t('Video statistics')}
           </span>
         </div>
         <button
@@ -632,32 +639,40 @@ export function VideoStatsMenu({
       <div className="flex flex-col gap-1.5 text-xs">
         {(() => {
           const mode = detectPlayMode(sourceType, format, sourceUrl)
-          return mode ? <StatsRow label="播放模式" value={mode} /> : null
+          return mode ? (
+            <StatsRow label={t('Playback mode')} value={mode} />
+          ) : null
         })()}
         {sourceType === 'custom' && (
           <StatsRow
-            label="访问模式"
-            value={directLink ? '直链' : '服务器中转'}
+            label={t('Connection')}
+            value={directLink ? 'Direct' : 'Server relay'}
           />
         )}
-        <StatsRow label="编码" value={displayStats.codec} />
-        <StatsRow label="分辨率" value={displayStats.resolution} />
+        <StatsRow label={t('Codec')} value={displayStats.codec} />
+        <StatsRow label={t('Resolution')} value={displayStats.resolution} />
         {sourceType === 'bilibili' && format !== 'mp4' && (
-          <StatsRow label="清晰度" value={displayStats.quality} />
+          <StatsRow label={t('Quality')} value={displayStats.quality} />
         )}
         {sourceType === 'bilibili' && (
-          <StatsRow label="CDN 源" value={displayStats.cdnProvider} />
+          <StatsRow label={t('CDN')} value={displayStats.cdnProvider} />
         )}
-        <StatsRow label="帧率" value={displayStats.frameRate} />
-        <StatsRow label="码率" value={displayStats.bitrate} />
+        <StatsRow label={t('Frame rate')} value={displayStats.frameRate} />
+        <StatsRow label={t('Bitrate')} value={displayStats.bitrate} />
         {isWebRtc && (
           <>
-            <StatsRow label="丢包率" value={displayStats.packetLossRate} />
-            <StatsRow label="RTT" value={displayStats.rtt} />
-            <StatsRow label="抖动" value={displayStats.jitter} />
+            <StatsRow
+              label={t('Packet loss')}
+              value={displayStats.packetLossRate}
+            />
+            <StatsRow label={t('RTT')} value={displayStats.rtt} />
+            <StatsRow label={t('Jitter')} value={displayStats.jitter} />
           </>
         )}
-        <StatsRow label="缓冲健康度" value={displayStats.bufferHealth} />
+        <StatsRow
+          label={t('Buffer health')}
+          value={displayStats.bufferHealth}
+        />
         <div
           className="mt-1 border-t pt-1.5"
           style={{ borderColor: 'var(--md-sys-color-outline)' }}
@@ -666,7 +681,7 @@ export function VideoStatsMenu({
             className="mb-1 text-[10px] uppercase tracking-wide"
             style={{ color: 'var(--md-sys-color-on-surface-variant)' }}
           >
-            播放地址
+            {t('Playback URL')}
           </div>
           <div
             className="break-all font-mono text-[10px] leading-relaxed"
@@ -689,7 +704,7 @@ export function VideoStatsMenu({
           icon={<Copy className="h-3 w-3" />}
           onClick={handleCopy}
         >
-          复制统计信息
+          {t('Copy statistics')}
         </Button>
         <Button
           variant="ghost"
@@ -698,7 +713,7 @@ export function VideoStatsMenu({
           icon={<Terminal className="h-3 w-3" />}
           onClick={handleOpenDevPanel}
         >
-          开发者统计
+          {t('Developer statistics')}
         </Button>
       </div>
     </div>,
@@ -712,6 +727,8 @@ interface StatsRowProps {
 }
 
 function StatsRow({ label, value }: StatsRowProps) {
+  useTranslation()
+
   return (
     <div className="flex items-center justify-between gap-2">
       <span style={{ color: 'var(--md-sys-color-on-surface-variant)' }}>

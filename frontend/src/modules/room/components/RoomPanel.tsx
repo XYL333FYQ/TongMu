@@ -1,220 +1,405 @@
-import { useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Monitor, Users, Headphones, ArrowRight } from 'lucide-react'
+import { t, useTranslation } from '@/i18n'
+import { useState, type FormEvent } from 'react'
+import { useNavigate } from 'react-router-dom'
+import {
+  ArrowLeft,
+  ArrowRight,
+  ChevronDown,
+  Film,
+  Lock,
+  Users,
+} from 'lucide-react'
 import { Button } from '@/components/ui/Button'
-import { Space } from '@/components/ui/Space'
-import { Title, Paragraph } from '@/components/ui/Typography'
-import { Switch } from '@/components/ui/Switch'
 import { Input } from '@/components/ui/Input'
+import { InputPassword } from '@/components/ui/InputPassword'
+import { Switch } from '@/components/ui/Switch'
+import { Modal } from '@/components/ui/Modal'
 import { useRoomStore, type RoomMode } from '@/store/roomStore'
+import { useAuthStore } from '@/store/authStore'
+import { useSystemSettingsStore } from '@/store/systemSettingsStore'
 import { useSocket } from '@/hooks/useSocket'
-import { message } from '@/components/ui/message'
 import { storeRoomMediaGrant } from '@/modules/media/roomMediaGrant'
+import { defaultRoomPolicy, type RoomPolicy } from '../roomExperience'
+import { roomErrorMessage } from '../roomErrors'
+import { dispatchRoomMediaTeardown } from '@/lib/mediaTeardown'
 
 interface RoomPanelProps {
   onModeSelected?: (mode: RoomMode) => void
 }
 
-export function RoomPanel({ onModeSelected }: RoomPanelProps) {
-  const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
-  const { socket, connected } = useSocket()
-  const {
-    setMode,
-    setRoomId,
-    setRoomSettings,
-    reset: resetRoomStore,
-    mode: storeMode,
-  } = useRoomStore()
-  // 默认模式从 store 读取，不再从 URL 读取 mode 参数。
-  // 模式切换由后端房间状态管理，URL 只保留 /room/:roomId 形式。
-  const initialActivity = searchParams.get('activity')
-  const [selectedActivity, setSelectedActivity] = useState<
-    'watch' | 'listen' | 'screen'
-  >(
-    initialActivity === 'listen' ||
-      initialActivity === 'screen' ||
-      initialActivity === 'watch'
-      ? initialActivity
-      : storeMode === 'screen-share'
-        ? 'screen'
-        : 'watch'
-  )
-  const selectedMode: RoomMode =
-    selectedActivity === 'screen' ? 'screen-share' : 'watch-together'
-  const [creating, setCreating] = useState(false)
-  const [requireApproval, setRequireApproval] = useState(false)
-  const [password, setPassword] = useState('')
+function RuleChoice<T extends string>({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string
+  value: T
+  onChange: (value: T) => void
+  options: { value: T; label: string; description: string }[]
+}) {
+  useTranslation()
 
-  const handleCreateRoom = () => {
+  return (
+    <fieldset className="room-rule-group">
+      <legend>{label}</legend>
+      <div className="room-rule-options">
+        {options.map((option) => (
+          <button
+            type="button"
+            key={option.value}
+            className="room-rule-option"
+            aria-pressed={value === option.value}
+            onClick={() => onChange(option.value)}
+          >
+            <span>{option.label}</span>
+            <small>{option.description}</small>
+          </button>
+        ))}
+      </div>
+    </fieldset>
+  )
+}
+
+export function RoomPanel({ onModeSelected }: RoomPanelProps) {
+  useTranslation()
+
+  const navigate = useNavigate()
+  const { socket, connected } = useSocket()
+  const user = useAuthStore((state) => state.user)
+  const creationMode = useSystemSettingsStore((state) => state.roomCreationMode)
+  const canCreate =
+    user &&
+    user.role !== 'guest' &&
+    (creationMode === 'all-users' ||
+      user.role === 'admin' ||
+      user.role === 'root')
+  const [name, setName] = useState('')
+  const [policy, setPolicy] = useState<RoomPolicy>({
+    ...defaultRoomPolicy,
+    permissions: {},
+  })
+  const [password, setPassword] = useState('')
+  const [approval, setApproval] = useState(false)
+  const [maxViewers, setMaxViewers] = useState('10')
+  const [advanced, setAdvanced] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [error, setError] = useState('')
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const patchPolicy = (patch: Partial<RoomPolicy>) =>
+    setPolicy((current) => ({ ...current, ...patch }))
+
+  const createRoom = () => {
     if (!socket || !connected) {
-      message.warning('Socket 尚未连接')
+      setError(t('Connection unavailable. Wait a moment, then try again.'))
       return
     }
+    setConfirmOpen(false)
     setCreating(true)
-    socket.emit(
+    setError('')
+    socket.timeout(12000).emit(
       'create-room',
       {
+        name: name.trim(),
+        mode: 'watch-together',
+        policy,
         password: password || undefined,
-        requireApproval,
-        mode: selectedMode,
+        requireApproval: approval,
+        maxViewers: Number(maxViewers),
       },
-      (response: {
-        success: boolean
-        data?: { roomId: string; mode?: RoomMode; mediaGrant?: string }
-        message?: string
-      }) => {
-        setCreating(false)
-        const roomId = response.data?.roomId
-        if (response.success && roomId) {
-          storeRoomMediaGrant(roomId, response.data?.mediaGrant)
-          // 若之前有一个保持中的房间（主动离开但未退出），创建新房间意味着
-          // 真正放弃旧房间：旧房间房主此时 emit host-leave 进入宽限期。
-          // 必须在 resetRoomStore() 清掉 activeRoomId 之前读取。
-          try {
-            const prevActive = useRoomStore.getState().activeRoomId
-            if (
-              prevActive &&
-              sessionStorage.getItem('zcontrol-host-room') === prevActive
-            ) {
-              socket?.emit('host-leave', () => {
-                /* ack */
-              })
-            }
-          } catch {
-            // ignore
-          }
-          // 创建新房间前先重置 store，清除上一个房间的 movies/currentMovieId 等残留状态。
-          // RoomPage 的 reset effect 是异步的（在渲染后执行），如果不在这里同步清理，
-          // navigate 后 MovieListPanel 等组件会在 reset 前渲染一帧旧数据。
-          resetRoomStore()
-          setRoomId(roomId)
-          setMode(response.data?.mode || selectedMode)
-          // 同步 requireApproval 到 store：创建房间时房主选择的值必须与后端一致，
-          // 否则 RoomInfoPanel 显示的开关状态与后端实际审批逻辑不符。
-          setRoomSettings({ requireApproval })
-          message.success('房间创建成功')
-          // 在 sessionStorage 中标记当前用户为该房间的房主，
-          // 刷新页面后 RoomPage 据此判断身份并走 register-host 流程。
-          // URL 保持干净：/room/:roomId，不带任何查询参数。
-          try {
-            sessionStorage.setItem('zcontrol-host-room', roomId)
-            if (selectedActivity === 'listen') {
-              sessionStorage.setItem(
-                `tongmu-room-start-activity:${roomId}`,
-                'listen'
-              )
-            }
-          } catch {
-            // sessionStorage 不可用时忽略，仅影响刷新后身份判断
-          }
-          navigate(`/room/${roomId}`, {
-            replace: true,
-          })
-          onModeSelected?.(response.data?.mode || selectedMode)
-        } else {
-          message.error(response.message || '创建房间失败')
+      (
+        timeout: Error | null,
+        response: {
+          success: boolean
+          message?: string
+          data?: { roomId: string; mode?: RoomMode; mediaGrant?: string }
         }
+      ) => {
+        setCreating(false)
+        if (timeout) {
+          setError(
+            t(
+              'The server did not respond. Your settings are still here; try again.'
+            )
+          )
+          return
+        }
+        if (!response?.success || !response.data?.roomId) {
+          setError(roomErrorMessage(response?.message))
+          return
+        }
+        const roomId = response.data.roomId
+        dispatchRoomMediaTeardown(true)
+        useRoomStore.getState().reset()
+        useRoomStore.getState().setRoomId(roomId)
+        useRoomStore.getState().setMode('watch-together')
+        useRoomStore.getState().setRoomSettings({
+          requireApproval: approval,
+          maxViewers: Number(maxViewers),
+          password: password ? 'configured' : null,
+        })
+        storeRoomMediaGrant(roomId, response.data.mediaGrant)
+        try {
+          sessionStorage.setItem('zcontrol-host-room', roomId)
+        } catch {
+          /* Server ownership still restores on return. */
+        }
+        navigate(`/room/${roomId}`, { replace: true })
+        onModeSelected?.('watch-together')
       }
     )
   }
 
+  const submit = (event: FormEvent) => {
+    event.preventDefault()
+    if (!name.trim()) {
+      setError(t('Give your room a name.'))
+      return
+    }
+    if (useRoomStore.getState().activeRoomId) setConfirmOpen(true)
+    else createRoom()
+  }
+
   return (
-    <div className="tongmu-create-wrap flex-1 flex items-center justify-center p-6">
-      <section className="tongmu-create w-full">
-        <div className="text-center mb-6">
-          <Title level={3} className="m-0">
-            创建房间
-          </Title>
-          <Paragraph type="secondary" className="m-0 mt-2">
-            选好想一起做的事，再邀请朋友进来
-          </Paragraph>
-        </div>
-
-        <Space direction="vertical" className="w-full">
-          <div className="tongmu-create__activities grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <button
-              onClick={() => setSelectedActivity('screen')}
-              aria-pressed={selectedActivity === 'screen'}
-              className="tongmu-create__activity"
-            >
-              <div className="tongmu-create__icon">
-                <Monitor className="h-6 w-6" />
-              </div>
-              <Title level={5} className="m-0">
-                远程共享
-              </Title>
-              <Paragraph type="secondary" className="m-0 mt-1 text-xs">
-                共享你的屏幕、摄像头或系统音频，观众实时观看
-              </Paragraph>
-            </button>
-
-            <button
-              onClick={() => setSelectedActivity('watch')}
-              aria-pressed={selectedActivity === 'watch'}
-              className="tongmu-create__activity"
-            >
-              <div className="tongmu-create__icon">
-                <Users className="h-6 w-6" />
-              </div>
-              <Title level={5} className="m-0">
-                一起看
-              </Title>
-              <Paragraph type="secondary" className="m-0 mt-1 text-xs">
-                同步播放视频，支持直链、WebDAV、SMB 与 B站
-              </Paragraph>
-            </button>
-            <button
-              onClick={() => setSelectedActivity('listen')}
-              aria-pressed={selectedActivity === 'listen'}
-              className="tongmu-create__activity"
-            >
-              <div className="tongmu-create__icon tongmu-create__icon--music">
-                <Headphones className="h-6 w-6" />
-              </div>
-              <Title level={5} className="m-0">
-                一起听
-              </Title>
-              <Paragraph type="secondary" className="m-0 mt-1 text-xs">
-                创建一起看房间后，直接打开已有的一起听播放队列
-              </Paragraph>
-            </button>
+    <div className="tongmu-create-wrap">
+      <section className="tongmu-create">
+        <Button
+          variant="secondary"
+          size="sm"
+          className="xl:hidden"
+          icon={<ArrowLeft size={16} />}
+          onClick={() => navigate('/')}
+        >
+          {t('Hall')}
+        </Button>
+        <div className="room-create-heading">
+          <div className="room-create-symbol">
+            <Film size={24} />
           </div>
-
-          <div
-            className="my-2"
-            style={{
-              height: '1px',
-              backgroundColor:
-                'color-mix(in srgb, var(--md-sys-color-outline) 40%, transparent)',
-            }}
-          />
-
-          <Space direction="vertical" className="w-full">
-            <Switch
-              label="需要确认加入"
-              checked={requireApproval}
-              onChange={(e) => setRequireApproval(e.target.checked)}
-            />
+          <div>
+            <h1>{t('Create a room')}</h1>
+            <p>
+              {t(
+                'Start with a video. Switch to music or screen sharing when you are inside.'
+              )}
+            </p>
+          </div>
+        </div>
+        {!canCreate ? (
+          <div className="room-create-access">
+            <Lock size={22} />
+            <h2>
+              {user?.role === 'guest'
+                ? t('Sign in to create a room')
+                : t('Room creation is limited')}
+            </h2>
+            <p>
+              {user?.role === 'guest'
+                ? t('You can still join rooms as a guest.')
+                : t(
+                    'Your platform administrator controls who can create rooms.'
+                  )}
+            </p>
+            {user?.role === 'guest' && (
+              <Button variant="primary" onClick={() => navigate('/login')}>
+                {t('Sign in')}
+              </Button>
+            )}
+          </div>
+        ) : (
+          <form onSubmit={submit} className="room-create-form">
             <Input
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="房间密码（可选）"
+              label={t('Room name')}
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder={t('Friday movie night')}
+              maxLength={120}
+              required
+              autoComplete="off"
             />
-          </Space>
-
-          <Button
-            variant="primary"
-            size="lg"
-            icon={<ArrowRight className="h-5 w-5" />}
-            block
-            loading={creating}
-            onClick={handleCreateRoom}
-          >
-            创建房间
-          </Button>
-        </Space>
+            <RuleChoice
+              label={t('How long should it stay?')}
+              value={policy.lifetime}
+              onChange={(lifetime) => patchPolicy({ lifetime })}
+              options={[
+                {
+                  value: 'temporary',
+                  label: t('Temporary'),
+                  description: t('Clears after 24 hours with no one inside.'),
+                },
+                {
+                  value: 'persistent',
+                  label: t('Fixed'),
+                  description: t('Keep the room, settings and saved queues.'),
+                },
+              ]}
+            />
+            <RuleChoice
+              label={t('Who can find it?')}
+              value={policy.visibility}
+              onChange={(visibility) => patchPolicy({ visibility })}
+              options={[
+                {
+                  value: 'public',
+                  label: t('Public'),
+                  description: t('Listed in the hall.'),
+                },
+                {
+                  value: 'private',
+                  label: t('Private'),
+                  description: t('Only a link or exact room ID.'),
+                },
+              ]}
+            />
+            <RuleChoice
+              label={t('Who controls the activity?')}
+              value={policy.collaboration}
+              onChange={(collaboration) => patchPolicy({ collaboration })}
+              options={[
+                {
+                  value: 'host',
+                  label: t('Host controls'),
+                  description: t('Members can chat, suggest and request.'),
+                },
+                {
+                  value: 'shared',
+                  label: t('Together'),
+                  description: t(
+                    'Signed-in members choose content and control playback.'
+                  ),
+                },
+              ]}
+            />
+            <div className="room-create-toggle">
+              <Users size={18} />
+              <Switch
+                label={t('Allow guests')}
+                checked={policy.allowGuests}
+                onChange={(event) =>
+                  patchPolicy({
+                    allowGuests: event.target.checked,
+                    guestCollaboration: false,
+                  })
+                }
+              />
+            </div>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              aria-expanded={advanced}
+              icon={<ChevronDown size={16} />}
+              onClick={() => setAdvanced((value) => !value)}
+            >
+              {t('Joining rules & permissions')}
+            </Button>
+            {advanced && (
+              <div className="room-create-advanced">
+                <InputPassword
+                  label={t('Password (optional)')}
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  maxLength={128}
+                  autoComplete="new-password"
+                />
+                <Switch
+                  label={t('Ask the host to approve new members')}
+                  checked={approval}
+                  onChange={(event) => setApproval(event.target.checked)}
+                />
+                <Input
+                  label={t('Member limit')}
+                  type="number"
+                  min={1}
+                  max={100}
+                  step={1}
+                  value={maxViewers}
+                  onChange={(event) => setMaxViewers(event.target.value)}
+                  required
+                />
+                {policy.allowGuests && (
+                  <Switch
+                    label={t('Let guests collaborate')}
+                    checked={policy.guestCollaboration}
+                    onChange={(event) =>
+                      patchPolicy({ guestCollaboration: event.target.checked })
+                    }
+                  />
+                )}
+                {(
+                  [
+                    'selectContent',
+                    'playback',
+                    'switchActivity',
+                    'screenShare',
+                  ] as const
+                ).map((key, index) => (
+                  <Switch
+                    key={key}
+                    label={
+                      [
+                        t('Members choose content'),
+                        t('Members control playback'),
+                        t('Members switch activities'),
+                        t('Members start screen sharing'),
+                      ][index]
+                    }
+                    checked={
+                      policy.permissions[key] ??
+                      (index < 2 && policy.collaboration === 'shared')
+                    }
+                    onChange={(event) =>
+                      patchPolicy({
+                        permissions: {
+                          ...policy.permissions,
+                          [key]: event.target.checked,
+                        },
+                      })
+                    }
+                  />
+                ))}
+              </div>
+            )}
+            {error && (
+              <p className="room-inline-error" role="alert">
+                {t(error)}
+              </p>
+            )}
+            <Button
+              variant="primary"
+              type="submit"
+              size="lg"
+              block
+              loading={creating}
+              disabled={!connected}
+              icon={<ArrowRight size={18} />}
+            >
+              {t('Create room')}
+            </Button>
+          </form>
+        )}
       </section>
+      <Modal
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        title={t('Leave your current room?')}
+        footer={
+          <>
+            <Button onClick={() => setConfirmOpen(false)}>
+              {t('Stay here')}
+            </Button>
+            <Button variant="primary" onClick={createRoom}>
+              {t('Leave & create')}
+            </Button>
+          </>
+        }
+      >
+        <p>
+          {t(
+            'Creating a room ends your membership in the current room and stops your local media and voice connection.'
+          )}
+        </p>
+      </Modal>
     </div>
   )
 }

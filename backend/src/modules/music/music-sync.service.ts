@@ -4,6 +4,8 @@ import { AppDataSource } from '../../data-source';
 import { MusicQueueItem } from '../../entities/MusicQueueItem';
 import { MusicRoomState } from '../../entities/MusicRoomState';
 import { Session } from '../../entities/Session';
+import { Room } from '../../entities/Room';
+import { roomDelegates } from '../room/room-policy';
 import type { UserRole } from '../../entities/User';
 import {
   realtimeSyncCore,
@@ -263,7 +265,7 @@ export class MusicSyncService {
         currentIndex,
         currentSourceRef: currentItem?.sourceRef ?? null,
         isPlaying: false,
-        positionSec: 0,
+        positionSec: clampMusicPosition(settings?.positionSec ?? 0, currentItem?.durationMs ?? 0),
         playbackRate: 1,
         playMode,
         musicGeneration: clock.generation,
@@ -301,6 +303,7 @@ export class MusicSyncService {
     }
     settings.playMode = runtime.playMode;
     settings.currentQueueItemId = runtime.currentQueueItemId;
+    settings.positionSec = runtime.state.positionSec;
     settings.shuffleSeed = runtime.shuffleSeed;
     settings.shuffleOrderJson = JSON.stringify(runtime.shuffleOrder);
     settings.shuffleHistoryJson = JSON.stringify(runtime.shuffleHistory);
@@ -608,6 +611,7 @@ export class MusicSyncService {
     }
     return this.withMutationSnapshot(roomId, actor, envelope, false,
       async (runtime, guard) => {
+        await this.requireListenActivity(roomId);
         const current = runtime.queue.find((item) => item.queueItemId === runtime.currentQueueItemId);
         if (!current) throw new MusicSyncError('EMPTY_QUEUE', '队列中没有当前歌曲');
         runtime.state.positionSec = clampMusicPosition(
@@ -629,12 +633,35 @@ export class MusicSyncService {
       });
   }
 
+  private async requireListenActivity(roomId: string): Promise<void> {
+    // Pure music-domain fixtures can omit Room; production always has this entity.
+    if (!this.dataSource.hasMetadata(Room)) return;
+    const room = await this.dataSource.getRepository(Room).findOneBy({ roomId, status: 'active' });
+    if (!room || room.activity !== 'listen') throw new MusicSyncError('INACTIVE_ACTIVITY', 'Switch to Listen before controlling music playback.');
+  }
+
+  /** Caller holds the shared room lock, so activity switching is one mutation. */
+  async suspendForActivityLocked(roomId: string): Promise<MusicSnapshot> {
+    const runtime = await this.getRuntime(roomId);
+    await this.mutateRuntime(roomId, runtime, {}, false, async (value, guard) => {
+      const current = value.queue.find(item => item.queueItemId === value.currentQueueItemId);
+      value.state.positionSec = clampMusicPosition(advanceMusicPosition(
+        value.state.positionSec, value.state.isPlaying, value.state.playbackRate,
+        value.state.serverTimestamp, guard.serverTimestamp,
+      ), current?.durationMs ?? 0);
+      value.state.isPlaying = false;
+      await this.persistRuntimeSettings(roomId, value, guard);
+    });
+    return this.snapshotFromRuntime(roomId, runtime, { socketId: '', userId: null, role: 'guest' });
+  }
+
   async applyHeartbeat(
     roomId: string,
     payload: MusicHeartbeatPayload,
     actor: MusicActor = { socketId: '', userId: null, role: 'guest' },
   ): Promise<MusicSnapshot> {
     return this.core.withRoomLock(roomId, async () => {
+      await this.requireListenActivity(roomId);
       const runtime = await this.getRuntime(roomId);
       const now = Date.now();
       if (payload.baseVersion !== runtime.state.version) {
@@ -676,6 +703,7 @@ export class MusicSyncService {
     return this.withMutationSnapshot(roomId, actor, envelope,
       (runtime) => runtime.currentQueueItemId !== null,
       async (runtime, guard) => {
+        await this.requireListenActivity(roomId);
         if (queueItemId !== undefined && queueItemId !== runtime.currentQueueItemId) {
           throw new MusicSyncError('STALE_GENERATION', '旧歌曲 ended 已忽略');
         }
@@ -712,10 +740,9 @@ export class MusicSyncService {
   }
 
   async getHostFacts(roomId: string): Promise<MusicHostFacts> {
+    const delegate = roomDelegates.get(roomId);
     const session = await this.dataSource.getRepository(Session).findOneBy({
-      roomId,
-      role: 'sharer',
-      endedAt: IsNull(),
+      roomId, ...(delegate ? { socketId: delegate } : { role: 'sharer' as const }), endedAt: IsNull(),
     });
     if (!session) return { socketId: null, userId: null, online: false };
     const online = this.onlineChecker ? this.onlineChecker(session.socketId) : true;

@@ -2,6 +2,8 @@ import { useEffect } from 'react'
 import { create } from 'zustand'
 import { apiFetch } from '@/lib/api'
 import type { RoomListItem } from '@/lib/roomDirectory'
+import { englishErrorMessage } from '@/lib/errorMessage'
+import { useTranslation } from '@/i18n'
 
 interface DirectoryState {
   rooms: RoomListItem[]
@@ -62,7 +64,9 @@ function loadDirectory(key: string, force = false): Promise<void> {
         message?: string
       }
       if (!response.ok || !data.success || !Array.isArray(data.rooms)) {
-        throw new Error(data.message || '暂时无法获取房间，请稍后刷新重试。')
+        throw new Error(
+          data.message || 'Rooms could not be loaded. Refresh to try again.'
+        )
       }
       if (controller.signal.aborted || requestGeneration !== generation) return
       loadedAt = Date.now()
@@ -70,10 +74,12 @@ function loadDirectory(key: string, force = false): Promise<void> {
     } catch (error) {
       if (controller.signal.aborted || requestGeneration !== generation) return
       useDirectoryStore.setState({
+        // Keep the reason in memory and translate at render time so a language
+        // switch updates an existing error without refetching the room list.
         error:
           error instanceof Error
             ? error.message
-            : '暂时无法获取房间，请稍后刷新重试。',
+            : 'Rooms could not be loaded. Refresh to try again.',
       })
     } finally {
       if (requestGeneration === generation) {
@@ -91,6 +97,7 @@ export function useRoomDirectory(
   isAuthenticated: boolean,
   userId?: string
 ) {
+  const { t } = useTranslation()
   const rooms = useDirectoryStore((state) => state.rooms)
   const loading = useDirectoryStore((state) => state.loading)
   const error = useDirectoryStore((state) => state.error)
@@ -107,7 +114,12 @@ export function useRoomDirectory(
   return {
     rooms,
     loading: !authResolved || (isAuthenticated && loading),
-    error,
+    error: error
+      ? englishErrorMessage(
+          error,
+          t('Rooms could not be loaded. Refresh to try again.')
+        )
+      : '',
     refresh: () => loadDirectory(userId ?? 'authenticated', true),
   }
 }

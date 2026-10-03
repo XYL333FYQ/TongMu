@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import { useEffect, useRef } from 'react'
 import type { RefObject, MutableRefObject } from 'react'
 import { useSocket } from '@/hooks/useSocket'
@@ -94,6 +95,8 @@ export function useViewerStateSync({
   reloadVideo,
   lastAppliedSourceUrlRef,
 }: UseViewerStateSyncOptions): UseViewerStateSyncReturn {
+  useTranslation()
+
   const { socket } = useSocket()
 
   // Bug #8 修复：handleState 串行化处理
@@ -110,7 +113,9 @@ export function useViewerStateSync({
   // 最近一次收到的广播序号：检测跳号（seq > lastSeq + 1）即说明错失了中间广播
   // （socket 重连窗口），主动请求全量状态自愈，避免 diff 合并基线错位
   const lastSeqRef = useRef(0)
-  const authorityRef = useRef<{ version?: number; sourceGeneration?: number }>({})
+  const authorityRef = useRef<{ version?: number; sourceGeneration?: number }>(
+    {}
+  )
 
   useEffect(() => {
     if (!socket || isHostRef.current) return
@@ -145,7 +150,7 @@ export function useViewerStateSync({
           setBufferProgress({
             downloaded: 0,
             total: 1,
-            title: state.previewTitle || '当前视频',
+            title: state.previewTitle || t('Current video'),
           })
 
           try {
@@ -160,12 +165,23 @@ export function useViewerStateSync({
             if (err instanceof DownloadAbortedError) {
               console.log('[useViewerStateSync] 缓冲下载已取消')
             } else if (err instanceof UrlExpiredError) {
-              message.error('B站 URL 已过期，请等待房主重新解析')
+              message.error(
+                t(
+                  'This Bilibili media link expired. Waiting for the host to refresh it.'
+                )
+              )
             } else if (err instanceof DownloadError) {
-              message.error(`缓冲下载失败: ${err.message}`)
+              message.error(
+                t('Buffering failed:  {value1}', { value1: err.message })
+              )
             } else {
-              console.error('[useViewerStateSync] 缓冲下载失败:', redactMediaError(err))
-              message.error('缓冲下载失败，请等待房主重新广播')
+              console.error(
+                '[useViewerStateSync] 缓冲下载失败:',
+                redactMediaError(err)
+              )
+              message.error(
+                t('Buffering failed. Waiting for the host to refresh playback.')
+              )
             }
             // 缓冲失败：不应用源（避免半成品导致黑屏），等待房主重新广播
             // 但需要释放 suppressEventsRef 与 isApplyingRef，否则后续事件被吞
@@ -186,7 +202,12 @@ export function useViewerStateSync({
         // 传入 state.currentTime 作为 startTime：引擎（DashPlayer）从该时间对应
         // 的字节位置开始下载，而非从文件头顺序下载到目标位置才播放
         // （房主切清晰度/换片时观众从房主当前进度起播，避免长缓冲）。
-        await applySourceToVideo(video, state, state.currentTime || undefined, blobs)
+        await applySourceToVideo(
+          video,
+          state,
+          state.currentTime || undefined,
+          blobs
+        )
         // applySourceToVideo 后视频元素可能已替换，重新获取
         const currentVideo = videoRef.current
         if (!currentVideo) return
@@ -253,16 +274,24 @@ export function useViewerStateSync({
     const handleState = (payload: StatePayload) => {
       if (!payload?.state) return
       const incomingVersion = payload.version ?? payload.state.version
-      const incomingGeneration = payload.sourceGeneration ?? payload.state.sourceGeneration
-      const currentAuthority = authorityRef.current.version === undefined
-        ? useRoomStore.getState().watchTogether
-        : authorityRef.current
-      if (!shouldApplyAuthoritativeEvent(currentAuthority, {
-        version: incomingVersion,
-        sourceGeneration: incomingGeneration,
-      })) return
+      const incomingGeneration =
+        payload.sourceGeneration ?? payload.state.sourceGeneration
+      const currentAuthority =
+        authorityRef.current.version === undefined
+          ? useRoomStore.getState().watchTogether
+          : authorityRef.current
+      if (
+        !shouldApplyAuthoritativeEvent(currentAuthority, {
+          version: incomingVersion,
+          sourceGeneration: incomingGeneration,
+        })
+      )
+        return
       if (incomingVersion !== undefined && incomingGeneration !== undefined) {
-        authorityRef.current = { version: incomingVersion, sourceGeneration: incomingGeneration }
+        authorityRef.current = {
+          version: incomingVersion,
+          sourceGeneration: incomingGeneration,
+        }
       }
 
       // 跳号检测：seq > lastSeq + 1 说明错失了中间广播（socket 重连窗口等），
@@ -286,12 +315,17 @@ export function useViewerStateSync({
       const authoritativeState: WatchTogetherState = {
         ...state,
         ...(incomingVersion !== undefined ? { version: incomingVersion } : {}),
-        ...(incomingGeneration !== undefined ? { sourceGeneration: incomingGeneration } : {}),
-        ...(payload.serverTimestamp !== undefined ? { serverTimestamp: payload.serverTimestamp } : {}),
+        ...(incomingGeneration !== undefined
+          ? { sourceGeneration: incomingGeneration }
+          : {}),
+        ...(payload.serverTimestamp !== undefined
+          ? { serverTimestamp: payload.serverTimestamp }
+          : {}),
       }
 
       // 判断是否为 sourceUrl 变化
-      const isSourceChange = lastAppliedSourceUrlRef.current !== authoritativeState.sourceUrl
+      const isSourceChange =
+        lastAppliedSourceUrlRef.current !== authoritativeState.sourceUrl
       setWatchTogether(authoritativeState)
 
       const processState = async (s: WatchTogetherState) => {
@@ -299,8 +333,17 @@ export function useViewerStateSync({
         try {
           await applyStateChanges(s, isSourceChange)
         } catch (err: unknown) {
-          console.error('[useViewerStateSync] applyStateChanges failed:', redactMediaError(err))
-          message.error(err instanceof Error ? err.message : '视频源加载失败')
+          console.error(
+            '[useViewerStateSync] applyStateChanges failed:',
+            redactMediaError(err)
+          )
+          message.error(
+            err instanceof Error
+              ? err.message
+              : t(
+                  'Unable to load this video source. Check the source and try again.'
+                )
+          )
         } finally {
           isApplyingRef.current = false
         }
@@ -342,32 +385,47 @@ export function useViewerStateSync({
 
     const handleControl = (payload: ControlPayload) => {
       if (!payload) return
-      const currentAuthority = authorityRef.current.version === undefined
-        ? useRoomStore.getState().watchTogether
-        : authorityRef.current
+      const currentAuthority =
+        authorityRef.current.version === undefined
+          ? useRoomStore.getState().watchTogether
+          : authorityRef.current
       const incomingVersion = payload.version ?? payload.state?.version
-      const incomingGeneration = payload.sourceGeneration ?? payload.state?.sourceGeneration
+      const incomingGeneration =
+        payload.sourceGeneration ?? payload.state?.sourceGeneration
       if (incomingVersion !== undefined || incomingGeneration !== undefined) {
-        if (!shouldApplyAuthoritativeEvent(currentAuthority, {
-          version: incomingVersion,
-          sourceGeneration: incomingGeneration,
-        })) return
+        if (
+          !shouldApplyAuthoritativeEvent(currentAuthority, {
+            version: incomingVersion,
+            sourceGeneration: incomingGeneration,
+          })
+        )
+          return
         if (incomingVersion !== undefined && incomingGeneration !== undefined) {
-          authorityRef.current = { version: incomingVersion, sourceGeneration: incomingGeneration }
+          authorityRef.current = {
+            version: incomingVersion,
+            sourceGeneration: incomingGeneration,
+          }
         }
         if (payload.state) {
           setWatchTogether({
             ...payload.state,
             version: incomingVersion,
             sourceGeneration: incomingGeneration,
-            serverTimestamp: payload.serverTimestamp ?? payload.state.serverTimestamp,
+            serverTimestamp:
+              payload.serverTimestamp ?? payload.state.serverTimestamp,
           })
         } else {
           setWatchTogether({
             ...useRoomStore.getState().watchTogether,
-            ...(incomingVersion !== undefined ? { version: incomingVersion } : {}),
-            ...(incomingGeneration !== undefined ? { sourceGeneration: incomingGeneration } : {}),
-            ...(payload.serverTimestamp !== undefined ? { serverTimestamp: payload.serverTimestamp } : {}),
+            ...(incomingVersion !== undefined
+              ? { version: incomingVersion }
+              : {}),
+            ...(incomingGeneration !== undefined
+              ? { sourceGeneration: incomingGeneration }
+              : {}),
+            ...(payload.serverTimestamp !== undefined
+              ? { serverTimestamp: payload.serverTimestamp }
+              : {}),
           })
         }
       }
@@ -464,6 +522,8 @@ export function useViewerHeartbeat({
   videoRef: RefObject<HTMLVideoElement | null>
   suppressEventsRef: MutableRefObject<boolean>
 }): void {
+  useTranslation()
+
   const { socket } = useSocket()
   // seek 并发锁
   const isReloadingRef = useRef(false)
@@ -488,13 +548,18 @@ export function useViewerHeartbeat({
     }) => {
       const currentState = useRoomStore.getState().watchTogether
       if (!shouldApplySnapshot(currentState, payload)) return
-      if (payload.version !== undefined && payload.sourceGeneration !== undefined &&
-        (currentState.version !== payload.version || currentState.sourceGeneration !== payload.sourceGeneration)) {
+      if (
+        payload.version !== undefined &&
+        payload.sourceGeneration !== undefined &&
+        (currentState.version !== payload.version ||
+          currentState.sourceGeneration !== payload.sourceGeneration)
+      ) {
         useRoomStore.getState().setWatchTogether({
           ...currentState,
           version: payload.version,
           sourceGeneration: payload.sourceGeneration,
-          serverTimestamp: payload.serverTimestamp ?? currentState.serverTimestamp,
+          serverTimestamp:
+            payload.serverTimestamp ?? currentState.serverTimestamp,
         })
       }
       const video = videoRef.current

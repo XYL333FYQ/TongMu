@@ -19,6 +19,8 @@ import {
 } from '../../socket';
 import { roomSessionService } from '../room-session.service';
 import { movieBroadcasterService } from '../../movie';
+import { roomExperienceService } from '../room-experience.service';
+import { viewerService } from '../../viewer/viewer.service';
 
 /** register-host 事件 payload */
 interface RegisterHostPayload {
@@ -80,11 +82,14 @@ export class RegisterHostHandler implements SocketEventHandler {
 
           // 广播 sharer-ready 给房间内其他成员（排除发送者，避免房主自身重复触发 viewer-events 的监听器）
           socket.to(payload.roomId).emit('sharer-ready', { roomId: payload.roomId });
+          await roomExperienceService.broadcast(io, payload.roomId);
+          viewerService.replayPendingRequests(io, payload.roomId, socket.id);
 
           return safeAck(callback, {
             success: true,
             data: {
               mode: result.mode,
+              activity: result.activity,
               shareMethod: result.shareMethod,
               name: result.name,
               streamKey: result.streamKey,

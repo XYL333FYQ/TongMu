@@ -140,7 +140,7 @@ export async function resolveBilibiliViaCli(
   } catch {
     // fetch 抛出 TypeError：网络不可达、CORS 被拦截、进程未启动等
     throw new CliConnectionError(
-      'CLI 代理连接失败，请确认本地 zcontrol-cli 已启动'
+      'Unable to connect to the local CLI agent. Start zcontrol-cli and try again.'
     )
   }
 
@@ -149,13 +149,16 @@ export async function resolveBilibiliViaCli(
     data = (await res.json()) as CliResolveResponse
   } catch {
     throw new CliResolveError(
-      `CLI 代理返回了无效响应（HTTP ${res.status}）`
+      `The local CLI agent returned an invalid response (HTTP ${res.status}).`
     )
   }
 
   if (!res.ok || data.success === false || !data.videoUrl) {
     throw new CliResolveError(
-      data.message || `CLI 解析 B站 视频失败（HTTP ${res.status}）`
+      englishErrorMessage(
+        data.message,
+        `The local CLI agent could not resolve this Bilibili video (HTTP ${res.status}).`
+      )
     )
   }
 
@@ -179,3 +182,4 @@ export async function resolveBilibiliViaCli(
   // CLI /resolve 已返回代理 URL，但本地包装可确保旧版 CLI 与兜底场景也走代理。
   return wrapResolvedSourceWithCliProxy(proxyUrl, resolved)
 }
+import { englishErrorMessage } from '@/lib/errorMessage'

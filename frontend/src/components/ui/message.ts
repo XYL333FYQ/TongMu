@@ -1,3 +1,6 @@
+import { t, useLocaleStore } from '@/i18n'
+import { disclosureExitDuration } from './motion'
+
 type MessageType = 'success' | 'info' | 'warning' | 'error'
 
 interface MessageOptions {
@@ -36,7 +39,6 @@ const progressColors: Record<MessageType, string> = {
  * STAGGER_WINDOW_MS 内的调用视为"同时"，每条延迟 STAGGER_DELAY_MS。
  */
 const STAGGER_WINDOW_MS = 300
-const STAGGER_DELAY_MS = 60
 let pendingEnterCount = 0
 let lastEnterTime = 0
 let staggerResetTimer: ReturnType<typeof setTimeout> | null = null
@@ -54,7 +56,13 @@ function getStaggerDelay(): number {
   staggerResetTimer = setTimeout(() => {
     pendingEnterCount = 0
   }, STAGGER_WINDOW_MS + 100)
-  return pendingEnterCount * STAGGER_DELAY_MS
+  const configuredDelay = Number.parseFloat(
+    getComputedStyle(document.body).getPropertyValue('--tm-motion-stagger')
+  )
+  const delay = Number.isFinite(configuredDelay)
+    ? Math.max(0, configuredDelay)
+    : 50
+  return Math.min(pendingEnterCount, 5) * delay
 }
 
 function createContainer(): HTMLDivElement {
@@ -70,8 +78,6 @@ function createContainer(): HTMLDivElement {
   }
   return container
 }
-
-const EXIT_TRANSITION_MS = 320 // 略大于 0.28s transition，确保过渡完成后再移除节点
 
 function show(
   content: string,
@@ -104,7 +110,7 @@ function show(
 
   const text = document.createElement('span')
   text.className = 'flex-1'
-  text.textContent = content
+  text.textContent = t(content)
   el.appendChild(text)
 
   const closeBtn = document.createElement('button')
@@ -112,6 +118,8 @@ function show(
     'ml-2 rounded p-0.5 transition-colors hover:bg-[var(--md-sys-color-surface-container-highest)]'
   closeBtn.innerHTML =
     '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>'
+  closeBtn.type = 'button'
+  closeBtn.setAttribute('aria-label', t('Dismiss notification'))
   closeBtn.onclick = () => remove(el)
   el.appendChild(closeBtn)
 
@@ -127,6 +135,12 @@ function show(
   el.appendChild(progress)
 
   container.appendChild(el)
+
+  const unsubscribeLocale = useLocaleStore.subscribe((state, previous) => {
+    if (state.locale === previous.locale) return
+    text.textContent = t(content)
+    closeBtn.setAttribute('aria-label', t('Dismiss notification'))
+  })
 
   // enter 动画结束后清除类，便于后续 FLIP/状态判断（避免 both 模式持续覆盖 transform）
   el.addEventListener(
@@ -148,6 +162,7 @@ function show(
     if (node.dataset.removing === 'true') return
     node.dataset.removing = 'true'
     clearTimeout(timer)
+    unsubscribeLocale()
 
     // 读取实际高度，用于计算负 margin 收起量（高度本身保持不变，内容不会被压扁）
     const actualHeight = node.offsetHeight
@@ -158,17 +173,17 @@ function show(
     node.classList.add('zen-toast-exit')
     node.style.animationDelay = ''
 
-    // 目标状态：向左飞出 + 淡出 + 负 margin 平滑收起占位空间
+    // 与菜单使用相同的短距离收起，同时平滑收起占位空间。
     // 起始值均为当前自然值（opacity:1 / transform:none / margin-bottom:0），
     // 无需先写中间态再等下一帧，规避 rAF 批处理导致的过渡失效竞态
     node.style.opacity = '0'
-    node.style.transform = 'translateX(-100vw) scale(0.96)'
+    node.style.transform = 'translateY(-6px) scale(0.97)'
     node.style.marginBottom = `-${actualHeight + TOAST_GAP}px`
 
     // 过渡完成后移除节点（下方消息已通过负 margin 平滑上移，无跳变）
     setTimeout(() => {
       node.remove()
-    }, EXIT_TRANSITION_MS)
+    }, disclosureExitDuration())
   }
 }
 

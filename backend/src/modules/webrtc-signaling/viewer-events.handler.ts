@@ -14,6 +14,10 @@ import { AppDataSource } from '../../data-source';
 import { Session } from '../../entities/Session';
 import { roomStateService } from '../room/room-state.service';
 import { roomPermissionService } from '../room/room-permission.service';
+import { Room } from '../../entities/Room';
+import { roomScreenPresenters, roomDelegates } from '../room/room-policy';
+import { roomExperienceService } from '../room/room-experience.service';
+import { realtimeSyncCore } from '../realtime-sync-core';
 import type { SocketEventHandler } from '../socket';
 
 export class ViewerEventsHandler implements SocketEventHandler {
@@ -38,14 +42,15 @@ export class ViewerEventsHandler implements SocketEventHandler {
             role: 'sharer',
             endedAt: IsNull(),
           });
-          if (!sharer) {
+          const presenterId = roomScreenPresenters.get(payload.roomId) ?? roomDelegates.get(payload.roomId) ?? sharer?.socketId;
+          if (!presenterId) {
             return callback?.({ success: false, message: '分享端不在线' });
           }
 
           console.log(
-            `[viewer-ready] forward from viewer=${socket.id} to sharer=${sharer.socketId} room=${payload.roomId}`,
+            `[viewer-ready] forward from viewer=${socket.id} to sharer=${presenterId} room=${payload.roomId}`,
           );
-          io.to(sharer.socketId).emit('viewer-ready', {
+          io.to(presenterId).emit('viewer-ready', {
             from: socket.id,
           });
 
@@ -73,9 +78,15 @@ export class ViewerEventsHandler implements SocketEventHandler {
         callback?: (response: { success: boolean; message?: string }) => void,
       ) => {
         try {
-          if (!(await roomPermissionService.isRoomHost(socket, payload.roomId))) {
-            return callback?.({ success: false, message: '无权限' });
-          }
+          await realtimeSyncCore.withRoomLock(payload.roomId, async () => {
+            const permission = await roomPermissionService.canPerform(socket, payload.roomId, 'screen.start');
+            if (!permission.allowed) throw new Error(permission.reason);
+            const room = await AppDataSource.getRepository(Room).findOneBy({ roomId: payload.roomId, status: 'active' });
+            if (!room || room.activity !== 'screen') throw new Error('Switch to Screen before sharing.');
+            const presenter = roomScreenPresenters.get(payload.roomId);
+            if (presenter && presenter !== socket.id) throw new Error('Someone is already sharing. Ask them to stop first.');
+            roomScreenPresenters.set(payload.roomId, socket.id);
+          });
 
           console.log(
             `[sharer-ready] broadcast from sharer=${socket.id} to room=${payload.roomId}`,
@@ -83,11 +94,12 @@ export class ViewerEventsHandler implements SocketEventHandler {
           socket.to(payload.roomId).emit('sharer-ready', {
             roomId: payload.roomId,
           });
+          await roomExperienceService.broadcast(io, payload.roomId);
 
           callback?.({ success: true });
         } catch (err) {
           console.error('[sharer-ready] error:', err);
-          callback?.({ success: false, message: '处理失败' });
+          callback?.({ success: false, message: err instanceof Error ? err.message : 'Could not start sharing.' });
         }
       },
     );

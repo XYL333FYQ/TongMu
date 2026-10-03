@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import type { RefObject, MutableRefObject } from 'react'
 import { useSocket } from '@/hooks/useSocket'
+import { useRoomExperienceStore } from '@/store/roomExperienceStore'
 import { useRoomStore } from '@/store/roomStore'
 import type { HeartbeatPayload } from '../types'
 import { SOCKET_EVENT, HEARTBEAT_INTERVAL_MS } from '../constants'
@@ -46,6 +47,9 @@ export function useHostHeartbeat({
     if (!socket || !isHostRef.current) return
 
     const intervalId = setInterval(() => {
+      const experience = useRoomExperienceStore.getState().snapshot
+      if (experience?.roomId === roomId && experience.activity !== 'watch')
+        return
       const video = videoRef.current
       const storeState = useRoomStore.getState().watchTogether
       // 使用 buildStateFromVideo 构建完整 state，但心跳仅发送轻量字段
@@ -64,6 +68,8 @@ export function useHostHeartbeat({
         socket.emit(SOCKET_EVENT.HOST_HEARTBEAT, {
           roomId,
           ...alivePayload,
+          version: storeState.version,
+          sourceGeneration: storeState.sourceGeneration,
           suppressed: true,
         })
         return
@@ -73,7 +79,12 @@ export function useHostHeartbeat({
         isPlaying: built.isPlaying,
         playbackRate: built.playbackRate,
       }
-      socket.emit(SOCKET_EVENT.HOST_HEARTBEAT, { roomId, ...payload })
+      socket.emit(SOCKET_EVENT.HOST_HEARTBEAT, {
+        roomId,
+        ...payload,
+        version: storeState.version,
+        sourceGeneration: storeState.sourceGeneration,
+      })
     }, HEARTBEAT_INTERVAL_MS)
 
     return () => {

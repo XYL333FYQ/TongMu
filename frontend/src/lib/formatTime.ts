@@ -12,12 +12,17 @@
 export function formatRecentTime(iso: string): string {
   const diffMs = Date.now() - new Date(iso).getTime()
   if (diffMs >= 24 * 60 * 60 * 1000) {
-    return new Date(iso).toLocaleString('zh-CN')
+    return new Date(iso).toLocaleString(
+      getLocale() === 'zh' ? 'zh-CN' : 'en-US'
+    )
   }
   const totalMinutes = Math.floor(diffMs / 60000)
-  if (totalMinutes < 1) return '刚刚'
+  if (totalMinutes < 1) return t('Just now')
   const hours = Math.floor(totalMinutes / 60)
   const minutes = totalMinutes % 60
-  if (hours === 0) return `${minutes}分钟前`
-  return minutes > 0 ? `${hours}小时${minutes}分钟前` : `${hours}小时前`
+  if (hours === 0) return t('{minutes}m ago', { minutes })
+  return minutes > 0
+    ? t('{hours}h {minutes}m ago', { hours, minutes })
+    : t('{hours}h ago', { hours })
 }
+import { getLocale, t } from '@/i18n'

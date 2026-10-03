@@ -24,6 +24,9 @@ import { SystemSettings } from './entities/SystemSettings';
 import { Movie as MovieEntity } from './entities/Movie';
 import { PlaybackState } from './entities/PlaybackState';
 import { CONFIG_DIR, DATABASE_PATH, PROJECT_ROOT } from './services/paths';
+import { parseRoomPolicy, shouldExpireRoom } from './modules/room/room-policy';
+import { roomExperienceService } from './modules/room/room-experience.service';
+import { realtimeSyncCore } from './modules/realtime-sync-core';
 import { proxyHttpUpstream } from './services/proxy/http-proxy';
 import authRoutes from './routes/auth';
 import adminRoutes from './routes/admin';
@@ -67,6 +70,7 @@ import { SocketRegistry } from './modules/socket';
 import {
   RoomLifecycleHandler,
   RoomSettingsHandler,
+  RoomExperienceHandler,
   RoomDisconnectHandler,
   RegisterHostHandler,
   roomStateService,
@@ -132,6 +136,7 @@ export async function deleteRoomAndRelations(
 
   // 清理运行时状态（通过 RoomStateService 而非直接操作全局 Map）
   roomStateService.delete(roomId);
+  roomExperienceService.clear(roomId);
 
   // 结束所有未结束会话
   await sessionRepo.update(
@@ -162,25 +167,22 @@ export async function deleteRoomAndRelations(
 
 async function cleanupInactiveRooms(io: SocketIOServer): Promise<void> {
   try {
-    const settings = await getSystemSettings();
-    if (!settings.autoDeleteInactiveRooms) {
-      logger.debug('room-cleanup', 'disabled');
-      return;
-    }
-
-    const threshold = new Date(
-      Date.now() - settings.autoDeleteAfterHours * 60 * 60 * 1000,
-    );
     const roomRepo = AppDataSource.getRepository(Room);
-    const rooms = await roomRepo.find({
-      where: { status: 'active', lastAccessedAt: LessThan(threshold) },
-    });
+    const rooms = await roomRepo.findBy({ status: 'active' });
+    let deletedCount = 0;
 
     for (const room of rooms) {
-      await deleteRoomAndRelations(room.roomId, io);
+      await realtimeSyncCore.withRoomLock(room.roomId, async () => {
+        const latest = await roomRepo.findOneBy({ roomId: room.roomId });
+        if (!latest) return;
+        const memberCount = await AppDataSource.getRepository(Session).countBy({ roomId: room.roomId, endedAt: IsNull() });
+        if (!shouldExpireRoom(parseRoomPolicy(latest.policyJson), latest.emptySince, memberCount)) return;
+        await deleteRoomAndRelations(room.roomId, io);
+        deletedCount++;
+      });
     }
 
-    logger.info('room-cleanup', 'completed', { deletedCount: rooms.length });
+    logger.info('room-cleanup', 'completed', { deletedCount });
   } catch (err) {
     logger.error('room-cleanup', 'failed', { error: err });
   }
@@ -271,6 +273,8 @@ async function bootstrap() {
     backupCreated: Boolean(migrationResult.backupDir),
   });
   const staleSessions = await cleanupStaleRoomSessions();
+  await AppDataSource.getRepository(Room).createQueryBuilder().update().set({ emptySince: new Date() }).where("status = 'active' AND emptySince IS NULL").execute();
+  await AppDataSource.getRepository(Comment).clear();
   if (staleSessions > 0) {
     logger.info('room-session', 'stale_sessions_closed', { count: staleSessions });
   }
@@ -434,6 +438,9 @@ async function bootstrap() {
   // 注入 io：playbackMemoryService.isHostOnline 据此校验 hostSocketId 的
   // socket 是否实际在线（后端重启后 DB 恢复的旧 socket id 已失效）
   playbackMemoryService.setIo(io);
+  // HTTP room capabilities must resolve the live, authenticated socket too:
+  // guest sessions share userId 0 and cannot be identified by the DB row alone.
+  app.set('io', io);
 
   app.use('/api/rooms', createRoomsRouter(io));
 
@@ -484,6 +491,7 @@ async function bootstrap() {
       socket.data.userId = payload.userId;
       socket.data.role = payload.role;
       socket.data.username = payload.username;
+      socket.data.guestId = payload.guestId;
       next();
     } catch (err) {
       next(new Error('认证令牌无效或已过期'));
@@ -503,6 +511,7 @@ async function bootstrap() {
   socketRegistry
     .add(new RoomLifecycleHandler())
     .add(new RoomSettingsHandler())
+    .add(new RoomExperienceHandler())
     .add(new RoomDisconnectHandler())
     .add(new RegisterHostHandler())
     .add(new ViewerJoinHandler())

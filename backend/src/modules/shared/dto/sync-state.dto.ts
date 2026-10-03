@@ -153,6 +153,7 @@ export interface HeartbeatPayload {
   playbackRate: number;
   /** suppressed 标记：源切换/恢复进度期间的心跳，仅用于存活检测，不用于状态同步 */
   suppressed?: boolean;
+  version?: number;
   sourceGeneration?: number;
   clientTimestamp?: number;
 }

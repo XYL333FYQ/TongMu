@@ -2,9 +2,8 @@
  * 房间断线事件处理器。
  *
  * 处理 socket 断开连接事件，区分房主与观众两种角色分别处理：
- * - 房主断开：清空 hostSocketId（但保留播放状态），广播 host-disconnected，
- *   启动重连宽限定时器（10 分钟），超时则关闭房间
- *   期间服务器继续推算播放进度并广播给观众，观众可继续观看
+ * - 房主断开：由 roomExperienceService 在房间锁内复核当前主持人，
+ *   必要时清空 hostSocketId 并启动 30 秒代理计时，房间保留与房主离线无关
  * - 观众断开：广播 viewer-left（统一使用 viewerSocketId 字段）
  *
  * 消除旧架构中 routes/room.ts 内联的 disconnect 处理逻辑。
@@ -12,8 +11,8 @@
 import type { Server as SocketIOServer, Socket } from 'socket.io';
 import type { SocketEventHandler } from '../../socket';
 import { roomSessionService } from '../room-session.service';
-import { roomStateService } from '../room-state.service';
-import { playbackMemoryService } from '../../playback-memory';
+import { roomExperienceService } from '../room-experience.service';
+import { viewerService } from '../../viewer/viewer.service';
 
 /**
  * 房间断线事件处理器。
@@ -23,6 +22,7 @@ export class RoomDisconnectHandler implements SocketEventHandler {
 
   register(socket: Socket, io: SocketIOServer): void {
     socket.on('disconnect', (reason: string) => {
+      viewerService.clearPendingSocket(socket.id);
       if (socket.data.isCliAgent) {
         console.log(`[cli] socket disconnected: ${socket.id}, reason: ${reason}`);
       }
@@ -34,39 +34,21 @@ export class RoomDisconnectHandler implements SocketEventHandler {
 
         if (session.role === 'sharer') {
           // A transfer may have completed after endSession read the old role.
-          // Re-check the authoritative sharer before clearing host state so a
-          // late old-host disconnect cannot erase the new host authority.
+          // Send viewer departure when the old host has already been replaced.
+          // Host authority is rechecked under the room lock by memberLeft.
           const currentSharer = await roomSessionService.getSharer(session.roomId);
           if (currentSharer && currentSharer.socketId !== socket.id) {
             io.to(session.roomId).emit('viewer-left', {
               viewerSocketId: socket.id,
             });
-            return;
           }
-          // 房主断开：清空 hostSocketId，但保留播放状态
-          // 服务器将继续推算播放进度并广播给观众，观众可继续观看
-          await playbackMemoryService.updateHostSocket(session.roomId, null);
-
-          // 广播 host-disconnected 给房间内所有成员
-          // 观众端据此显示"房主已离开"提示，但不会暂停播放
-          io.to(session.roomId).emit('host-disconnected', {
-            roomId: session.roomId,
-          });
-
-          // 启动重连定时器：超时（10 分钟）则关闭房间
-          roomStateService.startReconnectTimer(session.roomId, () => {
-            void roomStateService.closeRoomAndNotify(
-              io,
-              session.roomId,
-              socket.id,
-            );
-          });
         } else {
           // 观众断开：广播 viewer-left（统一使用 viewerSocketId 字段，修复旧架构不一致问题）
           io.to(session.roomId).emit('viewer-left', {
             viewerSocketId: socket.id,
           });
         }
+        await roomExperienceService.memberLeft(io, session.roomId, socket.id, session.role === 'sharer');
       } catch (err) {
         console.error('[disconnect] handler error:', err);
       }

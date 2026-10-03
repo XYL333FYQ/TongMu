@@ -1,0 +1,102 @@
+import { expect, type Page } from '@playwright/test'
+
+const FIXTURE_ORIGIN = 'http://127.0.0.1:3456'
+
+export async function configureGeneratedMedia(page: Page): Promise<void> {
+  await page.goto('about:blank')
+  const payload = await page.evaluate(async () => {
+    const toBase64 = async (blob: Blob) => {
+      const bytes = new Uint8Array(await blob.arrayBuffer())
+      let binary = ''
+      for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+        binary += String.fromCharCode(
+          ...bytes.subarray(offset, offset + 0x8000)
+        )
+      }
+      return btoa(binary)
+    }
+
+    const record = async (
+      kind: 'muxed' | 'video' | 'audio'
+    ): Promise<string> => {
+      const streams: MediaStream[] = []
+      let animation = 0
+      let audioContext: AudioContext | undefined
+      let oscillator: OscillatorNode | undefined
+      const tracks: MediaStreamTrack[] = []
+      if (kind !== 'audio') {
+        const canvas = document.createElement('canvas')
+        canvas.width = 160
+        canvas.height = 90
+        const context = canvas.getContext('2d')!
+        let frame = 0
+        const draw = () => {
+          context.fillStyle = frame % 2 ? '#14532d' : '#1d4ed8'
+          context.fillRect(0, 0, canvas.width, canvas.height)
+          context.fillStyle = '#fff'
+          context.font = '20px sans-serif'
+          context.fillText(`TongMu ${frame}`, 12, 50)
+          frame += 1
+          animation = requestAnimationFrame(draw)
+        }
+        draw()
+        const stream = canvas.captureStream(24)
+        streams.push(stream)
+        tracks.push(...stream.getVideoTracks())
+      }
+      if (kind !== 'video') {
+        audioContext = new AudioContext()
+        const destination = audioContext.createMediaStreamDestination()
+        oscillator = audioContext.createOscillator()
+        oscillator.frequency.value = 440
+        oscillator.connect(destination)
+        oscillator.start()
+        streams.push(destination.stream)
+        tracks.push(...destination.stream.getAudioTracks())
+      }
+
+      const stream = new MediaStream(tracks)
+      const preferred =
+        kind === 'audio'
+          ? ['audio/mp4;codecs=mp4a.40.2', 'audio/mp4']
+          : kind === 'video'
+            ? ['video/mp4;codecs=avc1.42001E', 'video/mp4']
+            : ['video/mp4;codecs=avc1.42001E,mp4a.40.2', 'video/mp4']
+      const mimeType = preferred.find((candidate) =>
+        MediaRecorder.isTypeSupported(candidate)
+      )
+      if (!mimeType) throw new Error(`Chromium cannot record ${kind} MP4`)
+      const chunks: Blob[] = []
+      const recorder = new MediaRecorder(stream, {
+        mimeType,
+        videoBitsPerSecond: 400_000,
+      })
+      recorder.ondataavailable = (event) => {
+        if (event.data.size) chunks.push(event.data)
+      }
+      const stopped = new Promise<void>((resolve, reject) => {
+        recorder.onstop = () => resolve()
+        recorder.onerror = () => reject(recorder.error)
+      })
+      recorder.start(500)
+      await new Promise((resolve) => setTimeout(resolve, 2600))
+      recorder.stop()
+      await stopped
+      cancelAnimationFrame(animation)
+      oscillator?.stop()
+      tracks.forEach((track) => track.stop())
+      await audioContext?.close()
+      return toBase64(new Blob(chunks, { type: mimeType }))
+    }
+
+    return {
+      muxed: await record('muxed'),
+      video: await record('video'),
+      audio: await record('audio'),
+    }
+  })
+  const response = await page.request.post(`${FIXTURE_ORIGIN}/configure`, {
+    data: payload,
+  })
+  expect(response.status(), await response.text()).toBe(204)
+}

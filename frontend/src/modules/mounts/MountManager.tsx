@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 // 统一挂载管理组件（个人中心使用）
 // 聚合展示 webdav/openlist/ftp 三种挂载，添加/编辑/浏览分别委托给各模块独立组件
 import { useCallback, useEffect, useState } from 'react'
@@ -53,6 +54,8 @@ const TYPE_ICONS: Record<MountType, React.ReactNode> = {
 }
 
 export default function MountManager() {
+  useTranslation()
+
   const [mounts, setMounts] = useState<UnionMount[]>([])
   const [loading, setLoading] = useState(false)
   const [formOpen, setFormOpen] = useState(false)
@@ -68,7 +71,9 @@ export default function MountManager() {
       const data = await fetchAllMounts()
       setMounts(data)
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '获取挂载列表失败')
+      message.error(
+        err instanceof Error ? err.message : t('Could not load sources.')
+      )
     } finally {
       setLoading(false)
     }
@@ -105,10 +110,14 @@ export default function MountManager() {
       } else {
         await deleteFTPMount(deleteTarget.id)
       }
-      message.success('挂载已删除')
+      message.success(t('Source disconnected. '))
       await loadMounts()
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '删除挂载失败')
+      message.error(
+        err instanceof Error
+          ? err.message
+          : t('Could not disconnect the source.')
+      )
     } finally {
       setDeleting(false)
       setDeleteTarget(null)
@@ -128,7 +137,7 @@ export default function MountManager() {
           >
             <Server className="h-4 w-4" />
           </div>
-          <Text className="text-sm font-medium">我的挂载</Text>
+          <Text className="text-sm font-medium">{t('Connected sources')}</Text>
         </div>
         <Button
           variant="primary"
@@ -136,18 +145,18 @@ export default function MountManager() {
           icon={<Plus className="h-4 w-4" />}
           onClick={() => openAddModal('webdav')}
         >
-          添加挂载
+          {t('Add source')}
         </Button>
       </div>
 
       {loading && mounts.length === 0 ? (
         <div className="py-6">
-          <Spinner tip="加载挂载列表..." size={28} />
+          <Spinner tip={t('Loading sources…')} size={28} />
         </div>
       ) : mounts.length === 0 ? (
         <div className="py-6 text-center">
           <Text type="secondary" className="text-sm">
-            暂无保存的挂载配置
+            {t('No sources connected yet.')}
           </Text>
         </div>
       ) : (
@@ -188,7 +197,8 @@ export default function MountManager() {
                   )}
                   {'port' in mount && mount.port && (
                     <div className="mt-1 text-xs text-[var(--md-sys-color-on-surface-variant)]">
-                      端口：{mount.port}
+                      {t('Port：')}
+                      {mount.port}
                     </div>
                   )}
                   {(mount.type === 'openlist' ||
@@ -196,12 +206,13 @@ export default function MountManager() {
                     mount.type === 'emby' ||
                     mount.type === 'jellyfin') && (
                     <div className="mt-1 text-xs text-[var(--md-sys-color-on-surface-variant)]">
-                      播放模式：{mount.directLink ? '直链' : '转发'}
+                      {t('Playback mode：')}
+                      {mount.directLink ? t('Direct') : t('Relay')}
                     </div>
                   )}
                   {mount.username && (
                     <div className="mt-1 text-xs text-[var(--md-sys-color-on-surface-variant)]">
-                      用户：{mount.username}
+                      {t('User:')} {mount.username}
                     </div>
                   )}
                 </div>
@@ -212,7 +223,7 @@ export default function MountManager() {
                     icon={<FolderOpen className="h-4 w-4" />}
                     onClick={() => setBrowsingMount(mount)}
                   >
-                    浏览
+                    {t('Browse')}
                   </Button>
                   <Button
                     variant="ghost"
@@ -220,7 +231,7 @@ export default function MountManager() {
                     icon={<Pencil className="h-4 w-4" />}
                     onClick={() => openEditModal(mount)}
                   >
-                    编辑
+                    {t('Edit')}
                   </Button>
                   <Button
                     variant="danger"
@@ -228,7 +239,7 @@ export default function MountManager() {
                     icon={<Trash2 className="h-4 w-4" />}
                     onClick={() => setDeleteTarget(mount)}
                   >
-                    删除
+                    {t('Remove')}
                   </Button>
                 </div>
               </div>
@@ -248,12 +259,13 @@ export default function MountManager() {
       <ConfirmModal
         open={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
-        title="确认删除"
+        title={t('Remove')}
         onOk={handleDelete}
-        okText={deleting ? '删除中...' : '删除'}
-        cancelText="取消"
+        okText={deleting ? t('Removing…') : t('Remove')}
+        cancelText={t('Cancel')}
       >
-        确定要删除挂载「{deleteTarget?.name}」吗？删除后不可恢复。
+        {t('Disconnect source:')} {deleteTarget?.name}
+        {t('? You can connect it again later.')}
       </ConfirmModal>
 
       <MountBrowser

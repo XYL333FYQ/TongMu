@@ -1,3 +1,4 @@
+import { t } from '@/i18n'
 import type { MusicPlayMode, MusicQueueItem } from './types'
 
 export const MUSIC_DRIFT_THRESHOLD_SEC = 1.5
@@ -45,10 +46,10 @@ export function durationSeconds(item: MusicQueueItem | null): number {
 }
 
 export function modeLabel(mode: MusicPlayMode): string {
-  if (mode === 'repeat-one') return '单曲循环'
-  if (mode === 'repeat-all') return '列表循环'
-  if (mode === 'shuffle') return '随机播放'
-  return '顺序播放'
+  if (mode === 'repeat-one') return t('Repeat one')
+  if (mode === 'repeat-all') return t('Repeat all')
+  if (mode === 'shuffle') return t('Shuffle')
+  return t('In order')
 }
 
 export function formatMusicTime(seconds: number): string {

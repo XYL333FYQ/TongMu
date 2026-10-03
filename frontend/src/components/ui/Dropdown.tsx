@@ -4,17 +4,18 @@ import {
   useEffect,
   useLayoutEffect,
   useCallback,
-  useMemo,
   useId,
 } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronDown, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { t, useTranslation } from '@/i18n'
+import { disclosureExitDuration } from './motion'
 
 export interface DropdownOption {
   label: string
   value: string | number
-  /** 禁用该项：不可选择，显示为灰色 */
+  /** 禁用该 items：不Optional择，显示为灰色 */
   disabled?: boolean
 }
 
@@ -34,12 +35,14 @@ export function Dropdown({
   error,
   options,
   value,
-  placeholder = '请选择',
+  placeholder = 'Choose an option',
   disabled = false,
   className,
   onChange,
 }: DropdownProps) {
+  useTranslation()
   const [open, setOpen] = useState(false)
+  const [modalOwner, setModalOwner] = useState<string>()
   const generatedId = useId()
   const labelId = `${generatedId}-label`
   const valueId = `${generatedId}-value`
@@ -59,16 +62,19 @@ export function Dropdown({
   // 记录上次测量到的菜单高度，用于判断是否需要重新定位（避免无限循环）
   const lastMeasuredHeightRef = useRef<number | null>(null)
 
-  const selectedLabel = useMemo(() => {
-    const found = options.find((opt) => String(opt.value) === String(value))
-    return found?.label ?? placeholder
-  }, [options, value, placeholder])
+  const selectedLabel =
+    options.find((opt) => String(opt.value) === String(value))?.label ??
+    t(placeholder)
 
   // 计算菜单位置：根据触发按钮位置和上下方可用空间，自动选择展开方向并限制最大高度
   // actualMenuHeight 用于在菜单渲染后用实测高度修正（首次为 null 走估算）
   const computePosition = useCallback(
     (actualMenuHeight?: number) => {
       if (!triggerRef.current) return
+      setModalOwner(
+        triggerRef.current.closest<HTMLElement>('[data-tongmu-modal]')?.dataset
+          .tongmuModal
+      )
       const rect = triggerRef.current.getBoundingClientRect()
       const viewportHeight = window.innerHeight
       const margin = 6
@@ -126,14 +132,21 @@ export function Dropdown({
       setClosing(false)
       setPosition(null)
       lastMeasuredHeightRef.current = null
-    }, 160)
+    }, disclosureExitDuration())
   }, [open])
 
   useEffect(() => {
     if (!open || !position || !focusMenuOnOpenRef.current) return
     focusMenuOnOpenRef.current = false
-    const options = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]:not([disabled])') ?? [])
-    const initialOption = options.find((option) => option.getAttribute('aria-selected') === 'true') ?? options[0]
+    const options = Array.from(
+      menuRef.current?.querySelectorAll<HTMLButtonElement>(
+        '[role="option"]:not([disabled])'
+      ) ?? []
+    )
+    const initialOption =
+      options.find(
+        (option) => option.getAttribute('aria-selected') === 'true'
+      ) ?? options[0]
     initialOption?.focus()
   }, [open, position])
 
@@ -195,23 +208,37 @@ export function Dropdown({
       triggerRef.current?.focus()
       return
     }
-    if (event.key === 'Tab') { closeMenu(); return }
+    if (event.key === 'Tab') {
+      closeMenu()
+      return
+    }
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
-    const enabled = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]:not([disabled])') ?? [])
+    const enabled = Array.from(
+      menuRef.current?.querySelectorAll<HTMLButtonElement>(
+        '[role="option"]:not([disabled])'
+      ) ?? []
+    )
     if (!enabled.length) return
     event.preventDefault()
     const current = enabled.indexOf(document.activeElement as HTMLButtonElement)
-    const next = event.key === 'Home' ? 0
-      : event.key === 'End' ? enabled.length - 1
-      : event.key === 'ArrowDown' ? (current + 1) % enabled.length
-      : (current - 1 + enabled.length) % enabled.length
+    const next =
+      event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? enabled.length - 1
+          : event.key === 'ArrowDown'
+            ? (current + 1) % enabled.length
+            : (current - 1 + enabled.length) % enabled.length
     enabled[next].focus()
   }
 
   return (
     <div className={cn('w-full text-left', className)}>
       {label && (
-        <span id={labelId} className="mb-1.5 block text-sm font-medium text-[var(--md-sys-color-on-surface-variant)]">
+        <span
+          id={labelId}
+          className="mb-1.5 block text-sm font-medium text-[var(--md-sys-color-on-surface-variant)]"
+        >
           {label}
         </span>
       )}
@@ -235,7 +262,11 @@ export function Dropdown({
           }
         }}
         onKeyDown={(event) => {
-          if (open || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+          if (
+            open ||
+            !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)
+          )
+            return
           event.preventDefault()
           focusMenuOnOpenRef.current = true
           setOpen(true)
@@ -249,7 +280,9 @@ export function Dropdown({
             'border-[var(--md-sys-color-error)] focus:border-[var(--md-sys-color-error)] focus:ring-[var(--md-sys-color-error)]'
         )}
       >
-        <span id={valueId} className="truncate">{selectedLabel}</span>
+        <span id={valueId} className="truncate">
+          {selectedLabel}
+        </span>
         <ChevronDown
           className={cn(
             'h-4 w-4 shrink-0 text-[var(--md-sys-color-on-surface-variant)] transition-transform duration-200',
@@ -258,7 +291,12 @@ export function Dropdown({
         />
       </button>
       {error && (
-        <p id={errorId} className="mt-1 text-xs text-[var(--md-sys-color-error)]">{error}</p>
+        <p
+          id={errorId}
+          className="mt-1 text-xs text-[var(--md-sys-color-error)]"
+        >
+          {t(error)}
+        </p>
       )}
 
       {open &&
@@ -268,6 +306,7 @@ export function Dropdown({
             ref={menuRef}
             id={menuId}
             role="listbox"
+            data-tongmu-modal-owner={modalOwner}
             aria-labelledby={label ? labelId : valueId}
             onKeyDown={handleMenuKeyDown}
             className={cn(
@@ -279,14 +318,14 @@ export function Dropdown({
               left: `${position.left}px`,
               width: `${position.width}px`,
               maxHeight: `${position.maxHeight}px`,
-              zIndex: 60,
+              zIndex: 1000,
               transformOrigin:
                 position.placement === 'top' ? 'bottom center' : 'top center',
               boxShadow:
                 '0 8px 24px -8px color-mix(in srgb, var(--md-sys-color-primary) 25%, transparent)',
             }}
           >
-            {options.map((opt) => {
+            {options.map((opt, index) => {
               const active = String(opt.value) === String(value)
               const optDisabled = opt.disabled === true
               return (
@@ -308,7 +347,11 @@ export function Dropdown({
                         ? 'bg-[var(--md-sys-color-primary-container)] text-[var(--md-sys-color-on-primary-container)]'
                         : 'text-[var(--md-sys-color-on-surface)] hover:bg-[var(--md-sys-color-surface-container-highest)]'
                   )}
-                  style={{ '--item-delay': '0ms' } as React.CSSProperties}
+                  style={
+                    {
+                      '--item-index': Math.min(index, 5),
+                    } as React.CSSProperties
+                  }
                 >
                   <span className="truncate">{opt.label}</span>
                   {active && <Check className="h-3.5 w-3.5 shrink-0" />}

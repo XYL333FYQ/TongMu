@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 /**
  * B站解析设置（按影片独立配置）。
  *
@@ -37,9 +38,9 @@ import { useSystemSettingsStore } from '@/store/systemSettingsStore'
 export interface BilibiliParseSettingsProps {
   /** 影片 ID，配置按此 key 独立存储 */
   movieId: number
-  /** 当前房间 ID，用于检测本地 CLI 代理 */
+  /** Current房间 ID，用于检测本地 CLI 代理 */
   roomId: string
-  /** 当前用户是否为房主（决定选项是否可操作） */
+  /** Current用户是否为房主（决定选 items是否可操作） */
   isHost: boolean
 }
 
@@ -48,6 +49,8 @@ export function BilibiliParseSettings({
   roomId,
   isHost,
 }: BilibiliParseSettingsProps) {
+  useTranslation()
+
   const [expanded, setExpanded] = useState(false)
   const [pendingCliReload, setPendingCliReload] = useState(false)
   const { bufferMode, p2pEnabled, cliEnabled } =
@@ -257,7 +260,7 @@ export function BilibiliParseSettings({
       >
         <span className="flex items-center gap-1 font-medium">
           <Settings2 className="h-3 w-3" />
-          B站解析设置
+          {t('Bilibili playback settings')}
         </span>
         <ChevronDown
           className={cn(
@@ -302,13 +305,13 @@ export function BilibiliParseSettings({
                   className="text-[10px] font-bold leading-tight"
                   style={{ color: 'var(--md-sys-color-on-surface)' }}
                 >
-                  CLI 高画质代理
+                  {t('Local CLI resolver')}
                 </span>
                 <span
                   className="text-[8px] font-medium uppercase tracking-wide"
                   style={{ color: 'var(--md-sys-color-on-surface-variant)' }}
                 >
-                  LOCAL PROXY
+                  {t('LOCAL PROXY')}
                 </span>
               </div>
               <div className="flex items-center gap-1">
@@ -330,10 +333,10 @@ export function BilibiliParseSettings({
                   style={{ color: 'var(--md-sys-color-on-surface-variant)' }}
                 >
                   {cliAgent.available
-                    ? '已连接'
+                    ? t('Connected')
                     : displayCliEnabled
-                      ? '未连接'
-                      : '未启用'}
+                      ? t('Disconnected')
+                      : t('Off')}
                 </span>
               </div>
             </div>
@@ -351,7 +354,7 @@ export function BilibiliParseSettings({
                     : 'bg-[var(--md-sys-color-surface-container)] text-[var(--md-sys-color-on-surface-variant)] hover:bg-[var(--md-sys-color-surface-container-highest)]'
                 )}
               >
-                关闭
+                {t('Close')}
               </button>
               <button
                 type="button"
@@ -365,7 +368,7 @@ export function BilibiliParseSettings({
                     : 'bg-[var(--md-sys-color-surface-container)] text-[var(--md-sys-color-on-surface-variant)] hover:bg-[var(--md-sys-color-surface-container-highest)]'
                 )}
               >
-                启用
+                {t('Enable')}
               </button>
             </div>
 
@@ -381,12 +384,16 @@ export function BilibiliParseSettings({
               }
             >
               {displayP2pEnabled
-                ? 'P2P 与 CLI 代理互斥，请关闭 P2P 后再启用 CLI'
+                ? t('Turn off peer sharing before enabling the CLI resolver.')
                 : displayCliEnabled
                   ? cliAgent.available
-                    ? `已连接本地代理 ${cliAgent.agentInfo?.version ?? ''}`
-                    : '已启用但未检测到本地 CLI，请先启动本地代理以播放 DASH 高画质'
-                  : '使用本地 zcontrol-cli 获取大会员等高画质'}
+                    ? t('Local resolver connected {value1}', {
+                        value1: cliAgent.agentInfo?.version ?? '',
+                      })
+                    : t('Start your local CLI resolver for DASH playback.')
+                  : t(
+                      'Use the local CLI resolver for eligible premium quality.'
+                    )}
             </div>
 
             <button
@@ -398,23 +405,23 @@ export function BilibiliParseSettings({
               }}
             >
               <ExternalLink className="h-3 w-3" />
-              打开 CLI 配置页
+              {t('Open CLI settings')}
             </button>
           </div>
 
-          {/* 播放模式 */}
+          {/* Playback mode */}
           <div>
             <div
               className="mb-1 text-[10px] font-bold uppercase tracking-wide"
               style={{ color: 'var(--md-sys-color-on-surface-variant)' }}
             >
-              播放模式
+              {t('Playback mode')}
             </div>
             {renderSegmented(
               displayPreferMp4,
               handlePreferMp4Change,
-              'DASH 高清',
-              '兼容 MP4',
+              'DASH',
+              'Compatible MP4',
               !isHost || cliEnabled || dashLocked
             )}
             <div
@@ -423,18 +430,20 @@ export function BilibiliParseSettings({
             >
               {' '}
               {dashLocked
-                ? '服务器已禁用 DASH 模式，当前强制 MP4 播放'
+                ? t('Server DASH is disabled. MP4 is used.')
                 : cliEnabled
                   ? cliAgent.available
-                    ? 'CLI 代理已启用，当前使用本地 DASH 高画质解析（不再自动降级 MP4）'
-                    : '已启用 CLI 但未连接本地代理，请先启动本地 zcontrol-cli 以播放 DASH 高画质'
+                    ? t('The local CLI resolves DASH at the selected quality.')
+                    : t('Start the local CLI resolver for DASH playback.')
                   : displayPreferMp4
-                    ? '兼容模式（MP4，最高 720P），直链且 seek 流畅'
-                    : 'DASH 分离流，支持 1080P/4K，seek 需缓冲'}
+                    ? t('MP4 compatibility mode, up to 720P.')
+                    : t(
+                        'DASH supports eligible 1080P and 4K; seeking may buffer.'
+                      )}
             </div>
           </div>
 
-          {/* 缓冲模式（仅服务器 DASH 可用时显示） */}
+          {/* Preload video（仅服务器 DASH 可用时显示） */}
           {!dashDisabled && (
             <div
               className={cn(
@@ -446,13 +455,13 @@ export function BilibiliParseSettings({
                 className="mb-1 text-[10px] font-bold uppercase tracking-wide"
                 style={{ color: 'var(--md-sys-color-on-surface-variant)' }}
               >
-                缓冲模式
+                {t('Preload video')}
               </div>
               {renderSegmented(
                 displayBufferMode,
                 handleBufferModeChange,
-                '关闭',
-                '开启',
+                'Close',
+                'On',
                 !isHost || effectivePreferMp4
               )}
               <div
@@ -460,17 +469,17 @@ export function BilibiliParseSettings({
                 style={{ color: 'var(--md-sys-color-on-surface-variant)' }}
               >
                 {!isHost
-                  ? '缓冲模式由房主统一管理'
+                  ? t('The host controls preloading.')
                   : effectivePreferMp4
-                    ? 'MP4 模式不支持缓冲，请切换到 DASH'
+                    ? t('Use DASH to preload video.')
                     : displayBufferMode
-                      ? '进入房间先缓存完整视频到本地，避免 URL 过期与卡顿'
-                      : '直接流式播放，无需等待缓存'}
+                      ? t('Preload the video locally to reduce interruptions.')
+                      : t('Stream immediately without preloading.')}
               </div>
             </div>
           )}
 
-          {/* P2P 传输（仅服务器 DASH 可用时显示） */}
+          {/* Peer sharing（仅服务器 DASH 可用时显示） */}
           {!dashDisabled && (
             <div
               className={cn(
@@ -486,13 +495,13 @@ export function BilibiliParseSettings({
                 className="mb-1 text-[10px] font-bold uppercase tracking-wide"
                 style={{ color: 'var(--md-sys-color-on-surface-variant)' }}
               >
-                P2P 传输
+                {t('Peer sharing')}
               </div>
               {renderSegmented(
                 displayP2pEnabled,
                 handleP2PChange,
-                '关闭',
-                '开启',
+                'Close',
+                'On',
                 !isHost ||
                   effectivePreferMp4 ||
                   displayBufferMode ||
@@ -503,28 +512,35 @@ export function BilibiliParseSettings({
                 style={{ color: 'var(--md-sys-color-on-surface-variant)' }}
               >
                 {!isHost
-                  ? 'P2P 传输由房主统一管理'
+                  ? t('The host controls peer sharing.')
                   : effectivePreferMp4
-                    ? 'MP4 模式不支持 P2P，请切换到 DASH'
+                    ? t('Use DASH for peer sharing.')
                     : displayCliEnabled
-                      ? 'CLI 代理与 P2P 互斥，请关闭 CLI 后再启用 P2P'
+                      ? t(
+                          'Turn off the CLI resolver before enabling peer sharing.'
+                        )
                       : displayBufferMode
-                        ? '缓冲模式下视频已本地缓存，无需 P2P'
+                        ? t('Preloading already caches the video locally.')
                         : displayP2pEnabled
-                          ? '房间内观众间共享分片，减少服务器流量（需 WebRTC）'
-                          : '所有流量走服务器代理'}
+                          ? t(
+                              'Share video segments between room members using WebRTC.'
+                            )
+                          : t('Video traffic uses the server relay.')}
               </div>
 
               {displayP2pEnabled && p2pEngineActive && (
                 <div
                   className="mt-2 grid grid-cols-2 gap-x-2 gap-y-1 rounded-lg p-1.5 text-[10px]"
                   style={{
-                    backgroundColor: 'var(--md-sys-color-surface-container-high)',
+                    backgroundColor:
+                      'var(--md-sys-color-surface-container-high)',
                   }}
                 >
                   <div className="flex items-center justify-between">
                     <span
-                      style={{ color: 'var(--md-sys-color-on-surface-variant)' }}
+                      style={{
+                        color: 'var(--md-sys-color-on-surface-variant)',
+                      }}
                     >
                       ↓HTTP
                     </span>
@@ -534,7 +550,9 @@ export function BilibiliParseSettings({
                   </div>
                   <div className="flex items-center justify-between">
                     <span
-                      style={{ color: 'var(--md-sys-color-on-surface-variant)' }}
+                      style={{
+                        color: 'var(--md-sys-color-on-surface-variant)',
+                      }}
                     >
                       ↓P2P
                     </span>
@@ -544,7 +562,9 @@ export function BilibiliParseSettings({
                   </div>
                   <div className="flex items-center justify-between">
                     <span
-                      style={{ color: 'var(--md-sys-color-on-surface-variant)' }}
+                      style={{
+                        color: 'var(--md-sys-color-on-surface-variant)',
+                      }}
                     >
                       ↑P2P
                     </span>
@@ -554,9 +574,11 @@ export function BilibiliParseSettings({
                   </div>
                   <div className="flex items-center justify-between">
                     <span
-                      style={{ color: 'var(--md-sys-color-on-surface-variant)' }}
+                      style={{
+                        color: 'var(--md-sys-color-on-surface-variant)',
+                      }}
                     >
-                      速度
+                      {t('Speed')}
                     </span>
                     <span className="font-mono font-semibold">
                       {formatKBytes(p2pDownloadSpeed)}/s

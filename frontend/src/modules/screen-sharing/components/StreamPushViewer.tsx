@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 /**
  * OBS 推流模式观众端查看器。
  *
@@ -21,13 +22,17 @@ interface StreamPushViewerProps {
   roomId: string
   streamKey: string
   streamStatus: StreamStatus
+  embedded?: boolean
 }
 
 function StreamPushViewer({
   roomId,
   streamKey,
   streamStatus,
+  embedded = false,
 }: StreamPushViewerProps) {
+  useTranslation()
+
   const { socket } = useSocket()
   const [isWebFullscreen, setIsWebFullscreen] = useState(false)
   const flvUrl = useMemo(() => buildFlvUrl(streamKey), [streamKey])
@@ -58,19 +63,19 @@ function StreamPushViewer({
       {!streamKey ? (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/90 p-6 text-center">
           <div className="text-base font-medium text-[var(--md-sys-color-error)]">
-            推流密钥未获取
+            {t('Stream is not ready.')}
           </div>
           <div className="text-sm text-[var(--md-sys-color-on-surface-variant)]">
-            请等待房主切换为 OBS 推流模式后重试
+            {t('Wait for the host to choose OBS streaming, then try again.')}
           </div>
         </div>
       ) : streamStatus === 'offline' ? (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/90 p-6 text-center">
           <div className="text-base font-medium text-[var(--md-sys-color-on-surface-variant)]">
-            主播未推流
+            {t('Waiting for the presenter')}
           </div>
           <div className="text-sm text-[var(--md-sys-color-on-surface-variant)]">
-            请等待房主开始 OBS 推流
+            {t('The presenter has not started the OBS stream yet.')}
           </div>
         </div>
       ) : (
@@ -85,6 +90,7 @@ function StreamPushViewer({
     </div>
   )
 
+  if (embedded) return playerContent
   return (
     <CinemaLayout
       children={playerContent}

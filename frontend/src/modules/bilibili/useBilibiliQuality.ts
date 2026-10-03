@@ -8,7 +8,10 @@ import { safePlay } from '@/modules/sync-playback/safePlay'
 import { getBilibiliParseOptions } from './parseOptions'
 import { extractBvid, resolveBilibiliViaCli } from './cliApi'
 import { getActiveCliProxyUrl } from '@/modules/room/watch-together/movie-source-resolver'
-import { resolveMediaInput, stripTransientMediaDescriptor } from '@/modules/media/mediaApi'
+import {
+  resolveMediaInput,
+  stripTransientMediaDescriptor,
+} from '@/modules/media/mediaApi'
 import { redactMediaError } from '@/modules/player/services/media-redaction'
 
 function qualitiesEqual(a: QualityOption[], b: QualityOption[]): boolean {
@@ -113,9 +116,7 @@ export function useBilibiliQuality(ctx: BilibiliQualityContext) {
 
       try {
         let resolved: ResolvedSource
-        let mediaCore:
-          | Awaited<ReturnType<typeof resolveMediaInput>>
-          | undefined
+        let mediaCore: Awaited<ReturnType<typeof resolveMediaInput>> | undefined
         if (preResolved) {
           resolved = preResolved
         } else {
@@ -133,17 +134,22 @@ export function useBilibiliQuality(ctx: BilibiliQualityContext) {
                 true
               )
             } else {
-              throw new Error('无法提取 BV 号或 cid，无法使用 CLI 代理')
+              throw new Error(
+                'CLI playback requires a valid Bilibili BV ID and content ID.'
+              )
             }
           } else {
             const roomId = useRoomStore.getState().roomId
-            mediaCore = await resolveMediaInput(movie.sourceInput || movie.url, {
-              roomId,
-              sourceGeneration: nextSourceGeneration,
-              requestedQn: qn,
-              preferMp4: parsePrefs.preferMp4 === true,
-              cid: movie.cid,
-            })
+            mediaCore = await resolveMediaInput(
+              movie.sourceInput || movie.url,
+              {
+                roomId,
+                sourceGeneration: nextSourceGeneration,
+                requestedQn: qn,
+                preferMp4: parsePrefs.preferMp4 === true,
+                cid: movie.cid,
+              }
+            )
             const descriptor = mediaCore.descriptor
             const metadata = descriptor.sourceMetadata?.bilibili
             resolved = {
@@ -159,7 +165,8 @@ export function useBilibiliQuality(ctx: BilibiliQualityContext) {
               requestedQn: metadata?.requestedQn ?? descriptor.requestedQuality,
               qualityLabel: metadata?.qualityLabel ?? descriptor.qualityLabel,
               videoBandwidth: metadata?.videoBandwidth ?? descriptor.bitrate,
-              fallbackReason: metadata?.fallbackReason ?? descriptor.fallbackReason,
+              fallbackReason:
+                metadata?.fallbackReason ?? descriptor.fallbackReason,
               acceptQuality: metadata?.availableQualities,
               loggedIn: descriptor.loggedIn,
               vipStatus: descriptor.vip ? 1 : 0,
@@ -171,7 +178,9 @@ export function useBilibiliQuality(ctx: BilibiliQualityContext) {
         }
 
         if (!resolved.videoUrl) {
-          throw new Error('未获取到对应清晰度的播放地址')
+          throw new Error(
+            'This quality is unavailable. Choose another available quality.'
+          )
         }
 
         const newState: WatchTogetherState = {
@@ -224,7 +233,9 @@ export function useBilibiliQuality(ctx: BilibiliQualityContext) {
             url: mediaCore.descriptor.finalUrl,
             audioUrl: mediaCore.descriptor.audioUrl,
             sourceInput: movie.sourceInput || movie.url,
-            mediaDescriptor: stripTransientMediaDescriptor(mediaCore.descriptor),
+            mediaDescriptor: stripTransientMediaDescriptor(
+              mediaCore.descriptor
+            ),
             format: mediaCore.descriptor.container,
             videoCodec: mediaCore.descriptor.videoCodec,
             audioCodec: mediaCore.descriptor.audioCodec,
@@ -243,7 +254,10 @@ export function useBilibiliQuality(ctx: BilibiliQualityContext) {
           ctx.broadcastState(newState)
         }
       } catch (err) {
-        console.error('[useBilibiliQuality] 切换清晰度失败:', redactMediaError(err))
+        console.error(
+          '[useBilibiliQuality] 切换清晰度失败:',
+          redactMediaError(err)
+        )
         // 回退到原 source
         try {
           await ctx.applySourceToVideo(video, state)

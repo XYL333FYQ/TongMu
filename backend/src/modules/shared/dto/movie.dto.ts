@@ -153,7 +153,7 @@ export interface ViewerDto {
   socketId: string;
   userId: number | null;
   username: string;
-  role: 'sharer' | 'viewer';
+  role: 'sharer' | 'viewer' | 'root' | 'admin' | 'user' | 'guest';
 }
 
 /**
@@ -163,7 +163,7 @@ export interface ViewerJoinedPayload {
   viewerSocketId: string;
   userId: number | null;
   username: string;
-  role: 'sharer' | 'viewer';
+  role: ViewerDto['role'];
 }
 
 /**

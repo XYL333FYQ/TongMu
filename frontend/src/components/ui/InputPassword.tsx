@@ -1,4 +1,5 @@
-import { forwardRef, useState } from 'react'
+import { t, useTranslation } from '@/i18n'
+import { forwardRef, useState, useId } from 'react'
 import { Eye, EyeOff } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -13,7 +14,12 @@ export interface InputPasswordProps extends Omit<
 
 export const InputPassword = forwardRef<HTMLInputElement, InputPasswordProps>(
   ({ label, error, size = 'md', className, ...props }, ref) => {
+    useTranslation()
+
     const [visible, setVisible] = useState(false)
+    const generatedId = useId()
+    const inputId = props.id ?? generatedId
+    const errorId = `${inputId}-error`
 
     const sizes = {
       sm: 'px-2.5 py-1.5 pr-9 text-xs',
@@ -24,7 +30,10 @@ export const InputPassword = forwardRef<HTMLInputElement, InputPasswordProps>(
     return (
       <div className={cn('w-full text-left', className)}>
         {label && (
-          <label className="mb-1.5 block text-sm font-medium text-[var(--md-sys-color-on-surface-variant)]">
+          <label
+            htmlFor={inputId}
+            className="mb-1.5 block text-sm font-medium text-[var(--md-sys-color-on-surface-variant)]"
+          >
             {label}
           </label>
         )}
@@ -39,12 +48,19 @@ export const InputPassword = forwardRef<HTMLInputElement, InputPasswordProps>(
                 'border-[var(--md-sys-color-error)] focus:border-[var(--md-sys-color-error)] focus:ring-[var(--md-sys-color-error)]'
             )}
             {...props}
+            id={inputId}
+            aria-invalid={error ? true : props['aria-invalid']}
+            aria-describedby={
+              [props['aria-describedby'], error ? errorId : undefined]
+                .filter(Boolean)
+                .join(' ') || undefined
+            }
           />
           <button
             type="button"
+            aria-label={visible ? t('Hide password') : t('Show password')}
             onClick={() => setVisible((v) => !v)}
             className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-[var(--md-sys-color-on-surface-variant)] hover:bg-[var(--md-sys-color-surface-container)] hover:text-[var(--md-sys-color-on-surface)]"
-            tabIndex={-1}
           >
             {visible ? (
               <EyeOff className="h-4 w-4" />
@@ -54,8 +70,12 @@ export const InputPassword = forwardRef<HTMLInputElement, InputPasswordProps>(
           </button>
         </div>
         {error && (
-          <p className="mt-1 text-xs text-[var(--md-sys-color-error)]">
-            {error}
+          <p
+            id={errorId}
+            role="alert"
+            className="mt-1 text-xs text-[var(--md-sys-color-error)]"
+          >
+            {t(error)}
           </p>
         )}
       </div>

@@ -41,7 +41,7 @@ export class PlaybackBroadcasterService {
     this.cleanupIntervalId = setInterval(() => {
       void playbackMemoryService.cleanupStaleCache();
       void import('../room/room-state.service').then(({ roomStateService }) => {
-        roomStateService.cleanupStaleStates();
+        roomStateService.cleanupStaleStates(io);
       }).catch((err) => {
         console.error('[cleanup] room-state 动态导入失败:', err);
       });

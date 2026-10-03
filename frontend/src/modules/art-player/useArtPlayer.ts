@@ -10,6 +10,8 @@ import { useEffect, useRef, useState } from 'react'
 import Artplayer from 'artplayer'
 import type { Option } from 'artplayer'
 import { configureArtStatics } from './art-shared'
+import { getLocale, useTranslation } from '@/i18n'
+import { updateArtLocale } from './artLocale'
 
 export interface UseArtPlayerResult {
   containerRef: React.RefObject<HTMLDivElement | null>
@@ -20,6 +22,7 @@ export interface UseArtPlayerResult {
 export function useArtPlayer(
   buildOption: (container: HTMLDivElement) => Option
 ): UseArtPlayerResult {
+  const { locale } = useTranslation()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [state, setState] = useState<{
     art: Artplayer
@@ -36,6 +39,7 @@ export function useArtPlayer(
     if (!container) return
     configureArtStatics()
     const art = new Artplayer(buildOptionRef.current(container))
+    updateArtLocale(art, getLocale())
     const video = art.video
     setState({ art, video })
     return () => {
@@ -47,6 +51,10 @@ export function useArtPlayer(
       setState(null)
     }
   }, [])
+
+  useEffect(() => {
+    if (state) updateArtLocale(state.art, locale)
+  }, [state, locale])
 
   return {
     containerRef,

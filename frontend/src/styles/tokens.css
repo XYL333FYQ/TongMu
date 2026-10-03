@@ -33,6 +33,9 @@
     transparent
   );
   --tm-motion-duration: 300ms;
+  --tm-motion-enter: 240ms;
+  --tm-motion-exit: 160ms;
+  --tm-motion-stagger: 50ms;
   --tm-motion-ease: var(--ease-out-expo);
 
   /* Existing experience CSS names remain available during page migration. */
@@ -49,11 +52,17 @@
 
 body[data-reduced-motion='true'] {
   --tm-motion-duration: 180ms;
+  --tm-motion-enter: 1ms;
+  --tm-motion-exit: 1ms;
+  --tm-motion-stagger: 0ms;
 }
 
 @media (prefers-reduced-motion: reduce) {
   :root,
   body[data-reduced-motion='true'] {
     --tm-motion-duration: 0.01ms;
+    --tm-motion-enter: 0.01ms;
+    --tm-motion-exit: 0.01ms;
+    --tm-motion-stagger: 0ms;
   }
 }

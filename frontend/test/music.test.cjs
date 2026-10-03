@@ -4,7 +4,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 const ts = require('typescript')
 
-function load(relativePath) {
+function load(relativePath, imports = {}) {
   const source = fs.readFileSync(
     path.join(__dirname, '..', relativePath),
     'utf8'
@@ -16,13 +16,95 @@ function load(relativePath) {
     },
   }).outputText
   const loaded = { exports: {} }
-  new Function('module', 'exports', output)(loaded, loaded.exports)
+  new Function('require', 'module', 'exports', output)(
+    (name) => {
+      if (Object.hasOwn(imports, name)) return imports[name]
+      throw new Error(`Unexpected music test import: ${name}`)
+    },
+    loaded,
+    loaded.exports
+  )
   return loaded.exports
 }
 
 const versions = load('src/modules/music/realtime-version.ts')
-const domain = load('src/modules/music/domain.ts')
+const translation = load('src/i18n/translation.ts')
+const modulesZh = load('src/i18n/modules.zh.ts').modulesZh
+let locale = 'en'
+const i18n = {
+  t: (source, params) =>
+    translation.translateMessage(locale, source, modulesZh, params),
+}
+const domain = load('src/modules/music/domain.ts', { '@/i18n': i18n })
 const lifecycle = load('src/modules/music/audio-lifecycle.ts')
+const { updateArtLocale } = load('src/modules/art-player/artLocale.ts')
+
+test('module translation switches music controls and keeps user template values intact', () => {
+  assert.equal(domain.modeLabel('repeat-one'), 'Repeat one')
+  locale = 'zh'
+  try {
+    assert.equal(domain.modeLabel('repeat-one'), '单曲循环')
+    assert.equal(domain.modeLabel('shuffle'), '随机播放')
+    assert.equal(
+      i18n.t('Room {id}', { id: 'My English Room' }),
+      '房间My English Room'
+    )
+    assert.equal(
+      i18n.t('Add {value1} to queue', { value1: 'Play' }),
+      '将Play加入待播列表'
+    )
+  } finally {
+    locale = 'en'
+  }
+  assert.equal(domain.modeLabel('repeat-one'), 'Repeat one')
+})
+
+test('native player language switches existing labels without touching playback', () => {
+  const attributes = new Map([
+    ['data-title', '播放'],
+    ['aria-label', 'My English Room'],
+  ])
+  const element = {
+    getAttribute: (key) => attributes.get(key) ?? null,
+    setAttribute: (key, value) => attributes.set(key, value),
+  }
+  const art = {
+    option: { lang: 'zh-cn' },
+    i18n: {
+      languages: { 'zh-cn': { Play: '播放' } },
+      init() {},
+      get(key) {
+        return art.option.lang === 'zh-cn'
+          ? (this.languages['zh-cn'][key] ?? key)
+          : key
+      },
+    },
+    template: {
+      $bottom: { querySelectorAll: () => [element] },
+      $state: { querySelectorAll: () => [] },
+      $player: {
+        querySelectorAll() {
+          throw new Error('React/user content must not be scanned')
+        },
+      },
+    },
+    video: {
+      src: 'https://media.example/original-4k.mp4',
+      currentTime: 42,
+      paused: false,
+    },
+  }
+  updateArtLocale(art, 'en')
+  assert.equal(attributes.get('data-title'), 'Play')
+  assert.equal(attributes.get('aria-label'), 'My English Room')
+  updateArtLocale(art, 'zh')
+  assert.equal(attributes.get('data-title'), '播放')
+  assert.deepEqual(art.video, {
+    src: 'https://media.example/original-4k.mp4',
+    currentTime: 42,
+    paused: false,
+  })
+})
 
 test('music authority comparison rejects old generation/version but accepts a fresh snapshot', () => {
   const current = { musicGeneration: 3, version: 12 }

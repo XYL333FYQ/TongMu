@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 /**
  * 房主端投屏分发器。
  *
@@ -23,6 +24,7 @@ import { useShareMethod } from '../hooks/useShareMethod'
 import { useStreamStatus } from '../hooks/useStreamStatus'
 import WebrtcSharePage, { type P2PStateSnapshot } from './WebrtcSharePage'
 import { StreamPushPage } from './StreamPushPage'
+import { useRoomExperienceStore } from '@/store/roomExperienceStore'
 
 interface SharePageProps {
   className?: string
@@ -38,10 +40,15 @@ function SharePage({
   onStatsPeerConnectionChange,
   onP2PStateChange,
 }: SharePageProps) {
+  useTranslation()
+
   const { socket } = useSocket()
   const setIsSharing = useRoomStore((state) => state.setIsSharing)
   const roomId = useRoomStore((state) => state.roomId)
   const currentRoomId = roomId ?? ''
+  const canChangeMethod =
+    useRoomExperienceStore((state) => state.snapshot?.permissions.settings) ??
+    true
 
   // 推流子模式状态（房主端独有）
   const streamStatus = useStreamStatus(socket, currentRoomId)
@@ -56,12 +63,16 @@ function SharePage({
       if (value === shareMethod) return
       // 切换到 webrtc 前提示先停止 OBS 推流
       if (value === 'webrtc' && streamStatus === 'live') {
-        message.warning('请先在 OBS 中停止推流再切换到 WebRTC 共享')
+        message.warning(
+          t('Stop the OBS stream before changing to browser sharing.')
+        )
         return
       }
       void updateShareMethod(value as 'webrtc' | 'stream-push').then((res) => {
         if (!res.success) {
-          message.error(res.message ?? '切换子模式失败')
+          message.error(
+            res.message ?? t('Could not change the sharing method.')
+          )
         }
       })
     },
@@ -76,6 +87,7 @@ function SharePage({
   useEffect(() => {
     if (!socket) return
     const handleJoinRequest = (data: { viewerSocketId: string }) => {
+      if (useRoomExperienceStore.getState().snapshot) return
       setConfirmJoin({ viewerSocketId: data.viewerSocketId })
     }
     socket.on('join-request', handleJoinRequest)
@@ -89,8 +101,9 @@ function SharePage({
       'approve-join',
       { viewerSocketId },
       (response: { success: boolean; message?: string }) => {
-        if (response.success) message.success('已允许加入')
-        else message.error(response.message ?? '允许加入失败')
+        if (response.success) message.success(t('Request accepted.'))
+        else
+          message.error(response.message ?? t('Could not accept the request.'))
       }
     )
     setConfirmJoin(null)
@@ -103,8 +116,11 @@ function SharePage({
       'reject-join',
       { viewerSocketId },
       (response: { success: boolean; message?: string }) => {
-        if (response.success) message.info('已拒绝加入')
-        else message.error(response.message ?? '拒绝失败')
+        if (response.success) message.info(t('Join request declined.'))
+        else
+          message.error(
+            response.message ?? t('Unable to decline this request.')
+          )
       }
     )
     setConfirmJoin(null)
@@ -114,19 +130,19 @@ function SharePage({
   if (confirmJoin) {
     joinRequestNotifications.push({
       id: 'join',
-      title: '观看请求',
-      okText: '允许',
-      cancelText: '拒绝',
+      title: t('Join request'),
+      okText: t('Allow'),
+      cancelText: t('Decline'),
       onOk: handleApproveJoin,
       onCancel: handleRejectJoin,
       autoCloseMs: 12000,
       content: (
         <>
-          有观看者请求加入房间（
+          {t('Someone wants to join the room (')}
           <span style={{ color: 'var(--md-sys-color-primary)' }}>
             {confirmJoin.viewerSocketId.slice(0, 8)}
           </span>
-          ），是否允许？
+          {t('). Allow them to join?')}
         </>
       ),
     })
@@ -146,17 +162,19 @@ function SharePage({
 
   return (
     <div className="relative h-full w-full">
-      {/* 房主端子模式切换（WebRTC 共享 / OBS 推流） */}
-      <div className="absolute left-1/2 top-3 z-20 -translate-x-1/2">
-        <SegmentedToggle
-          options={[
-            { value: 'webrtc', label: 'WebRTC 共享' },
-            { value: 'stream-push', label: 'OBS 推流' },
-          ]}
-          value={shareMethod}
-          onChange={handleShareMethodChange}
-        />
-      </div>
+      {/* 房主端子模式切换（WebRTC 共享 / OBS stream） */}
+      {canChangeMethod && (
+        <div className="absolute left-1/2 top-3 z-20 -translate-x-1/2">
+          <SegmentedToggle
+            options={[
+              { value: 'webrtc', label: t('Browser sharing') },
+              { value: 'stream-push', label: t('OBS stream') },
+            ]}
+            value={shareMethod}
+            onChange={handleShareMethodChange}
+          />
+        </div>
+      )}
 
       {shareMethod === 'stream-push' ? (
         <div className="h-full w-full pt-16">

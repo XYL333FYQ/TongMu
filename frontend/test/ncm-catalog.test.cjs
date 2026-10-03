@@ -16,10 +16,32 @@ function load(relativePath) {
     },
   }).outputText
   const loaded = { exports: {} }
-  new Function('module', 'exports', output)(loaded, loaded.exports)
+  new Function('require', 'module', 'exports', output)(
+    (name) => {
+      if (name === '@/lib/errorMessage') return load('src/lib/errorMessage.ts')
+      if (name === '@/i18n')
+        return {
+          t: (copy, params) => translateMessage('en', copy, zh, params),
+          canonicalProductMessage: (copy) => translateMessage('en', copy, zh),
+          getLocale: () => 'en',
+        }
+      if (name === '@/i18n/core.zh') return { coreZh }
+      if (name === '@/modules/player/services/media-redaction')
+        return load('src/modules/player/services/media-redaction.ts')
+      throw new Error(`Unexpected import: ${name}`)
+    },
+    loaded,
+    loaded.exports
+  )
   return loaded.exports
 }
 
+const { translateMessage } = load('src/i18n/translation.ts')
+const { coreZh } = load('src/i18n/core.zh.ts')
+const { componentsZh } = load('src/i18n/components.zh.ts')
+const { modulesZh } = load('src/i18n/modules.zh.ts')
+const { pagesZh } = load('src/i18n/pages.zh.ts')
+const zh = { ...componentsZh, ...coreZh, ...modulesZh, ...pagesZh }
 const domain = load('src/modules/music/catalog-domain.ts')
 
 function catalogTrack(overrides = {}) {
@@ -61,17 +83,17 @@ test('quality preference never silently falls back to another available quality'
   assert.deepEqual(domain.qualityOptions(track), ['standard', 'exhigh'])
   assert.match(
     domain.formatQualityFacts('lossless', null, track.availableQualities),
-    /请求：无损/
+    /Requested: Lossless/
   )
 })
 
 test('catalog errors map to bounded user-facing messages', () => {
   assert.equal(
     domain.catalogErrorMessage('NCM_NOT_LOGGED_IN'),
-    '请先登录网易云音乐'
+    'Connect your NetEase Music account to continue.'
   )
   assert.equal(
     domain.catalogErrorMessage('NCM_QUALITY_UNAVAILABLE'),
-    '请求的音质不可用，未自动切换到其他音质'
+    'The requested quality is unavailable. Another quality has not been selected automatically.'
   )
 })

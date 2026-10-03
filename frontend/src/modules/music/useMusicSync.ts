@@ -1,6 +1,9 @@
+import { t, useTranslation } from '@/i18n'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import { useSocket } from '@/hooks/useSocket'
+import { useRoomExperienceStore } from '@/store/roomExperienceStore'
+import { englishErrorMessage } from '@/lib/errorMessage'
 import { MusicAudioLifecycle } from './audio-lifecycle'
 import {
   ROOM_MEDIA_TEARDOWN_EVENT,
@@ -43,7 +46,25 @@ function clientId(): string {
 }
 
 function errorMessage(ack: SocketAck): string {
-  return ack.message || ack.code || '音乐操作失败'
+  const codes: Record<string, string> = {
+    MUSIC_HOST_ONLY: 'Ask the host to control music playback.',
+    MUSIC_ROOM_FORBIDDEN:
+      'Return to the room to reconnect before controlling music.',
+    MUSIC_STALE_STATE:
+      'Music has changed. Wait for the latest state and try again.',
+    MUSIC_INVALID_REQUEST:
+      'This music action is unavailable. Check the selected track and try again.',
+    MUSIC_NOT_FOUND: 'This track is no longer in the queue.',
+  }
+  return (
+    (ack.code && codes[ack.code]) ||
+    englishErrorMessage(
+      ack.message,
+      t(
+        'Unable to complete this music action. Check your room permissions and try again.'
+      )
+    )
+  )
 }
 
 function snapshotFromAck(ack: SocketAck): MusicSnapshot | null {
@@ -52,10 +73,20 @@ function snapshotFromAck(ack: SocketAck): MusicSnapshot | null {
 
 export function useMusicSync({
   roomId,
-  isHost,
+  isHost: hostFallback,
   audioRef,
 }: UseMusicSyncOptions) {
+  useTranslation()
+
   const { socket, connected } = useSocket()
+  const snapshot = useRoomExperienceStore((s) => s.snapshot)
+  const experience = snapshot?.roomId === roomId ? snapshot : null
+  const isHost = experience
+    ? experience.host.socketId === socket?.id
+    : hostFallback
+  const canControl = experience?.permissions.playback ?? isHost
+  const canSelect = experience?.permissions.selectContent ?? isHost
+  const active = !experience || experience.activity === 'listen'
   const store = useMusicStore()
   const lifecycleRef = useRef<MusicAudioLifecycle | null>(null)
   const attachedSourceRef = useRef<string | null>(null)
@@ -162,7 +193,12 @@ export function useMusicSync({
       if (response.accepted && response.snapshot)
         applySnapshot(response.snapshot)
       if (response.accepted === false && response.reason)
-        setError(response.reason)
+        setError(
+          englishErrorMessage(
+            response.reason,
+            t('The host declined your control request.')
+          )
+        )
     }
     const onControlRequest = (value: unknown) => {
       const request = value as Partial<MusicControlRequestNotice>
@@ -281,9 +317,13 @@ export function useMusicSync({
       const sourceUrl = resolution.url
       if (!sourceUrl) {
         const available = resolution.availableQualities?.length
-          ? `（可用：${resolution.availableQualities.join('、')}）`
+          ? t(' Available qualities: {qualities}.', {
+              qualities: resolution.availableQualities.join(', '),
+            })
           : ''
-        setError(`${resolution.message || '当前音乐来源无法解析'}${available}`)
+        setError(
+          `${englishErrorMessage(resolution.message, t('This music source could not be opened.'))}${available}`
+        )
         return
       }
       if (/^music:\/\/ncm\//.test(sourceRef)) {
@@ -305,7 +345,10 @@ export function useMusicSync({
         audio.canPlayType(resolution.mimeType) === ''
       ) {
         setError(
-          `浏览器不支持当前音频编码（${resolution.mimeType}），未自动降低音质`
+          t(
+            'Your browser does not support this audio format ({value1}). Choose another supported quality; the quality has not been reduced automatically.',
+            { value1: resolution.mimeType }
+          )
         )
         return
       }
@@ -323,7 +366,12 @@ export function useMusicSync({
           audio.currentTime = Math.max(0, current.positionSec)
           sendTrackAck(true)
         },
-        onError: () => setError('音乐加载失败，请检查当前 gateway 或音频编码'),
+        onError: () =>
+          setError(
+            t(
+              'Unable to load this track. Check the media connection or choose a supported audio format.'
+            )
+          ),
         onEnded: () => {
           if (!isHost || !socket) return
           const current = useMusicStore.getState()
@@ -362,14 +410,17 @@ export function useMusicSync({
     const lifecycle = lifecycleRef.current
     if (!lifecycle || lifecycle.generation !== store.musicGeneration) return
     audio.playbackRate = store.playbackRate
-    if (!store.isPlaying) {
+    if (!active || !store.isPlaying) {
       audio.pause()
       return
     }
     void audio
       .play()
-      .catch(() => setError('浏览器阻止了自动播放，请点击播放按钮'))
+      .catch(() =>
+        setError(t('Your browser blocked autoplay. Press Play to continue.'))
+      )
   }, [
+    active,
     audioRef,
     setError,
     store.isPlaying,
@@ -387,7 +438,7 @@ export function useMusicSync({
   }, [audioRef, roomId])
 
   useEffect(() => {
-    if (!isHost || !socket || !roomId) return
+    if (!active || !isHost || !socket || !roomId) return
     const timer = window.setInterval(() => {
       if (!socket.connected) return
       const current = useMusicStore.getState()
@@ -409,7 +460,7 @@ export function useMusicSync({
       })
     }, 2_000)
     return () => window.clearInterval(timer)
-  }, [audioRef, isHost, roomId, socket])
+  }, [active, audioRef, isHost, roomId, socket])
 
   useEffect(
     () => () => {
@@ -448,7 +499,11 @@ export function useMusicSync({
       resumeAfterSocketReconnectRef.current = false
       const audio = audioRef.current
       if (!audio || !useMusicStore.getState().isPlaying) return
-      void audio.play().catch(() => setError('浏览器阻止了自动播放，请点击播放按钮'))
+      void audio
+        .play()
+        .catch(() =>
+          setError(t('Your browser blocked autoplay. Press Play to continue.'))
+        )
     }
     socket.on('connect', handleReconnect)
     return () => {
@@ -458,7 +513,11 @@ export function useMusicSync({
 
   const emitHostMutation = useCallback(
     (event: string, payload: Record<string, unknown> = {}) => {
-      if (!socket || !roomId || !isHost) return false
+      const permitted =
+        event.includes('queue') || event === 'music:track-select'
+          ? canSelect
+          : canControl
+      if (!socket || !roomId || !permitted || !active) return false
       const current = useMusicStore.getState()
       socket.emit(
         event,
@@ -477,7 +536,7 @@ export function useMusicSync({
       )
       return true
     },
-    [applySnapshot, isHost, roomId, setError, socket]
+    [active, applySnapshot, canControl, canSelect, roomId, setError, socket]
   )
 
   const requestControl = useCallback(
@@ -532,7 +591,9 @@ export function useMusicSync({
           accepted,
           musicGeneration: current.musicGeneration,
           version: current.version,
-          reason: accepted ? undefined : '房主拒绝了控制申请',
+          reason: accepted
+            ? undefined
+            : 'The host declined your control request.',
         },
         (ack: SocketAck) => {
           if (!ack.success) setError(errorMessage(ack))
@@ -545,16 +606,22 @@ export function useMusicSync({
 
   const play = useCallback(() => {
     const audio = audioRef.current
-    if (isHost) {
+    if (canControl) {
       if (audio)
-        void audio.play().catch(() => setError('浏览器阻止了播放，请再次点击'))
+        void audio
+          .play()
+          .catch(() =>
+            setError(
+              t('Your browser blocked playback. Press Play again to continue.')
+            )
+          )
       return emitHostMutation(store.isPlaying ? 'music:pause' : 'music:play')
     }
     return requestControl(store.isPlaying ? 'pause' : 'play')
   }, [
     audioRef,
     emitHostMutation,
-    isHost,
+    canControl,
     requestControl,
     setError,
     store.isPlaying,
@@ -563,36 +630,39 @@ export function useMusicSync({
   const seek = useCallback(
     (positionSec: number) => {
       if (!Number.isFinite(positionSec)) return false
-      if (isHost) {
+      if (canControl) {
         if (audioRef.current)
           audioRef.current.currentTime = Math.max(0, positionSec)
         return emitHostMutation('music:seek', { positionSec })
       }
       return requestControl('seek', { positionSec })
     },
-    [audioRef, emitHostMutation, isHost, requestControl]
+    [audioRef, emitHostMutation, canControl, requestControl]
   )
 
   const next = useCallback(
-    () => (isHost ? emitHostMutation('music:next') : requestControl('next')),
-    [emitHostMutation, isHost, requestControl]
+    () =>
+      canControl ? emitHostMutation('music:next') : requestControl('next'),
+    [emitHostMutation, canControl, requestControl]
   )
   const previous = useCallback(
     () =>
-      isHost ? emitHostMutation('music:previous') : requestControl('previous'),
-    [emitHostMutation, isHost, requestControl]
+      canControl
+        ? emitHostMutation('music:previous')
+        : requestControl('previous'),
+    [emitHostMutation, canControl, requestControl]
   )
   const select = useCallback(
     (queueItemId: number) =>
-      isHost
+      canSelect
         ? emitHostMutation('music:queue-select', { queueItemId })
         : requestControl('select', { queueItemId }),
-    [emitHostMutation, isHost, requestControl]
+    [emitHostMutation, canSelect, requestControl]
   )
   const setMode = useCallback(
     (playMode: MusicPlayMode) =>
-      isHost ? emitHostMutation('music:mode-change', { playMode }) : false,
-    [emitHostMutation, isHost]
+      canControl ? emitHostMutation('music:mode-change', { playMode }) : false,
+    [emitHostMutation, canControl]
   )
   const addFixture = useCallback(
     (item: {
@@ -600,8 +670,8 @@ export function useMusicSync({
       title: string
       artist?: string
       durationMs?: number
-    }) => (isHost ? emitHostMutation('music:queue-add', { item }) : false),
-    [emitHostMutation, isHost]
+    }) => (canSelect ? emitHostMutation('music:queue-add', { item }) : false),
+    [emitHostMutation, canSelect]
   )
   const addMusic = useCallback(
     (item: {
@@ -612,20 +682,22 @@ export function useMusicSync({
       artworkUrl?: string | null
       durationMs?: number
       metadata?: Record<string, unknown>
-    }) => (isHost ? emitHostMutation('music:queue-add', { item }) : false),
-    [emitHostMutation, isHost]
+    }) => (canSelect ? emitHostMutation('music:queue-add', { item }) : false),
+    [emitHostMutation, canSelect]
   )
   const remove = useCallback(
     (queueItemId: number) =>
-      isHost ? emitHostMutation('music:queue-remove', { queueItemId }) : false,
-    [emitHostMutation, isHost]
+      canSelect
+        ? emitHostMutation('music:queue-remove', { queueItemId })
+        : false,
+    [emitHostMutation, canSelect]
   )
   const reorder = useCallback(
     (queueItemIds: number[]) =>
-      isHost
+      canSelect
         ? emitHostMutation('music:queue-reorder', { queueItemIds })
         : false,
-    [emitHostMutation, isHost]
+    [emitHostMutation, canSelect]
   )
 
   return {

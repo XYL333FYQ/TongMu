@@ -19,6 +19,7 @@
  */
 import { AppDataSource } from '../../data-source';
 import { PlaybackState } from '../../entities/PlaybackState';
+import { Room } from '../../entities/Room';
 import type { PlaybackStateDto, SyncStateDto } from '../shared/dto/sync-state.dto';
 import type { QualityOptionDto } from '../shared/dto/sync-state.dto';
 import type { StorageAdapter } from '../../services/storage';
@@ -147,6 +148,20 @@ export class PlaybackMemoryService {
     return this.advanceState(state);
   }
 
+  /** Caller holds the shared room lock. Keep the saved selection and position. */
+  async suspendForActivityLocked(roomId: string): Promise<PlaybackStateDto | null> {
+    const state = await this.getAdvancedPlayback(roomId);
+    if (!state) return null;
+    const host = (state as PlaybackStateDto & { hostSocketId?: string }).hostSocketId ?? '';
+    const { realtimeSyncCore } = await import('../realtime-sync-core');
+    realtimeSyncCore.hydrate(roomId, state.version, state.sourceGeneration, state.serverTimestamp);
+    const guard = realtimeSyncCore.commit(roomId, {});
+    if (!guard.ok) throw new Error(guard.message);
+    const paused = await this.setPlayback(roomId, { ...state, isPlaying: false }, host, guard);
+    await this.flushToDb(roomId);
+    return paused;
+  }
+
   /**
    * 获取原始播放状态（不推算时间）。
    * 用于房主重连恢复时获取最后已知状态。
@@ -265,6 +280,13 @@ export class PlaybackMemoryService {
     } catch (err) {
       console.error('[PlaybackMemoryService] clearPlayback error:', err);
     }
+  }
+
+  /** Release active resources while retaining the durable room progress. */
+  async releaseRuntime(roomId: string): Promise<void> {
+    await this.flushToDb(roomId);
+    this.cache.delete(roomId);
+    this.storageAdapter?.delete(roomId);
   }
 
   /**
@@ -445,7 +467,8 @@ export class PlaybackMemoryService {
         this.cache.delete(roomId);
         try {
           const repo = AppDataSource.getRepository(PlaybackState);
-          await repo.delete({ roomId });
+          const room = AppDataSource.hasMetadata(Room) ? await AppDataSource.getRepository(Room).findOneBy({ roomId, status: 'active' }) : null;
+          if (!room) await repo.delete({ roomId });
         } catch {
           // 忽略删除错误
         }

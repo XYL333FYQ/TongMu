@@ -33,7 +33,7 @@ that key are one recoverable unit whenever encrypted credentials exist.
 `backend/src/migrations/database-upgrade.ts`. Its fingerprint is:
 
 ```text
-0c3f68f06ea8cfb2bdee7b242f468248319b1ec9e3caace127fcab7bc5cd28d9
+4d71283f3165d231b04856654d2c6b111bad3ee6961ecc4aeb6027f8c4bc7f1e
 ```
 
 The static inventory covers columns, normalized SQLite types, nullability,
@@ -42,11 +42,11 @@ defaults, primary keys, unique/explicit indexes, and foreign keys for:
 | Area | Tables / durable identity |
 | --- | --- |
 | Users and auth | `user` including password hash, role/status, avatar and token invalidation |
-| Rooms and sessions | `room`, `session`; room owner, approval/mute/moderator/Voice state |
+| Rooms and sessions | `room`, `session`; owner, approval/mute/moderator/Voice state, activity, collaboration/discovery policy and empty-room timestamp |
 | Movies/media | `movie`, `playback_states`, `movie_create_request`; legacy source fields remain compatible |
 | Provider mounts | `user_mount`; Local has no credential, WebDAV/FTP/OpenList/Emby/Jellyfin fields remain |
 | Provider credentials | `bilibili_credential`, `ncm_credentials` |
-| Music | `music_queue_items`, `music_room_states`; stable queue IDs/order and independent generation/version |
+| Music | `music_queue_items`, `music_room_states`; stable queue IDs/order, retained position and independent generation/version |
 | Comments/danmaku | `comment`, `danmaku_track`, `room_danmaku_meta` |
 | Settings/admin | `system_settings`, `server_folder`, `audit_logs` |
 

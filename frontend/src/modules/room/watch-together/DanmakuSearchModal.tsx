@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Search,
@@ -38,8 +39,9 @@ import {
 /** 格式化数字：万 / 亿 */
 function formatCount(n: number | undefined): string {
   if (n == null) return '-'
-  if (n >= 1_0000_0000) return `${(n / 1_0000_0000).toFixed(1)}亿`
-  if (n >= 1_0000) return `${(n / 1_0000).toFixed(1)}万`
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
   return String(n)
 }
 
@@ -48,7 +50,7 @@ interface DanmakuSearchModalProps {
   onClose: () => void
   defaultSource?: DanmakuSource
   onSourceChange?: (source: DanmakuSource) => void
-  /** 打开弹窗时预填的关键词，传入后会自动触发搜索 */
+  /** Open弹窗时预填的Search query，传入后会自动触发Search */
   initialKeyword?: string
 }
 
@@ -61,6 +63,8 @@ export function DanmakuSearchModal({
   onSourceChange,
   initialKeyword,
 }: DanmakuSearchModalProps) {
+  useTranslation()
+
   const addTrack = useDanmakuStore((state) => state.addTrack)
 
   const [source, setSource] = useState<DanmakuSource>(
@@ -95,11 +99,14 @@ export function DanmakuSearchModal({
         const list = await searchDanmaku(searchSource, searchKeyword)
         setResults(list)
         if (list.length === 0) {
-          message.info('未找到相关结果')
+          message.info(t('No matching results.'))
         }
       } catch (err) {
-        console.error('[DanmakuSearchModal] search error:', redactMediaError(err))
-        message.error(err instanceof Error ? err.message : '搜索失败')
+        console.error(
+          '[DanmakuSearchModal] search error:',
+          redactMediaError(err)
+        )
+        message.error(err instanceof Error ? err.message : t('Search failed.'))
       } finally {
         setLoading(false)
       }
@@ -110,7 +117,7 @@ export function DanmakuSearchModal({
   const handleSearch = () => {
     const trimmed = keyword.trim()
     if (!trimmed) {
-      message.warning('请输入搜索关键词')
+      message.warning(t('Enter a search query.'))
       return
     }
     void performSearch(source, trimmed)
@@ -143,11 +150,16 @@ export function DanmakuSearchModal({
       setEpisodes(list)
       setStep('episodes')
       if (list.length === 0) {
-        message.info('该作品暂无可用集数')
+        message.info(t('No episodes are available for this title.'))
       }
     } catch (err) {
-      console.error('[DanmakuSearchModal] episodes error:', redactMediaError(err))
-      message.error(err instanceof Error ? err.message : '获取集数失败')
+      console.error(
+        '[DanmakuSearchModal] episodes error:',
+        redactMediaError(err)
+      )
+      message.error(
+        err instanceof Error ? err.message : t('Could not load episodes.')
+      )
     } finally {
       setLoading(false)
     }
@@ -162,11 +174,20 @@ export function DanmakuSearchModal({
       const items = await fetchDanmaku(source, episode)
       const label = `${selectedResult.title} · ${episode.title}`
       await addTrack(trackId, label, source, items, 0)
-      message.success(`已添加 ${label} 弹幕轨道（共 ${items.length} 条）`)
+      message.success(
+        t('Added  {value1} Comment tracks（Total: {value2} )', {
+          value1: label,
+          value2: items.length,
+        })
+      )
       onClose()
     } catch (err) {
       console.error('[DanmakuSearchModal] fetch error:', redactMediaError(err))
-      message.error(err instanceof Error ? err.message : '添加弹幕轨道失败')
+      message.error(
+        err instanceof Error
+          ? err.message
+          : t('Could not add the comment track.')
+      )
     } finally {
       setAddingEpisodeId(null)
     }
@@ -183,7 +204,7 @@ export function DanmakuSearchModal({
     onClose()
   }
 
-  const modalTitle = '搜索弹幕'
+  const modalTitle = 'SearchOn-screen comments'
 
   // 右侧集数面板是否展开（step === 'episodes'）
   const episodesOpen = step === 'episodes' && !!selectedResult
@@ -203,13 +224,16 @@ export function DanmakuSearchModal({
           transition: 'grid-template-columns 0.4s var(--ease-out-expo)',
         }}
       >
-        {/* 左栏：搜索区（常驻显示） */}
+        {/* 左栏：Search区（常驻显示） */}
         <div className="flex min-h-0 min-w-0 flex-col gap-3 overflow-hidden">
           <Space className="w-full" size="sm" align="end">
             <Select
-              label="数据源"
+              label={t('Source')}
               value={source}
-              options={DANMAKU_SOURCE_OPTIONS}
+              options={DANMAKU_SOURCE_OPTIONS.map((option) => ({
+                ...option,
+                label: t(option.label),
+              }))}
               onChange={(value) => {
                 const newSource = value as DanmakuSource
                 setSource(newSource)
@@ -218,7 +242,7 @@ export function DanmakuSearchModal({
               className="w-36 shrink-0"
             />
             <Input
-              label="关键词"
+              label={t('Search query')}
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
               onKeyDown={(e) => {
@@ -227,7 +251,7 @@ export function DanmakuSearchModal({
                   handleSearch()
                 }
               }}
-              placeholder="输入番剧/视频名称或 BV 号"
+              placeholder={t('Search anime, videos or BV IDs')}
               className="flex-1"
             />
             <Button
@@ -252,7 +276,7 @@ export function DanmakuSearchModal({
               <div className="glass flex flex-1 flex-col items-center justify-center gap-2 rounded-[var(--md-sys-shape-corner)] p-6 text-center">
                 <Search className="h-8 w-8 opacity-40" />
                 <Text type="secondary" className="text-xs">
-                  输入关键词并搜索以查找弹幕源
+                  {t('Search for a video to find comment tracks.')}
                 </Text>
               </div>
             )}
@@ -326,7 +350,7 @@ export function DanmakuSearchModal({
                     )}
                   </div>
 
-                  {/* 右侧添加按钮 */}
+                  {/* 右侧Add按钮 */}
                   <Button
                     variant={isActive ? 'secondary' : 'primary'}
                     size="sm"
@@ -364,7 +388,7 @@ export function DanmakuSearchModal({
                     type="secondary"
                     className="text-[10px] uppercase tracking-wide"
                   >
-                    选择集数
+                    {t('Choose episode')}
                   </Text>
                   <Text className="truncate text-sm font-medium">
                     {selectedResult?.title}
@@ -383,7 +407,7 @@ export function DanmakuSearchModal({
                 {episodes.length === 0 && !loading && (
                   <div className="flex flex-1 items-center justify-center">
                     <Text type="secondary" className="text-xs">
-                      暂无可用集数
+                      {t('No episodes available.')}
                     </Text>
                   </div>
                 )}
@@ -404,7 +428,7 @@ export function DanmakuSearchModal({
                       disabled={!!addingEpisodeId}
                       onClick={() => handleAddEpisode(episode)}
                     >
-                      添加
+                      {t('Add')}
                     </Button>
                   </div>
                 ))}
@@ -413,7 +437,7 @@ export function DanmakuSearchModal({
                   <div className="flex items-center justify-center gap-2 py-2 text-[var(--md-sys-color-on-surface-variant)]">
                     <Loader2 className="h-4 w-4 animate-spin" />
                     <Text type="secondary" className="text-xs">
-                      加载中…
+                      {t('Loading……')}
                     </Text>
                   </div>
                 )}
@@ -428,7 +452,7 @@ export function DanmakuSearchModal({
         <div className="mt-2 flex items-center justify-center gap-2 py-2 text-[var(--md-sys-color-on-surface-variant)]">
           <Loader2 className="h-4 w-4 animate-spin" />
           <Text type="secondary" className="text-xs">
-            加载中…
+            {t('Loading……')}
           </Text>
         </div>
       )}

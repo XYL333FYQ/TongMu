@@ -3,6 +3,7 @@
  *
  * 从旧 msePlayer.ts 抽取的、与具体引擎无关的视频元素操作工具。
  */
+import { t } from '@/i18n'
 import { trackPlayerResource } from './lifecycle'
 
 /**
@@ -17,15 +18,21 @@ import { trackPlayerResource } from './lifecycle'
 export function formatVideoLoadError(code?: number): string {
   switch (code) {
     case 1:
-      return '视频加载被中止'
+      return t('Video loading was cancelled.')
     case 2:
-      return '网络错误：无法连接到源站，请检查网络或源站可达性'
+      return t(
+        'Unable to reach the media source. Check your connection and the source address.'
+      )
     case 3:
-      return '解码失败：视频编码不受当前浏览器支持'
+      return t(
+        'Your browser cannot decode this video format. Try a supported browser or another source.'
+      )
     case 4:
-      return '源不可用：地址失效、无访问权限、格式不支持，或 HTTPS 页面无法直连 HTTP 源（混合内容限制）'
+      return t(
+        'This media source is unavailable. Check its address, access permissions, format and HTTPS support.'
+      )
     default:
-      return '未知媒体错误'
+      return t('Unable to load this media. Reload it or choose another source.')
   }
 }
 
@@ -54,7 +61,9 @@ export function resetVideoElement(video: HTMLVideoElement): void {
  */
 export const METADATA_TIMEOUT_MS = 30_000
 
-export function createPlayerAbortError(message = '播放器操作已取消'): Error {
+export function createPlayerAbortError(
+  message = 'Playback was cancelled.'
+): Error {
   const error = new Error(message)
   error.name = 'AbortError'
   return error
@@ -91,9 +100,9 @@ export function waitForMetadata(
       cleanup()
       reject(
         new Error(
-          `媒体加载失败（code=${video.error?.code ?? 'unknown'}${
+          `Media loading failed (code=${video.error?.code ?? 'unknown'}${
             video.error?.message ? `: ${video.error.message}` : ''
-          }）`
+          })`
         )
       )
     }
@@ -103,7 +112,11 @@ export function waitForMetadata(
     }
     const timer = setTimeout(() => {
       cleanup()
-      reject(new Error('等待媒体 metadata 超时（30s）'))
+      reject(
+        new Error(
+          'Media metadata did not load within 30 seconds. Check the source and try again.'
+        )
+      )
     }, METADATA_TIMEOUT_MS)
     releaseTimer = trackPlayerResource('timers', () => clearTimeout(timer))
     if (signal) {

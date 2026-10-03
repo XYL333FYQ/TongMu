@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 /**
  * usePlaybackStateRequest Hook
  *
@@ -58,6 +59,8 @@ export function usePlaybackStateRequest({
   applySourceToVideo,
   lastAppliedSourceUrlRef,
 }: UsePlaybackStateRequestOptions): UsePlaybackStateRequestReturn {
+  useTranslation()
+
   const { socket } = useSocket()
   const requestedRef = useRef(false)
   // 服务器暂无播放状态时的重试（房主可能刚开始播放 / 状态尚未持久化）
@@ -125,7 +128,7 @@ export function usePlaybackStateRequest({
             setBufferProgress({
               downloaded: 0,
               total: 1,
-              title: state.previewTitle || '当前视频',
+              title: state.previewTitle || t('Current video'),
             })
             try {
               const result = await fetchBlobsForBufferMode({
@@ -142,12 +145,22 @@ export function usePlaybackStateRequest({
               if (err instanceof DownloadAbortedError) {
                 console.log('[usePlaybackStateRequest] 缓冲下载已取消')
               } else if (err instanceof UrlExpiredError) {
-                message.error('B站 URL 已过期，请等待房主重新解析')
+                message.error(
+                  t(
+                    'This Bilibili media link expired. Waiting for the host to refresh it.'
+                  )
+                )
               } else if (err instanceof DownloadError) {
-                message.error(`缓冲下载失败: ${err.message}`)
+                message.error(
+                  t('Buffering failed:  {value1}', { value1: err.message })
+                )
               } else {
                 console.error('[usePlaybackStateRequest] 缓冲下载失败:', err)
-                message.error('缓冲下载失败，请等待房主重新广播')
+                message.error(
+                  t(
+                    'Buffering failed. Waiting for the host to refresh playback.'
+                  )
+                )
               }
               return null // 区分 undefined（不需要缓冲）和 null（缓冲失败）
             } finally {
@@ -205,7 +218,11 @@ export function usePlaybackStateRequest({
             // attach 失败：回滚 sourceUrl 标记，允许下一次重试
             lastAppliedSourceUrlRef.current = previousAppliedUrl
             suppressEventsRef.current = false
-            message.error(err instanceof Error ? err.message : '状态恢复失败')
+            message.error(
+              err instanceof Error
+                ? err.message
+                : t('Unable to restore playback. Try reconnecting.')
+            )
           })
         }
       )

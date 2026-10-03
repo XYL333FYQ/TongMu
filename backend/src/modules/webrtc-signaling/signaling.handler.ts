@@ -10,6 +10,8 @@
  */
 import type { Server as SocketIOServer, Socket } from 'socket.io';
 import type { SocketEventHandler } from '../socket';
+import { roomScreenPresenters } from '../room/room-policy';
+import { roomPermissionService } from '../room/room-permission.service';
 
 /**
  * 校验双方是否处于同一房间，返回共同房间 ID。
@@ -52,6 +54,7 @@ export class SignalingHandler implements SocketEventHandler {
       ) => {
         try {
           const roomId = await validateSignalPair(io, socket, payload.to);
+          if (roomId && (roomScreenPresenters.get(roomId) !== socket.id || !(await roomPermissionService.canPerform(socket, roomId, 'screen.start')).allowed)) return safeCallback(callback, { success: false, message: 'Only the current screen presenter may offer a stream.' });
           if (!roomId) {
             console.warn(
               `[signal-offer] pair validation failed from=${socket.id} to=${payload.to}`,

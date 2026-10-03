@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ChevronRight,
@@ -12,6 +13,7 @@ import {
 } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
+import { useDisclosureMotion } from '@/components/ui/useDisclosureMotion'
 import { Spinner } from '@/components/ui/Spinner'
 import { Text } from '@/components/ui/Typography'
 import {
@@ -25,11 +27,11 @@ import { cn, formatFileSize } from '@/lib/utils'
 interface ServerFilesBrowserProps {
   open: boolean
   onClose: () => void
-  /** 确认添加所选文件（单选模式为单个路径，多选模式为批量路径） */
+  /** ConfirmAdd所选文件（单选模式为单个Path，Select multiple模式为批量Path） */
   onConfirm: (paths: string[]) => void
 }
 
-/** 解析前缀式路径（uploads:/a/b 或 custom:3:/a/b），非法路径返回 null */
+/** Resolve前缀式Path（uploads:/a/b 或 custom:3:/a/b），非法PathBack null */
 function splitPrefixedPath(
   path: string
 ): { rootKey: string; rel: string } | null {
@@ -38,7 +40,7 @@ function splitPrefixedPath(
   return { rootKey: match[1], rel: match[2].replace(/^\/+/, '') }
 }
 
-/** 上级目录路径（同根）；已在根目录时返回 null */
+/** Parent folderPath（同根）；已在Root folder时Back null */
 function getParentPath(path: string): string | null {
   const parts = splitPrefixedPath(path)
   if (!parts) return null
@@ -47,7 +49,7 @@ function getParentPath(path: string): string | null {
   return `${parts.rootKey}:/${segs.slice(0, -1).join('/')}`
 }
 
-/** 路径显示名：最后一段（根目录显示 /） */
+/** Path显示名：最后一段（Root folder显示 /） */
 function getEntryName(path: string): string {
   const parts = splitPrefixedPath(path)
   if (!parts) return '/'
@@ -56,6 +58,8 @@ function getEntryName(path: string): string {
 }
 
 function EntrySkeleton() {
+  useTranslation()
+
   return (
     <div className="flex animate-pulse items-center gap-3 rounded-lg p-2.5">
       <div className="h-5 w-5 rounded bg-[var(--md-sys-color-surface-container-high)]" />
@@ -70,6 +74,8 @@ export default function ServerFilesBrowser({
   onClose,
   onConfirm,
 }: ServerFilesBrowserProps) {
+  useTranslation()
+
   const [currentPath, setCurrentPath] = useState<string>('uploads:/')
   const [entries, setEntries] = useState<ServerFileEntry[]>([])
   const [parentEntries, setParentEntries] = useState<ServerFileEntry[]>([])
@@ -80,7 +86,12 @@ export default function ServerFilesBrowser({
 
   // 根目录列表（本地浏览特有：uploads / custom:N）
   const [roots, setRoots] = useState<ServerFileRoot[]>([])
-  const [rootsMenuOpen, setRootsMenuOpen] = useState(false)
+  const {
+    open: rootsMenuOpen,
+    closing: rootsMenuClosing,
+    show: showRootsMenu,
+    close: closeRootsMenu,
+  } = useDisclosureMotion()
 
   const currentRootKey = extractRootKey(currentPath)
   const currentRoot = roots.find((r) => r.key === currentRootKey)
@@ -105,7 +116,9 @@ export default function ServerFilesBrowser({
         setParentEntries([])
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载失败')
+      setError(
+        err instanceof Error ? err.message : t('Could not load this content.')
+      )
     } finally {
       setLoading(false)
     }
@@ -137,17 +150,17 @@ export default function ServerFilesBrowser({
   // 关闭根目录下拉
   useEffect(() => {
     if (!rootsMenuOpen) return
-    const onClick = () => setRootsMenuOpen(false)
+    const onClick = () => closeRootsMenu()
     window.addEventListener('click', onClick)
     return () => window.removeEventListener('click', onClick)
-  }, [rootsMenuOpen])
+  }, [rootsMenuOpen, closeRootsMenu])
 
   const handleOpenDirectory = (path: string) => {
     void load(path)
   }
 
   const handleSwitchRoot = (root: ServerFileRoot) => {
-    setRootsMenuOpen(false)
+    closeRootsMenu()
     if (root.key === currentRootKey || !root.exists) return
     setSelectedPaths(new Set())
     void load(`${root.key}:/`)
@@ -252,8 +265,8 @@ export default function ServerFilesBrowser({
 
   const breadcrumb = useMemo(() => {
     const parts = splitPrefixedPath(currentPath)
-    if (!parts) return [{ name: '根目录', path: 'uploads:/' }]
-    const items = [{ name: '根目录', path: `${parts.rootKey}:/` }]
+    if (!parts) return [{ name: 'Root folder', path: 'uploads:/' }]
+    const items = [{ name: 'Root folder', path: `${parts.rootKey}:/` }]
     let acc = ''
     for (const seg of parts.rel.split('/').filter(Boolean)) {
       acc = acc ? `${acc}/${seg}` : seg
@@ -290,7 +303,7 @@ export default function ServerFilesBrowser({
     <Modal
       open={open}
       onClose={onClose}
-      title="浏览服务器文件"
+      title={t('Browse server files')}
       className="max-w-4xl"
       footer={
         <div className="flex w-full items-center justify-between">
@@ -303,12 +316,12 @@ export default function ServerFilesBrowser({
             )}
           >
             {multiSelectMode
-              ? `已选择 ${selectedFiles.length} 个文件`
-              : '多选模式可批量添加'}
+              ? t('Selected  {value1}  files', { value1: selectedFiles.length })
+              : t('Select multiple items to add them together.')}
           </Text>
           <div className="flex items-center gap-3">
             <Button variant="secondary" size="md" onClick={onClose}>
-              取消
+              {t('Cancel')}
             </Button>
             <Button
               variant="primary"
@@ -322,8 +335,8 @@ export default function ServerFilesBrowser({
               disabled={selectedFiles.length === 0}
             >
               {multiSelectMode
-                ? `添加 (${selectedFiles.length})`
-                : '添加当前文件'}
+                ? t('Add ({value1})', { value1: selectedFiles.length })
+                : t('Add selected file')}
             </Button>
           </div>
         </div>
@@ -333,14 +346,14 @@ export default function ServerFilesBrowser({
         {error ? (
           <div className="flex flex-col items-center gap-3 py-8">
             <Text className="text-base text-[var(--md-sys-color-error)]">
-              {error}
+              {t(error)}
             </Text>
             <Button
               variant="secondary"
               size="md"
               onClick={() => void load(currentPath)}
             >
-              重试
+              {t('Try again')}
             </Button>
           </div>
         ) : loading && entries.length === 0 ? (
@@ -349,7 +362,7 @@ export default function ServerFilesBrowser({
           <>
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div className="flex flex-wrap items-center gap-1.5 text-sm text-[var(--md-sys-color-on-surface-variant)]">
-                {/* 根目录切换器（本地浏览特有：uploads / custom:N） */}
+                {/* Root folder切换器（本地Browse特有：uploads / custom:N） */}
                 <div className="relative">
                   <Button
                     variant="secondary"
@@ -357,23 +370,36 @@ export default function ServerFilesBrowser({
                     icon={<HardDrive className="h-3.5 w-3.5" />}
                     onClick={(e) => {
                       e.stopPropagation()
-                      setRootsMenuOpen((v) => !v)
+                      if (rootsMenuOpen && !rootsMenuClosing) closeRootsMenu()
+                      else showRootsMenu()
                     }}
                   >
-                    {currentRoot?.name ?? '根目录'}
+                    {currentRoot?.name ?? t('Root folder')}
                   </Button>
                   {rootsMenuOpen && (
                     <div
-                      className="glass absolute left-0 top-full z-30 mt-1 min-w-[220px] rounded-[var(--md-sys-shape-corner)] p-1 shadow-lg"
+                      className={cn(
+                        'glass absolute left-0 top-full z-30 mt-1 min-w-[220px] rounded-[var(--md-sys-shape-corner)] p-1 shadow-lg',
+                        rootsMenuClosing
+                          ? 'zen-dropdown-exit'
+                          : 'zen-dropdown-enter'
+                      )}
+                      style={{
+                        transformOrigin: 'top left',
+                        pointerEvents: rootsMenuClosing ? 'none' : undefined,
+                      }}
                       onClick={(e) => e.stopPropagation()}
                     >
-                      {roots.map((r) => (
+                      {roots.map((r, index) => (
                         <button
                           key={r.key}
                           type="button"
                           onClick={() => handleSwitchRoot(r)}
                           disabled={!r.exists}
-                          className="flex w-full items-center gap-2 rounded-[var(--md-sys-shape-corner)] px-2 py-1.5 text-left transition-colors hover:bg-[var(--md-sys-color-surface-container-highest)] disabled:opacity-50"
+                          className="zen-dropdown-item flex w-full items-center gap-2 rounded-[var(--md-sys-shape-corner)] px-2 py-1.5 text-left transition-colors hover:bg-[var(--md-sys-color-surface-container-highest)] disabled:opacity-50"
+                          style={
+                            { '--item-index': index } as React.CSSProperties
+                          }
                         >
                           <HardDrive
                             className="h-3.5 w-3.5 shrink-0"
@@ -409,7 +435,7 @@ export default function ServerFilesBrowser({
                       className="rounded-lg px-2 py-1 hover:bg-[var(--md-sys-color-surface-container-high)] hover:text-[var(--md-sys-color-on-surface)]"
                       onClick={() => void load(item.path)}
                     >
-                      {item.name}
+                      {index === 0 ? t('Root folder') : item.name}
                     </button>
                   </span>
                 ))}
@@ -428,15 +454,15 @@ export default function ServerFilesBrowser({
                   })
                 }}
               >
-                {multiSelectMode ? '退出多选' : '多选'}
+                {multiSelectMode ? t('Stop selection') : t('Select multiple')}
               </Button>
             </div>
 
             <div className="grid h-[420px] grid-cols-1 gap-4 overflow-hidden rounded-2xl border border-[var(--md-sys-color-outline-variant)] backdrop-blur-sm md:grid-cols-2">
-              {/* 左侧：上级目录（小屏单栏时隐藏，导航由面包屑承担） */}
+              {/* 左侧：Parent folder（小屏单栏时隐藏，导航由面包屑承担） */}
               <div className="hidden min-h-0 flex-col border-r border-[var(--md-sys-color-outline-variant)] bg-[var(--md-sys-color-surface-container-low)]/60 md:flex">
                 <div className="shrink-0 border-b border-[var(--md-sys-color-outline-variant)] px-4 py-3 text-sm font-semibold uppercase tracking-wide text-[var(--md-sys-color-on-surface-variant)]">
-                  上级目录
+                  {t('Parent folder')}
                 </div>
                 <div className="zen-scroll min-h-0 flex-1 overflow-y-auto p-3">
                   {getParentPath(currentPath) ? (
@@ -448,18 +474,18 @@ export default function ServerFilesBrowser({
                       )
                     ) : (
                       <Text className="py-8 text-center text-sm text-[var(--md-sys-color-on-surface-variant)]">
-                        上级目录为空
+                        {t('The parent folder is empty.')}
                       </Text>
                     )
                   ) : (
                     <Text className="py-8 text-center text-sm text-[var(--md-sys-color-on-surface-variant)]">
-                      已在根目录
+                      {t('You are at the root folder.')}
                     </Text>
                   )}
                 </div>
               </div>
 
-              {/* 右侧：当前目录 */}
+              {/* 右侧：Current folder */}
               <div className="flex min-h-0 flex-col bg-[var(--md-sys-color-surface)]/80">
                 <div className="shrink-0 border-b border-[var(--md-sys-color-outline-variant)] px-4 py-3 text-sm font-semibold uppercase tracking-wide text-[var(--md-sys-color-on-surface-variant)]">
                   {getEntryName(currentPath)}
@@ -469,7 +495,7 @@ export default function ServerFilesBrowser({
                     entries.map((entry) => renderEntry(entry, 'right'))
                   ) : (
                     <Text className="py-8 text-center text-sm text-[var(--md-sys-color-on-surface-variant)]">
-                      当前目录为空
+                      {t('This folder is empty.')}
                     </Text>
                   )}
                 </div>
@@ -478,7 +504,7 @@ export default function ServerFilesBrowser({
 
             {loading && entries.length > 0 && (
               <div className="absolute inset-0 flex items-center justify-center rounded-2xl bg-[var(--md-sys-color-surface)]/40 backdrop-blur-md">
-                <Spinner tip="加载中..." size={28} />
+                <Spinner tip={t('Loading…')} size={28} />
               </div>
             )}
           </>

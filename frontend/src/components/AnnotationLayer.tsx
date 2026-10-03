@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import {
   useEffect,
   useRef,
@@ -74,6 +75,8 @@ export const AnnotationLayer = forwardRef<
   },
   ref
 ) {
+  useTranslation()
+
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null)
@@ -450,11 +453,11 @@ export const AnnotationLayer = forwardRef<
                 setTextInput({ visible: false, x: 0, y: 0, value: '' })
               }
             }}
-            placeholder="输入文字"
+            placeholder={t('Enter text')}
             className="w-32"
           />
           <Button size="sm" variant="primary" onClick={handleTextSubmit}>
-            确定
+            {t('Confirm')}
           </Button>
         </div>
       )}
@@ -483,9 +486,11 @@ export function AnnotationToolbar({
   onClear,
   canClear,
 }: AnnotationToolbarProps) {
+  useTranslation()
+
   return (
     <div className="rounded-lg border border-slate-200 bg-white/80 p-3 dark:border-slate-700 dark:bg-slate-800/80">
-      <Text className="mb-2 font-medium">批注工具</Text>
+      <Text className="mb-2 font-medium">{t('Annotation tools')}</Text>
       <Space wrap className="justify-start" size="sm">
         <Button
           variant={tool === 'pen' ? 'primary' : 'secondary'}
@@ -493,7 +498,7 @@ export function AnnotationToolbar({
           icon={<Pencil className="h-4 w-4" />}
           onClick={() => onToolChange('pen')}
         >
-          画笔
+          {t('Pen')}
         </Button>
         <Button
           variant={tool === 'text' ? 'primary' : 'secondary'}
@@ -501,7 +506,7 @@ export function AnnotationToolbar({
           icon={<Type className="h-4 w-4" />}
           onClick={() => onToolChange('text')}
         >
-          文字
+          {t('Text')}
         </Button>
         <Button
           variant={tool === 'erase' ? 'primary' : 'secondary'}
@@ -509,12 +514,12 @@ export function AnnotationToolbar({
           icon={<Eraser className="h-4 w-4" />}
           onClick={() => onToolChange('erase')}
         >
-          橡皮擦
+          {t('Eraser')}
         </Button>
       </Space>
       <div className="mt-3">
         <Text type="secondary" className="mb-1 text-xs">
-          颜色
+          {t('Color')}
         </Text>
         <Space wrap size="sm">
           {COLORS.map((c) => (
@@ -530,14 +535,14 @@ export function AnnotationToolbar({
                     ? '0 0 0 2px var(--md-sys-color-primary)'
                     : 'none',
               }}
-              aria-label={`选择颜色 ${c}`}
+              aria-label={t('Choose color {color}', { color: c })}
             />
           ))}
         </Space>
       </div>
       <div className="mt-3">
         <Text type="secondary" className="mb-1 text-xs">
-          粗细
+          {t('Size')}
         </Text>
         <Space align="center" size="sm" className="w-full">
           <Minus className="h-3 w-3 text-slate-400" />
@@ -563,7 +568,7 @@ export function AnnotationToolbar({
           icon={<Trash2 className="h-4 w-4" />}
           onClick={onClear}
         >
-          清空所有批注
+          {t('Clear annotations')}
         </Button>
       )}
     </div>

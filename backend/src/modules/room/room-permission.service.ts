@@ -15,6 +15,7 @@ import { Session } from "../../entities/Session";
 import { Room } from "../../entities/Room";
 import { SystemSettings } from "../../entities/SystemSettings";
 import type { UserRole } from "../../entities/User";
+import { parseRoomPolicy, roomDelegates } from './room-policy';
 import {
   canPerformRoomAction,
   roomRoleFromUserRole,
@@ -136,7 +137,7 @@ export class RoomPermissionService {
       role: "sharer",
       endedAt: IsNull(),
     });
-    const result = !!sharer;
+    const result = !!sharer || (roomDelegates.get(roomId) === socket.id && await this.isInRoom(socket, roomId));
     this.setCache(key, result);
     return result;
   }
@@ -260,7 +261,7 @@ export class RoomPermissionService {
   async isWatchTogetherRoom(roomId: string): Promise<boolean> {
     const roomRepo = AppDataSource.getRepository(Room);
     const room = await roomRepo.findOneBy({ roomId, status: "active" });
-    return !!room && room.mode === "watch-together";
+    return !!room && room.mode === "watch-together" && room.activity === 'watch';
   }
 
   /**
@@ -353,8 +354,10 @@ export class RoomPermissionService {
     return {
       actorRole: roomRoleFromUserRole(role, isOwner, isModerator, isMember),
       userId,
-      isHost: session?.role === 'sharer',
+      isHost: session?.role === 'sharer' || (isMember && roomDelegates.get(roomId) === socket.id),
       isRoomMember: isMember,
+      isDelegate: isMember && roomDelegates.get(roomId) === socket.id,
+      policy: room ? parseRoomPolicy(room.policyJson) : undefined,
     };
   }
 

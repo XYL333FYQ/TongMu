@@ -1,4 +1,6 @@
+import { t } from '@/i18n'
 import { apiFetch, getApiUrl } from '@/lib/api'
+import { englishErrorMessage } from '@/lib/errorMessage'
 import type {
   BilibiliDownloadedFile,
   BilibiliDownloadCallbacks,
@@ -25,7 +27,9 @@ export async function browseServerFiles(
     message?: string
   }
   if (!res.ok || !data.success) {
-    throw new Error(data.message || '浏览服务器文件失败')
+    throw new Error(
+      englishErrorMessage(data.message, 'Unable to browse server files.')
+    )
   }
   return {
     entries: data.entries || [],
@@ -67,14 +71,27 @@ export async function uploadServerFiles(
         if (xhr.status >= 200 && xhr.status < 300 && data.success) {
           resolve(data.files || [])
         } else {
-          reject(new Error(data.message || '上传失败'))
+          reject(
+            new Error(
+              englishErrorMessage(data.message, 'Upload failed. Try again.')
+            )
+          )
         }
       } catch {
-        reject(new Error('上传响应解析失败'))
+        reject(
+          new Error(
+            'The server upload response was invalid. Check whether the file arrived before retrying.'
+          )
+        )
       }
     }
 
-    xhr.onerror = () => reject(new Error('网络错误，上传失败'))
+    xhr.onerror = () =>
+      reject(
+        new Error(
+          'The upload connection failed. Check your network and try again.'
+        )
+      )
     xhr.send(formData)
   })
 }
@@ -95,7 +112,9 @@ export async function createFolder(
     message?: string
   }
   if (!res.ok || !data.success) {
-    throw new Error(data.message || '新建文件夹失败')
+    throw new Error(
+      englishErrorMessage(data.message, 'Unable to create this folder.')
+    )
   }
   return data.path || ''
 }
@@ -116,7 +135,9 @@ export async function renameServerFile(
     message?: string
   }
   if (!res.ok || !data.success) {
-    throw new Error(data.message || '重命名失败')
+    throw new Error(
+      englishErrorMessage(data.message, 'Unable to rename this item.')
+    )
   }
   return data.path || ''
 }
@@ -129,7 +150,9 @@ export async function deleteServerFile(path: string): Promise<void> {
   )
   const data = (await res.json()) as { success: boolean; message?: string }
   if (!res.ok || !data.success) {
-    throw new Error(data.message || '删除失败')
+    throw new Error(
+      englishErrorMessage(data.message, 'Unable to remove this item.')
+    )
   }
 }
 
@@ -151,7 +174,9 @@ export async function resolveServerFile(
     duration?: number | null
   }
   if (!res.ok || !data.success || !data.videoUrl) {
-    throw new Error(data.message || '解析服务器文件失败')
+    throw new Error(
+      englishErrorMessage(data.message, 'Unable to open this server file.')
+    )
   }
   return {
     title: data.title || '',
@@ -196,7 +221,9 @@ export async function browseSystemDirs(
     message?: string
   }
   if (!res.ok || !data.success) {
-    throw new Error(data.message || '浏览系统目录失败')
+    throw new Error(
+      englishErrorMessage(data.message, 'Unable to browse system folders.')
+    )
   }
   return {
     entries: data.entries || [],
@@ -215,7 +242,9 @@ export async function listServerRoots(): Promise<ServerFileRoot[]> {
     message?: string
   }
   if (!res.ok || !data.success) {
-    throw new Error(data.message || '加载根目录失败')
+    throw new Error(
+      englishErrorMessage(data.message, 'Unable to load storage spaces.')
+    )
   }
   return data.roots || []
 }
@@ -237,7 +266,9 @@ export async function addServerRoot(
     message?: string
   }
   if (!res.ok || !data.success || !data.root) {
-    throw new Error(data.message || '添加根目录失败')
+    throw new Error(
+      englishErrorMessage(data.message, 'Unable to add this storage space.')
+    )
   }
   return data.root
 }
@@ -247,7 +278,7 @@ export async function deleteServerRoot(key: string): Promise<void> {
   // key 形如 'custom:3'，提取数字 id
   const match = key.match(/^custom:(\d+)$/)
   if (!match) {
-    throw new Error('默认空间不可删除')
+    throw new Error('The default storage space cannot be removed.')
   }
   const id = match[1]
   const res = await apiFetch(`/api/server-files/roots/${id}`, {
@@ -255,7 +286,9 @@ export async function deleteServerRoot(key: string): Promise<void> {
   })
   const data = (await res.json()) as { success: boolean; message?: string }
   if (!res.ok || !data.success) {
-    throw new Error(data.message || '删除根目录失败')
+    throw new Error(
+      englishErrorMessage(data.message, 'Unable to remove this storage space.')
+    )
   }
 }
 
@@ -327,14 +360,19 @@ export async function downloadBilibiliVideo(
         success?: boolean
         message?: string
       } | null
-      throw new Error(data?.message || '下载 B站 视频失败')
+      throw new Error(
+        englishErrorMessage(
+          data?.message,
+          'Unable to download this Bilibili video.'
+        )
+      )
     }
 
     let text: string
     try {
       text = await res.text()
     } catch (err) {
-      throw new Error('读取下载响应失败', { cause: err })
+      throw new Error('Unable to read the download response.', { cause: err })
     }
 
     let result: BilibiliDownloadedFile | null = null
@@ -346,7 +384,10 @@ export async function downloadBilibiliVideo(
       try {
         const data = JSON.parse(line) as BilibiliDownloadProgress
         if (data.status === 'parsing' && data.step && data.message) {
-          callbacks?.onParsing?.(data.step, data.message)
+          callbacks?.onParsing?.(
+            data.step,
+            englishErrorMessage(data.message, t('Resolving Bilibili media…'))
+          )
         } else if (data.status === 'downloading') {
           callbacks?.onDownloading?.(
             data.received ?? 0,
@@ -356,7 +397,12 @@ export async function downloadBilibiliVideo(
         } else if (data.status === 'done' && data.file) {
           result = data.file
         } else if (data.status === 'error') {
-          streamError = new Error(data.message || '下载 B站 视频失败')
+          streamError = new Error(
+            englishErrorMessage(
+              data.message,
+              'Unable to download this Bilibili video.'
+            )
+          )
         }
       } catch (err) {
         console.warn('[downloadBilibiliVideo] 解析进度行失败:', line, err)
@@ -365,10 +411,12 @@ export async function downloadBilibiliVideo(
 
     if (streamError) throw streamError
     if (result) return result
-    throw new Error('下载未完成')
+    throw new Error('The download did not finish. Try again.')
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') {
-      throw new Error('下载 B站 视频超时，请稍后重试', { cause: err })
+      throw new Error('The Bilibili download timed out. Try again.', {
+        cause: err,
+      })
     }
     throw err
   } finally {

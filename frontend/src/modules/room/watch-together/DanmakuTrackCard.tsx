@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import { useState } from 'react'
 import { Plus, Trash2, Film, Search, Loader2, Eye, EyeOff } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
@@ -31,10 +32,10 @@ function formatOffset(offset: number): string {
 }
 
 const SOURCE_LABELS: Record<DanmakuSource, string> = {
-  'bilibili-video': 'B站视频',
-  'bilibili-bangumi': 'B站番剧',
-  bahamut: '巴哈',
-  dandanplay: '弹弹',
+  'bilibili-video': 'Bilibili video',
+  'bilibili-bangumi': 'Bilibili anime',
+  bahamut: 'Bahamut',
+  dandanplay: 'Dandan',
 }
 
 const SOURCE_COLORS: Record<DanmakuSource, string> = {
@@ -45,6 +46,8 @@ const SOURCE_COLORS: Record<DanmakuSource, string> = {
 }
 
 export function DanmakuTrackCard() {
+  useTranslation()
+
   const tracks = useDanmakuStore((state) => state.tracks)
   const addTrack = useDanmakuStore((state) => state.addTrack)
   const removeTrack = useDanmakuStore((state) => state.removeTrack)
@@ -63,7 +66,7 @@ export function DanmakuTrackCard() {
   const handleQuickAddBv = async () => {
     const bvid = bvInput.trim()
     if (!BV_REGEX.test(bvid)) {
-      message.warning('请输入正确的 BV 号（如 BV1xx411c7mD）')
+      message.warning(t('Enter a valid BV ID, such as BV1xx411c7mD.'))
       return
     }
 
@@ -71,7 +74,7 @@ export function DanmakuTrackCard() {
     try {
       const episodes = await getDanmakuEpisodes('bilibili-video', bvid)
       if (episodes.length === 0) {
-        message.info('未找到可用集数')
+        message.info(t('No episodes available.'))
         return
       }
       if (episodes.length === 1) {
@@ -79,13 +82,16 @@ export function DanmakuTrackCard() {
         const episode = episodes[0]
         const trackId = `bilibili-video:${episode.id}`
         if (tracks.some((t) => t.trackId === trackId)) {
-          message.warning('该弹幕轨道已存在')
+          message.warning(t('This comment track is already added.'))
           return
         }
         const items = await fetchDanmaku('bilibili-video', episode)
         await addTrack(trackId, episode.title, 'bilibili-video', items, 0)
         message.success(
-          `已添加 ${episode.title} 弹幕轨道（共 ${items.length} 条）`
+          t('Added  {value1} Comment tracks（Total: {value2} )', {
+            value1: episode.title,
+            value2: items.length,
+          })
         )
         setBvInput('')
       } else {
@@ -97,7 +103,11 @@ export function DanmakuTrackCard() {
       }
     } catch (err) {
       console.error('[DanmakuTrackCard] BV add error:', redactMediaError(err))
-      message.error(err instanceof Error ? err.message : '添加弹幕轨道失败')
+      message.error(
+        err instanceof Error
+          ? err.message
+          : t('Could not add the comment track.')
+      )
     } finally {
       setBvLoading(false)
     }
@@ -138,9 +148,9 @@ export function DanmakuTrackCard() {
   return (
     <div className="glass flex h-full min-h-0 flex-col gap-3 rounded-[var(--md-sys-shape-corner)] p-3">
       <div className="flex items-center justify-between">
-        <Text className="text-sm font-medium">弹幕轨道</Text>
+        <Text className="text-sm font-medium">{t('Comment tracks')}</Text>
         <Text type="secondary" className="text-[10px]">
-          {tracks.length} 条轨道
+          {t('{count} comment tracks', { count: tracks.length })}
         </Text>
       </div>
 
@@ -151,7 +161,7 @@ export function DanmakuTrackCard() {
         onClick={handleOpenSearch}
         icon={<Search className="h-4 w-4" />}
       >
-        搜索添加弹幕
+        {t('Search and add on-screen comments')}
       </Button>
 
       <div className="flex items-center gap-1.5">
@@ -165,7 +175,7 @@ export function DanmakuTrackCard() {
               void handleQuickAddBv()
             }
           }}
-          placeholder="输入 BV 号快速添加"
+          placeholder={t('Add a track with its BV ID')}
           className="flex-1"
           disabled={bvLoading}
         />
@@ -200,7 +210,7 @@ export function DanmakuTrackCard() {
                 <Plus className="h-5 w-5 opacity-40" />
               </div>
               <Text type="secondary" className="text-xs">
-                暂无弹幕轨道
+                {t('No comment tracks yet.')}
               </Text>
             </div>
           )}
@@ -233,7 +243,9 @@ export function DanmakuTrackCard() {
                     variant="ghost"
                     size="sm"
                     className="h-5 w-5 shrink-0 p-0 text-[var(--md-sys-color-on-surface-variant)]"
-                    title={track.hidden ? '显示该轨道弹幕' : '隐藏该轨道弹幕'}
+                    title={
+                      track.hidden ? t('Show this track') : t('Hide this track')
+                    }
                     onClick={() => void toggleTrackHidden(track.trackId)}
                     icon={
                       track.hidden ? (
@@ -260,7 +272,7 @@ export function DanmakuTrackCard() {
                     {formatOffset(track.offset)}
                   </Text>
                   <Text className="text-[9px] text-[var(--md-sys-color-primary)]">
-                    当前
+                    {t('Current')}
                   </Text>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
@@ -368,7 +380,7 @@ export function DanmakuTrackCard() {
                 onChange={(v) => void updateTrackOffset(track.trackId, v)}
               />
               <Text type="secondary" className="text-[10px]">
-                共 {track.items.length} 条弹幕
+                {t('Total:')} {track.items.length} {t('comments')}
               </Text>
             </div>
           ))}

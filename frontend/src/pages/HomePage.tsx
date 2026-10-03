@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -22,40 +23,41 @@ import { useSocket } from '@/hooks/useSocket'
 
 const experiences = [
   {
-    label: '一起看',
-    description: '同步播放视频，与朋友共享每一幕。',
+    label: 'Watch together',
+    description: 'Watch synchronized video and share every scene with friends.',
     icon: Clapperboard,
     tone: 'watch',
     activity: 'watch',
-    detail: '在房间里添加影片，播放进度会与朋友同步。',
-    action: '创建一起看房间',
+    detail: 'Add content in a room and keep playback in sync with friends.',
+    action: 'Create a watch room',
   },
   {
-    label: '一起听',
-    description: '同步听音乐，分享喜欢的旋律。',
+    label: 'Music',
+    description: 'Listen in sync and share your favorite music.',
     icon: Headphones,
     tone: 'listen',
     activity: 'listen',
-    detail: '房间里的「一起听」可以添加音乐、管理播放队列，并同步播放。',
-    action: '创建房间并打开一起听',
+    detail: 'Add music, manage the queue and listen together in a room.',
+    action: 'Create a room for music',
   },
   {
-    label: '屏幕共享',
-    description: '分享你的屏幕，一起看更多内容。',
+    label: 'Screen sharing',
+    description: 'Share your screen and explore more together.',
     icon: MonitorUp,
     tone: 'screen',
     activity: 'screen',
-    detail: '进入屏幕共享房间后，可与朋友分享屏幕和系统音频。',
-    action: '创建屏幕共享房间',
+    detail: 'Share your screen and system audio with friends in a room.',
+    action: 'Create a screen-sharing room',
   },
   {
-    label: '实时聊天',
-    description: '在房间里聊天，分享此刻的心情。',
+    label: 'Live chat',
+    description: 'Chat in a room and share the moment.',
     icon: MessageCircle,
     tone: 'chat',
     activity: 'chat',
-    detail: '聊天、弹幕和语音都在房间内。先找到朋友的房间，再一起交流。',
-    action: '寻找房间',
+    detail:
+      'Chat, on-screen comments and voice are available in each room. Find your friends and join in.',
+    action: 'Find a room',
   },
 ] as const
 type ExperienceActivity = (typeof experiences)[number]['activity']
@@ -65,6 +67,7 @@ export default function HomePage({
 }: {
   directory: RoomDirectoryView
 }) {
+  useTranslation()
   const navigate = useNavigate()
   const { guardNavigate, confirmModal } = useRoomExitGuard()
   const { user, autoLoginStatus } = useAuthStore()
@@ -109,11 +112,13 @@ export default function HomePage({
             alt=""
           />
           <div className="tongmu-home__hero-copy">
-            <h1 id="home-title">一起看，也一起听。</h1>
+            <h1 id="home-title">{t('Watch and listen together.')}</h1>
             <p>
-              在同一个房间里看视频、追番、听音乐、共享屏幕。
+              {t(
+                'Watch videos, follow shows, listen to music and share screens in one room.'
+              )}
               <br />
-              和有相同喜好的伙伴，一起创造更多美好的时光。
+              {t('Make time for the people who enjoy the same things.')}
             </p>
             <div className="tongmu-home__hero-actions">
               <button
@@ -123,31 +128,33 @@ export default function HomePage({
                 onClick={() => startRoom('watch')}
               >
                 <Plus className="h-5 w-5" aria-hidden="true" />
-                创建房间
+                {t('Create room')}
                 <ArrowRight className="h-4 w-4" aria-hidden="true" />
               </button>
             </div>
             {!guest && !canCreate && (
               <p className="tongmu-home__permission">
                 {user?.status === 'pending'
-                  ? '账号正在等待审核，暂时不能创建房间。'
-                  : '当前站点仅允许管理员创建房间。'}
+                  ? t(
+                      'Your account is awaiting approval and cannot create a room yet.'
+                    )
+                  : t('Only administrators can create rooms on this server.')}
               </p>
             )}
           </div>
           <span className="tongmu-home__connection" role="status">
             <Radio className="h-3.5 w-3.5" aria-hidden="true" />
             {connected
-              ? '已连接'
+              ? t('Connected')
               : autoLoginStatus !== 'done'
-                ? '连接中…'
-                : '连接暂不可用'}
+                ? t('Connecting…')
+                : t('Connection unavailable')}
           </span>
         </section>
 
         <section
           className="tongmu-home__experiences"
-          aria-label="在 TongMu 一起做什么"
+          aria-label={t('Activities in TongMu')}
         >
           {experiences.map(
             ({ label, description, icon: Icon, tone, activity }) => (
@@ -167,10 +174,10 @@ export default function HomePage({
                   <Icon className="h-6 w-6" aria-hidden="true" />
                 </span>
                 <span className="tongmu-home__experience-copy">
-                  <strong>{label}</strong>
-                  <span>{description}</span>
+                  <strong>{t(label)}</strong>
+                  <span>{t(description)}</span>
                   <small>
-                    了解更多{' '}
+                    {t('Learn more')}{' '}
                     <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
                   </small>
                 </span>
@@ -191,9 +198,9 @@ export default function HomePage({
               >
                 <div>
                   <span className="tongmu-home__experience-detail-label">
-                    {experience.label}
+                    {t(experience.label)}
                   </span>
-                  <p>{experience.detail}</p>
+                  <p>{t(experience.detail)}</p>
                 </div>
                 <button
                   type="button"
@@ -203,7 +210,7 @@ export default function HomePage({
                       : startRoom(selectedExperience)
                   }
                 >
-                  {experience.action}{' '}
+                  {t(experience.action)}{' '}
                   <ArrowRight className="h-4 w-4" aria-hidden="true" />
                 </button>
               </div>
@@ -216,14 +223,19 @@ export default function HomePage({
             aria-labelledby="continue-title"
           >
             <div>
-              <p className="tongmu-home__section-kicker">继续相聚</p>
-              <h2 id="continue-title">{activeRoomName || '返回当前房间'}</h2>
+              <p className="tongmu-home__section-kicker">
+                {t('Keep spending time together')}
+              </p>
+              <h2 id="continue-title">
+                {activeRoomName || t('Return to your room')}
+              </h2>
             </div>
             <button
               type="button"
               onClick={() => navigate(roomPath(activeRoomId) ?? '/')}
             >
-              回到房间 <ArrowRight className="h-4 w-4" />
+              {t('Return to room')}
+              <ArrowRight className="h-4 w-4" />
             </button>
           </section>
         )}
@@ -231,15 +243,16 @@ export default function HomePage({
         <section className="tongmu-home__rooms" aria-labelledby="rooms-title">
           <div className="tongmu-home__section-head">
             <h2 id="rooms-title">
-              <span aria-hidden="true">✦</span> 正在进行的房间
+              <span aria-hidden="true">✦</span> {t('Active rooms')}
             </h2>
             <button type="button" onClick={() => navigate('/rooms')}>
-              查看全部 <ArrowRight className="h-4 w-4" aria-hidden="true" />
+              {t('View all')}
+              <ArrowRight className="h-4 w-4" aria-hidden="true" />
             </button>
           </div>
           {roomsLoading ? (
             <p className="tongmu-home__room-message" role="status">
-              正在获取房间…
+              {t('Finding rooms…')}
             </p>
           ) : roomsError ? (
             <p className="tongmu-home__room-message" role="alert">
@@ -251,11 +264,12 @@ export default function HomePage({
                 <Users className="h-5 w-5" />
               </span>
               <div className="tongmu-home__empty-copy">
-                <p>暂时还没有公开房间。</p>
+                <p>{t('There are no public rooms yet.')}</p>
                 <p>
-                  有朋友的房间号？{' '}
+                  {t("Have a friend's room ID?")}{' '}
                   <button type="button" onClick={() => setJoinOpen(true)}>
-                    输入房间号加入 <ArrowRight className="h-4 w-4" />
+                    {t('Join by room ID')}
+                    <ArrowRight className="h-4 w-4" />
                   </button>
                 </p>
               </div>
@@ -276,14 +290,18 @@ export default function HomePage({
                       <Play className="h-9 w-9" />
                     )}
                     <span>
-                      {room.mode === 'screen-share' ? '屏幕共享' : '一起看'}
+                      {room.mode === 'screen-share'
+                        ? t('Screen sharing')
+                        : t('Watch together')}
                     </span>
                   </span>
                   <span className="tongmu-home__room-info">
-                    <strong>{room.name || '未命名房间'}</strong>
+                    <strong>{room.name || t('Untitled room')}</strong>
                     <span>
                       <i aria-hidden="true" />
-                      {room.sharerOnline ? '房主在线' : '房主离线'}
+                      {room.sharerOnline
+                        ? t('Host online')
+                        : t('Host is offline')}
                       <span className="tongmu-home__room-count">
                         <Users className="h-3.5 w-3.5" aria-hidden="true" />
                         {room.viewerCount}

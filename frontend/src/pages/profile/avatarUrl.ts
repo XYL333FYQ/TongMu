@@ -1,13 +1,8 @@
 /** 构建头像完整 URL（后端返回相对路径，前端拼接 API_URL） */
 export function buildAvatarUrl(
-  avatar: string | null | undefined,
-  role?: string
+  avatar: string | null | undefined
 ): string | undefined {
   if (!avatar) {
-    // root 默认头像是前端静态资源，使用相对路径由前端服务器提供
-    if (role === 'root') {
-      return '/root-avatar.jpg'
-    }
     return undefined
   }
   if (avatar.startsWith('http://') || avatar.startsWith('https://'))

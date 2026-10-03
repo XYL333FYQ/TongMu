@@ -1,3 +1,4 @@
+import { getLocale, t, useTranslation } from '@/i18n'
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -17,18 +18,18 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Space } from '@/components/ui/Space'
-import { Title, Text } from '@/components/ui/Typography'
+import { Title, Text, Paragraph } from '@/components/ui/Typography'
 import { Tag } from '@/components/ui/Tag'
 import { Spinner } from '@/components/ui/Spinner'
 import { ConfirmModal } from '@/components/ui/Modal'
 import { cn } from '@/lib/utils'
 import { Switch } from '@/components/ui/Switch'
 import { Input } from '@/components/ui/Input'
-import { InputNumber } from '@/components/ui/InputNumber'
 import { Select } from '@/components/ui/Select'
 import { AniSubsGithubBrowser } from '@/modules/admin/components/AniSubsGithubBrowser'
 import { canCloseAdminRoom } from '@/modules/admin/adminPermissions'
 import { message } from '@/components/ui/message'
+import { englishErrorMessage } from '@/lib/errorMessage'
 import { useHideBodyScrollbar } from '@/hooks/useHideBodyScrollbar'
 import { formatRecentTime } from '@/lib/formatTime'
 import { useAuthStore } from '@/store/authStore'
@@ -73,11 +74,11 @@ interface UpdateInfo {
 
 /** 更新进度状态：由 SSE 流式接口推送 */
 interface UpdateProgress {
-  /** 当前阶段 */
+  /** Current阶段 */
   stage: 'downloading' | 'extracting' | 'starting' | 'done' | 'error'
-  /** 下载已接收字节数（仅 downloading 阶段） */
+  /** Download已接收字节数（仅 downloading 阶段） */
   received: number
-  /** 下载总字节数（仅 downloading 阶段，可能为 0） */
+  /** Download总字节数（仅 downloading 阶段，可能为 0） */
   total: number
   /** 完成或错误消息 */
   message: string
@@ -127,6 +128,7 @@ interface AdminSettings {
 }
 
 export default function AdminPage() {
+  useTranslation()
   useHideBodyScrollbar()
   const navigate = useNavigate()
   const { isAuthenticated, authResolved, user } = useAuthStore()
@@ -194,7 +196,7 @@ export default function AdminPage() {
     if (data.success && data.users) {
       setUsers(data.users)
     } else {
-      message.error(data.message ?? '获取用户列表失败')
+      message.error(englishErrorMessage(data.message, 'Could not load users.'))
     }
   }
 
@@ -211,7 +213,7 @@ export default function AdminPage() {
       setRooms(data.rooms)
       setSelectedRoomIds(new Set())
     } else {
-      message.error(data.message ?? '获取房间列表失败')
+      message.error(englishErrorMessage(data.message, 'Could not load rooms.'))
     }
   }
 
@@ -229,7 +231,9 @@ export default function AdminPage() {
       // 同步更新 systemSettingsStore，避免 HomePage 等公开页面拿到过期值
       invalidateSystemSettings()
     } else {
-      message.error(data.message ?? '获取设置失败')
+      message.error(
+        englishErrorMessage(data.message, 'Could not load settings.')
+      )
     }
   }
 
@@ -243,7 +247,7 @@ export default function AdminPage() {
       }
     } catch (err) {
       console.error('[AdminPage] load data error:', err)
-      message.error('加载数据失败')
+      message.error(t('Could not load data.'))
     } finally {
       setLoading(false)
     }
@@ -255,7 +259,7 @@ export default function AdminPage() {
       await fetchSettings()
     } catch (err) {
       console.error('[AdminPage] load settings error:', err)
-      message.error('加载设置失败')
+      message.error(t('Could not load settings.'))
     } finally {
       setSettingsLoading(false)
     }
@@ -279,17 +283,21 @@ export default function AdminPage() {
         setUpdateInfo(data.info)
         if (data.info.hasUpdate) {
           message.info(
-            data.info.isPrerelease ? '发现新预发布版本' : '发现新版本'
+            data.info.isPrerelease
+              ? t('A new prerelease is available')
+              : t('An update is available')
           )
         } else {
-          message.success('当前已是最新版本')
+          message.success(t('You are up to date.'))
         }
       } else {
-        message.error(data.message ?? '检查更新失败')
+        message.error(
+          englishErrorMessage(data.message, 'Could not check for updates.')
+        )
       }
     } catch (err) {
       console.error('[AdminPage] check update error:', err)
-      message.error('检查更新失败')
+      message.error(t('Could not check for updates.'))
     } finally {
       setUpdateLoading(false)
     }
@@ -318,7 +326,7 @@ export default function AdminPage() {
         const errData = (await res.json().catch(() => ({}))) as {
           message?: string
         }
-        message.error(errData.message ?? '更新失败')
+        message.error(englishErrorMessage(errData.message, 'Update failed.'))
         setUpdateProgress(null)
         return
       }
@@ -356,17 +364,17 @@ export default function AdminPage() {
                 stage: 'extracting',
                 received: 0,
                 total: 0,
-                message: '正在解压更新包…',
+                message: 'Extracting the update…',
               })
             } else if (data.stage === 'starting') {
               setUpdateProgress({
                 stage: 'starting',
                 received: 0,
                 total: 0,
-                message: '正在启动更新脚本…',
+                message: 'Starting the update…',
               })
             } else if (data.stage === 'done') {
-              doneMessage = data.message ?? '更新已触发'
+              doneMessage = data.message ?? 'Update started.'
               setUpdateProgress({
                 stage: 'done',
                 received: 0,
@@ -374,7 +382,7 @@ export default function AdminPage() {
                 message: doneMessage,
               })
             } else if (data.stage === 'error') {
-              errorMessage = data.message ?? '更新失败'
+              errorMessage = data.message ?? 'Update failed.'
               setUpdateProgress({
                 stage: 'error',
                 received: 0,
@@ -390,16 +398,16 @@ export default function AdminPage() {
       }
 
       if (lastStage === 'done') {
-        message.success(doneMessage || '更新已触发')
+        message.success(englishErrorMessage(doneMessage, 'Update started.'))
       } else if (lastStage === 'error') {
-        message.error(errorMessage || '更新失败')
+        message.error(englishErrorMessage(errorMessage, 'Update failed.'))
       } else {
         // 流意外中断，未收到 done/error
-        message.error('更新中断，请重试')
+        message.error(t('Update interrupted. Try again.'))
       }
     } catch (err) {
       console.error('[AdminPage] apply update error:', err)
-      message.error('更新失败')
+      message.error(t('Update failed.'))
     } finally {
       setApplyLoading(false)
       // 保留进度状态显示最终结果，3 秒后清除
@@ -414,7 +422,7 @@ export default function AdminPage() {
     // 验证文件类型
     const lowerName = file.name.toLowerCase()
     if (!lowerName.endsWith('.zip') && !lowerName.endsWith('.tar.gz')) {
-      message.error('仅支持 .zip 或 .tar.gz 格式的压缩包')
+      message.error(t('Choose a .zip or .tar.gz archive.'))
       event.target.value = ''
       return
     }
@@ -424,7 +432,7 @@ export default function AdminPage() {
       stage: 'downloading',
       received: 0,
       total: file.size,
-      message: '正在上传更新包…',
+      message: 'Uploading the update…',
     })
 
     try {
@@ -449,7 +457,7 @@ export default function AdminPage() {
               stage: 'downloading',
               received: e.loaded,
               total: e.total,
-              message: '正在上传更新包…',
+              message: 'Uploading the update…',
             })
           }
         }
@@ -481,17 +489,17 @@ export default function AdminPage() {
                   stage: 'extracting',
                   received: 0,
                   total: 0,
-                  message: '正在解压更新包…',
+                  message: 'Extracting the update…',
                 })
               } else if (data.stage === 'starting') {
                 setUpdateProgress({
                   stage: 'starting',
                   received: 0,
                   total: 0,
-                  message: '正在启动更新脚本…',
+                  message: 'Starting the update…',
                 })
               } else if (data.stage === 'done') {
-                doneMessage = data.message ?? '更新已触发'
+                doneMessage = data.message ?? 'Update started.'
                 setUpdateProgress({
                   stage: 'done',
                   received: 0,
@@ -499,7 +507,7 @@ export default function AdminPage() {
                   message: doneMessage,
                 })
               } else if (data.stage === 'error') {
-                errorMessage = data.message ?? '更新失败'
+                errorMessage = data.message ?? 'Update failed.'
                 setUpdateProgress({
                   stage: 'error',
                   received: 0,
@@ -521,9 +529,16 @@ export default function AdminPage() {
           processSSEChunk()
           if (xhr.status >= 200 && xhr.status < 300) {
             if (lastStage === 'done') {
-              message.success(doneMessage || '更新已触发')
+              message.success(
+                englishErrorMessage(doneMessage, 'Update started.')
+              )
             } else if (lastStage === 'error') {
-              message.error(errorMessage || '上传更新失败')
+              message.error(
+                englishErrorMessage(
+                  errorMessage,
+                  'Could not upload the update.'
+                )
+              )
             } else if (lastStage === null) {
               // 未收到 SSE 事件，可能是普通 JSON 响应（错误场景）
               try {
@@ -532,17 +547,24 @@ export default function AdminPage() {
                   message?: string
                 }
                 if (data.success) {
-                  message.success(data.message ?? '更新已触发')
+                  message.success(
+                    englishErrorMessage(data.message, 'Update started.')
+                  )
                 } else {
-                  message.error(data.message ?? '上传更新失败')
+                  message.error(
+                    englishErrorMessage(
+                      data.message,
+                      'Could not upload the update.'
+                    )
+                  )
                 }
               } catch {
-                message.error('上传更新失败')
+                message.error(t('Could not upload the update.'))
               }
             }
             resolve()
           } else if (xhr.status === 401 || xhr.status === 403) {
-            message.error('登录已过期，请重新登录后再试')
+            message.error(t('Your session expired. Sign in and try again.'))
             reject(new Error('auth expired'))
           } else {
             // 非 SSE 错误响应
@@ -550,16 +572,21 @@ export default function AdminPage() {
               const data = JSON.parse(xhr.responseText) as {
                 message?: string
               }
-              message.error(data.message ?? '上传更新失败')
+              message.error(
+                englishErrorMessage(
+                  data.message,
+                  'Could not upload the update.'
+                )
+              )
             } catch {
-              message.error('上传更新失败')
+              message.error(t('Could not upload the update.'))
             }
             reject(new Error(`HTTP ${xhr.status}`))
           }
         }
 
         xhr.onerror = () => {
-          message.error('网络错误，上传更新失败')
+          message.error(t('A network error interrupted the upload.'))
           reject(new Error('network error'))
         }
 
@@ -573,7 +600,7 @@ export default function AdminPage() {
         err.message !== 'auth expired' &&
         !err.message.startsWith('HTTP')
       ) {
-        message.error('上传更新失败')
+        message.error(t('Could not upload the update.'))
       }
     } finally {
       setUploadLoading(false)
@@ -613,21 +640,24 @@ export default function AdminPage() {
       const data = (await res.json()) as { success: boolean; message?: string }
       if (data.success) {
         const roleLabelMap: Record<AdminUser['role'], string> = {
-          root: '超级管理员',
-          admin: '管理员',
-          user: '普通用户',
-          guest: '游客',
+          root: t('Root administrator'),
+          admin: t('Administrator'),
+          user: t('Member'),
+          guest: t('Guest'),
         }
         message.success(
-          `已将 ${targetUser.username} 设为 ${roleLabelMap[nextRole]}`
+          t('Changed  {value1}  to  {value2}', {
+            value1: targetUser.username,
+            value2: roleLabelMap[nextRole],
+          })
         )
         await fetchUsers()
       } else {
-        message.error(data.message ?? '操作失败')
+        message.error(englishErrorMessage(data.message, 'Action failed.'))
       }
     } catch (err) {
       console.error('[AdminPage] change role error:', err)
-      message.error('修改角色失败')
+      message.error(t('Could not change the role.'))
     }
   }
 
@@ -640,15 +670,15 @@ export default function AdminPage() {
       })
       const data = (await res.json()) as { success: boolean; message?: string }
       if (data.success) {
-        message.success('已审核通过该用户')
+        message.success(t('User approved.'))
         setUserApprove(null)
         await fetchUsers()
       } else {
-        message.error(data.message ?? '审核失败')
+        message.error(englishErrorMessage(data.message, 'Approval failed.'))
       }
     } catch (err) {
       console.error('[AdminPage] approve user error:', err)
-      message.error('审核用户失败')
+      message.error(t('Could not approve the user.'))
     }
   }
 
@@ -661,15 +691,17 @@ export default function AdminPage() {
       })
       const data = (await res.json()) as { success: boolean; message?: string }
       if (data.success) {
-        message.success('已删除用户')
+        message.success(t('User removed.'))
         setUserDelete(null)
         await fetchUsers()
       } else {
-        message.error(data.message ?? '删除失败')
+        message.error(
+          englishErrorMessage(data.message, 'Could not remove this item.')
+        )
       }
     } catch (err) {
       console.error('[AdminPage] delete user error:', err)
-      message.error('删除用户失败')
+      message.error(t('Could not remove the user.'))
     }
   }
 
@@ -682,15 +714,17 @@ export default function AdminPage() {
       })
       const data = (await res.json()) as { success: boolean; message?: string }
       if (data.success) {
-        message.success('已关闭房间')
+        message.success(t('Room closed.'))
         setRoomClose(null)
         await fetchRooms()
       } else {
-        message.error(data.message ?? '关闭失败')
+        message.error(
+          englishErrorMessage(data.message, 'Could not close this item.')
+        )
       }
     } catch (err) {
       console.error('[AdminPage] close room error:', err)
-      message.error('关闭房间失败')
+      message.error(t('Could not close the room.'))
     }
   }
 
@@ -709,16 +743,25 @@ export default function AdminPage() {
         message?: string
       }
       if (data.success) {
-        message.success(`已删除 ${data.count ?? selectedRoomIds.size} 个房间`)
+        message.success(
+          t('Removed  {value1}  rooms', {
+            value1: data.count ?? selectedRoomIds.size,
+          })
+        )
         setSelectedRoomIds(new Set())
         setBatchDeleteConfirm(false)
         await fetchRooms()
       } else {
-        message.error(data.message ?? '批量删除失败')
+        message.error(
+          englishErrorMessage(
+            data.message,
+            'Could not remove the selected items.'
+          )
+        )
       }
     } catch (err) {
       console.error('[AdminPage] batch delete rooms error:', err)
-      message.error('批量删除房间失败')
+      message.error(t('Could not remove the selected rooms.'))
     } finally {
       setBatchDeleteLoading(false)
     }
@@ -737,16 +780,20 @@ export default function AdminPage() {
         message?: string
       }
       if (data.success) {
-        message.success(`已删除 ${data.count ?? 0} 个房间`)
+        message.success(
+          t('Removed  {value1}  rooms', { value1: data.count ?? 0 })
+        )
         setSelectedRoomIds(new Set())
         setDeleteAllConfirm(false)
         await fetchRooms()
       } else {
-        message.error(data.message ?? '删除所有房间失败')
+        message.error(
+          englishErrorMessage(data.message, 'Could not remove all rooms.')
+        )
       }
     } catch (err) {
       console.error('[AdminPage] delete all rooms error:', err)
-      message.error('删除所有房间失败')
+      message.error(t('Could not remove all rooms.'))
     } finally {
       setDeleteAllLoading(false)
     }
@@ -782,17 +829,19 @@ export default function AdminPage() {
         message?: string
       }
       if (data.success) {
-        message.success('设置已保存')
+        message.success(t('Settings saved.'))
         if (data.settings) {
           setSettings(data.settings)
         }
         invalidateSystemSettings()
       } else {
-        message.error(data.message ?? '保存失败')
+        message.error(
+          englishErrorMessage(data.message, 'Could not save changes.')
+        )
       }
     } catch (err) {
       console.error('[AdminPage] save settings error:', err)
-      message.error('保存设置失败')
+      message.error(t('Could not save settings.'))
     } finally {
       setSavingSettings(false)
     }
@@ -812,18 +861,20 @@ export default function AdminPage() {
       }
       if (data.success) {
         if (data.count && data.count > 0) {
-          message.success(`已清理 ${data.count} 个无人使用的房间`)
+          message.success(
+            t('Cleaned up  {value1}  empty rooms', { value1: data.count })
+          )
         } else {
-          message.info('暂无可清理的房间')
+          message.info(t('No rooms need cleaning up.'))
         }
         setCleanupConfirm(false)
         await fetchRooms()
       } else {
-        message.error(data.message ?? '清理失败')
+        message.error(englishErrorMessage(data.message, 'Cleanup failed.'))
       }
     } catch (err) {
       console.error('[AdminPage] cleanup unused rooms error:', err)
-      message.error('清理房间失败')
+      message.error(t('Could not clean up rooms.'))
     } finally {
       setCleanupLoading(false)
     }
@@ -831,9 +882,10 @@ export default function AdminPage() {
 
   const isSelf = (targetUser: AdminUser) => user?.id === String(targetUser.id)
 
-  /** 用户列表/最后访问：精确时间（管理审计需要） */
-  const formatDate = (iso: string) => new Date(iso).toLocaleString('zh-CN')
-  /** 房间创建时间：<24h 相对时间，≥24h 精确时间 */
+  /** 用户List/Last visited ：精确时间（Manage审计需要） */
+  const formatDate = (iso: string) =>
+    new Date(iso).toLocaleString(getLocale() === 'zh' ? 'zh-CN' : 'en-US')
+  /** 房间Create时间：<24h 相对时间，≥24h 精确时间 */
   const formatRoomCreatedAt = formatRecentTime
 
   if (!authResolved) return null
@@ -843,19 +895,19 @@ export default function AdminPage() {
       <div className="tongmu-admin-page__content relative mx-auto w-full">
         <div className="tongmu-admin-page__intro">
           <div>
-            <h1>管理后台</h1>
-            <p>管理用户、房间和系统配置</p>
+            <h1>{t('Administration')}</h1>
+            <p>{t('Manage users, rooms and platform settings.')}</p>
           </div>
           <span className="tongmu-admin-page__role">
             <Shield className="h-4 w-4" />
-            {isRoot ? '超级管理员' : '管理员'}
+            {isRoot ? t('Root administrator') : t('Administrator')}
           </span>
         </div>
 
         <div
           className="tongmu-admin-page__tabs"
           role="tablist"
-          aria-label="管理后台栏目"
+          aria-label={t('Administration sections')}
         >
           <button
             type="button"
@@ -865,7 +917,7 @@ export default function AdminPage() {
             className="tongmu-admin-page__tab"
           >
             <Users className="h-4 w-4" />
-            <span>用户管理</span>
+            <span>{t('Users')}</span>
           </button>
           <button
             type="button"
@@ -875,7 +927,7 @@ export default function AdminPage() {
             className="tongmu-admin-page__tab"
           >
             <LayoutDashboard className="h-4 w-4" />
-            <span>房间管理</span>
+            <span>{t('Rooms')}</span>
           </button>
           <button
             type="button"
@@ -885,17 +937,17 @@ export default function AdminPage() {
             className="tongmu-admin-page__tab"
           >
             <Settings className="h-4 w-4" />
-            <span>基础设置</span>
+            <span>{t('Settings')}</span>
           </button>
         </div>
 
         <div className="tongmu-admin-page__toolbar">
           <Text type="secondary" className="shrink-0">
             {activeTab === 'users'
-              ? `共 ${users.length} 位用户`
+              ? t('Total: {value1}  users', { value1: users.length })
               : activeTab === 'rooms'
-                ? `共 ${rooms.length} 个房间`
-                : '调整后请在页面底部保存'}
+                ? t('Total: {value1}  rooms', { value1: rooms.length })
+                : t('Save your changes at the bottom of this page.')}
           </Text>
           {activeTab !== 'settings' && (
             <div className="tongmu-admin-page__actions">
@@ -910,11 +962,11 @@ export default function AdminPage() {
                       }}
                       className="tongmu-admin-page__view-option"
                       aria-pressed={roomViewMode === 'list'}
-                      aria-label="列表视图"
-                      title="列表视图"
+                      aria-label={t('List view')}
+                      title={t('List view')}
                     >
                       <List className="h-4 w-4" />
-                      <span className="hidden sm:inline">列表</span>
+                      <span className="hidden sm:inline">{t('List')}</span>
                     </button>
                     <button
                       type="button"
@@ -924,11 +976,11 @@ export default function AdminPage() {
                       }}
                       className="tongmu-admin-page__view-option"
                       aria-pressed={roomViewMode === 'tile'}
-                      aria-label="平铺视图"
-                      title="平铺视图"
+                      aria-label={t('Grid view')}
+                      title={t('Grid view')}
                     >
                       <LayoutGrid className="h-4 w-4" />
-                      <span className="hidden sm:inline">平铺</span>
+                      <span className="hidden sm:inline">{t('Grid')}</span>
                     </button>
                   </div>
                   {isRoot && selectedRoomIds.size > 0 && (
@@ -938,13 +990,17 @@ export default function AdminPage() {
                       icon={<Trash2 className="h-4 w-4" />}
                       onClick={() => setBatchDeleteConfirm(true)}
                       disabled={batchDeleteLoading}
-                      title={`删除已选 ${selectedRoomIds.size} 个房间`}
+                      title={t('Remove selected  {value1}  rooms', {
+                        value1: selectedRoomIds.size,
+                      })}
                     >
                       <span className="sm:hidden">
-                        已选 {selectedRoomIds.size}
+                        {t('Selected {count}', { count: selectedRoomIds.size })}
                       </span>
                       <span className="hidden sm:inline">
-                        删除已选 ({selectedRoomIds.size})
+                        {t('Remove selected ({count})', {
+                          count: selectedRoomIds.size,
+                        })}
                       </span>
                     </Button>
                   )}
@@ -955,9 +1011,9 @@ export default function AdminPage() {
                       icon={<Trash2 className="h-4 w-4" />}
                       onClick={() => setDeleteAllConfirm(true)}
                       disabled={deleteAllLoading}
-                      title="删除所有房间"
+                      title={t('Remove all rooms')}
                     >
-                      删除所有房间
+                      {t('Remove all rooms')}
                     </Button>
                   )}
                   <Button
@@ -968,11 +1024,13 @@ export default function AdminPage() {
                     disabled={cleanupLoading}
                     title={
                       isRoot
-                        ? '移除无人使用的房间'
-                        : '仅清理自己创建且无人使用的房间'
+                        ? t('Remove empty rooms')
+                        : t('Clean up your own empty rooms')
                     }
                   >
-                    {isRoot ? '清理闲置房间' : '清理我的闲置房间'}
+                    {isRoot
+                      ? t('Clean up empty rooms')
+                      : t('Clean up my empty rooms')}
                   </Button>
                 </>
               )}
@@ -982,10 +1040,10 @@ export default function AdminPage() {
                 icon={<RefreshCw className="h-4 w-4" />}
                 onClick={loadData}
                 disabled={loading}
-                title="刷新"
+                title={t('Refresh')}
               >
-                <span className="sm:hidden">刷新</span>
-                <span className="hidden sm:inline">刷新</span>
+                <span className="sm:hidden">{t('Refresh')}</span>
+                <span className="hidden sm:inline">{t('Refresh')}</span>
               </Button>
             </div>
           )}
@@ -993,23 +1051,23 @@ export default function AdminPage() {
 
         {loading ? (
           <div className="py-12">
-            <Spinner tip="加载中..." size={32} />
+            <Spinner tip={t('Loading…')} size={32} />
           </div>
         ) : activeTab === 'users' ? (
           <div className="grid gap-3">
             <section className="tongmu-admin-page__section">
               <Title level={5} className="mb-3">
-                用户注册设置
+                {t('Registration')}
               </Title>
               <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
                 <div className="max-w-xs flex-1">
                   <Select
-                    label="注册方式"
+                    label={t('Registration mode')}
                     value={settings.registrationMode}
                     options={[
-                      { label: '直接注册', value: 'open' },
-                      { label: '审批注册', value: 'approval' },
-                      { label: '禁止注册', value: 'closed' },
+                      { label: t('Open registration'), value: 'open' },
+                      { label: t('Approval required'), value: 'approval' },
+                      { label: t('Registration closed'), value: 'closed' },
                     ]}
                     onChange={(value) =>
                       setSettings((prev) => ({
@@ -1019,8 +1077,9 @@ export default function AdminPage() {
                     }
                   />
                   <p className="mt-1.5 text-xs text-[var(--md-sys-color-on-surface-variant)]">
-                    直接注册：新用户注册后立即可用；审批注册：新用户需 root
-                    审核通过后方可登录；禁止注册：关闭注册入口。
+                    {t(
+                      'Open registration lets new users sign in immediately. Approval requires a root administrator to approve each account. Closed registration prevents new accounts.'
+                    )}
                   </p>
                 </div>
                 <Button
@@ -1030,22 +1089,22 @@ export default function AdminPage() {
                   loading={savingSettings}
                   disabled={savingSettings}
                 >
-                  保存
+                  {t('Save')}
                 </Button>
               </div>
             </section>
             {users.length === 0 ? (
               <div className="py-12 text-center">
-                <Text type="secondary">暂无用户</Text>
+                <Text type="secondary">{t('No users yet.')}</Text>
               </div>
             ) : (
               users.map((u) => {
                 const isRootUser = u.role === 'root' || u.username === 'root'
                 const roleLabelMap: Record<AdminUser['role'], string> = {
-                  root: '超级管理员',
-                  admin: '管理员',
-                  user: '普通用户',
-                  guest: '游客',
+                  root: t('Root administrator'),
+                  admin: t('Administrator'),
+                  user: t('Member'),
+                  guest: t('Guest'),
                 }
                 const roleColorMap: Record<
                   AdminUser['role'],
@@ -1079,13 +1138,14 @@ export default function AdminPage() {
                           {roleLabelMap[u.role]}
                         </Tag>
                         {u.status === 'pending' ? (
-                          <Tag color="warning">待审核</Tag>
+                          <Tag color="warning">{t('Awaiting approval')}</Tag>
                         ) : (
-                          <Tag color="success">正常</Tag>
+                          <Tag color="success">{t('Active')}</Tag>
                         )}
                       </div>
                       <Text type="secondary" className="text-xs">
-                        创建于 {formatDate(u.createdAt)}
+                        {t('Created')}
+                        {formatDate(u.createdAt)}
                       </Text>
                     </div>
                     {isRoot && (
@@ -1098,12 +1158,12 @@ export default function AdminPage() {
                             onClick={() => setUserApprove(u)}
                             disabled={isRootUser}
                           >
-                            审核
+                            {t('Approve')}
                           </Button>
                         )}
                         {isRootUser ? (
                           <div className="flex w-32 items-center justify-center rounded-[var(--tm-radius)] border border-[var(--tm-border)] px-3 py-2 text-sm text-[var(--tm-text-secondary)]">
-                            超级管理员
+                            {t('Root administrator')}
                           </div>
                         ) : (
                           <Select
@@ -1111,8 +1171,8 @@ export default function AdminPage() {
                             value={u.role}
                             disabled={isSelf(u)}
                             options={[
-                              { label: '管理员', value: 'admin' },
-                              { label: '普通用户', value: 'user' },
+                              { label: t('Administrator'), value: 'admin' },
+                              { label: t('Member'), value: 'user' },
                             ]}
                             onChange={(value) =>
                               handleChangeRole(u, value as AdminUser['role'])
@@ -1126,7 +1186,7 @@ export default function AdminPage() {
                             icon={<Trash2 className="h-4 w-4" />}
                             onClick={() => setUserDelete(u)}
                           >
-                            删除
+                            {t('Remove')}
                           </Button>
                         )}
                       </Space>
@@ -1146,14 +1206,15 @@ export default function AdminPage() {
           >
             {rooms.length === 0 ? (
               <div className="col-span-full py-12 text-center">
-                <Text type="secondary">暂无房间</Text>
+                <Text type="secondary">{t('No rooms yet.')}</Text>
               </div>
             ) : (
               <>
                 {isRoot && (
-                  <div className="tongmu-admin-page__select-all col-span-full">
+                  <label className="tongmu-admin-page__select-all col-span-full min-h-[44px] cursor-pointer">
                     <input
                       type="checkbox"
+                      aria-label={t('Select all rooms')}
                       className="h-4 w-4 shrink-0 cursor-pointer accent-[var(--md-sys-color-primary)]"
                       checked={
                         rooms.length > 0 &&
@@ -1170,9 +1231,12 @@ export default function AdminPage() {
                       }}
                     />
                     <Text type="secondary" className="text-sm">
-                      全选 ({selectedRoomIds.size} / {rooms.length})
+                      {t('Select all ({selected} / {total})', {
+                        selected: selectedRoomIds.size,
+                        total: rooms.length,
+                      })}
                     </Text>
-                  </div>
+                  </label>
                 )}
                 {rooms.map((room) => (
                   <div
@@ -1188,22 +1252,27 @@ export default function AdminPage() {
                   >
                     <div className="flex min-w-0 flex-1 items-start gap-3">
                       {isRoot && (
-                        <input
-                          type="checkbox"
-                          className="mt-1 h-4 w-4 shrink-0 cursor-pointer accent-[var(--md-sys-color-primary)]"
-                          checked={selectedRoomIds.has(room.roomId)}
-                          onChange={(e) => {
-                            setSelectedRoomIds((prev) => {
-                              const next = new Set(prev)
-                              if (e.target.checked) {
-                                next.add(room.roomId)
-                              } else {
-                                next.delete(room.roomId)
-                              }
-                              return next
-                            })
-                          }}
-                        />
+                        <label className="tongmu-admin-room-select">
+                          <input
+                            type="checkbox"
+                            aria-label={t('Select room {name}', {
+                              name: room.name || room.roomId,
+                            })}
+                            className="h-4 w-4 shrink-0 cursor-pointer accent-[var(--md-sys-color-primary)]"
+                            checked={selectedRoomIds.has(room.roomId)}
+                            onChange={(e) => {
+                              setSelectedRoomIds((prev) => {
+                                const next = new Set(prev)
+                                if (e.target.checked) {
+                                  next.add(room.roomId)
+                                } else {
+                                  next.delete(room.roomId)
+                                }
+                                return next
+                              })
+                            }}
+                          />
+                        </label>
                       )}
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
@@ -1229,19 +1298,19 @@ export default function AdminPage() {
                             {room.roomId}
                           </Text>
                           {room.status === 'active' ? (
-                            <Tag color="success">进行中</Tag>
+                            <Tag color="success">{t('Active')}</Tag>
                           ) : (
-                            <Tag color="default">已关闭</Tag>
+                            <Tag color="default">{t('Closed')}</Tag>
                           )}
                           {room.requireApproval ? (
-                            <Tag color="warning">需确认</Tag>
+                            <Tag color="warning">{t('Approval required')}</Tag>
                           ) : (
-                            <Tag color="cyan">直接加入</Tag>
+                            <Tag color="cyan">{t('Join immediately')}</Tag>
                           )}
                           {room.hasPassword && (
                             <Tag color="purple">
                               <Lock className="mr-1 inline h-3 w-3" />
-                              有密码
+                              {t('Password protected')}
                             </Tag>
                           )}
                         </div>
@@ -1249,13 +1318,17 @@ export default function AdminPage() {
                           type="secondary"
                           className="mt-1 text-xs leading-relaxed sm:mt-0"
                         >
-                          观众 {room.viewerCount} / {room.maxViewers}
+                          {t('Members')}
+                          {room.viewerCount} / {room.maxViewers}
                           {roomViewMode === 'tile' ? <br /> : ' · '}
-                          分享端{room.sharerOnline ? '在线' : '离线'}
+                          {t('Host')}
+                          {room.sharerOnline ? t('Online') : t('Offline')}
                           {roomViewMode === 'tile' ? <br /> : ' · '}
-                          创建于 {formatRoomCreatedAt(room.createdAt)}
+                          {t('Created')}
+                          {formatRoomCreatedAt(room.createdAt)}
                           {roomViewMode === 'tile' ? <br /> : ' · '}
-                          最后访问 {formatDate(room.lastAccessedAt)}
+                          {t('Last visited')}
+                          {formatDate(room.lastAccessedAt)}
                         </Text>
                       </div>
                     </div>
@@ -1268,7 +1341,7 @@ export default function AdminPage() {
                             navigate(`/room/${room.roomId}?role=host`)
                           }
                         >
-                          进入房间
+                          {t('Open room')}
                         </Button>
                       )}
                       {room.status === 'active' &&
@@ -1288,11 +1361,11 @@ export default function AdminPage() {
                             icon={<Power className="h-4 w-4" />}
                             onClick={() => setRoomClose(room)}
                           >
-                            关闭房间
+                            {t('Close room')}
                           </Button>
                         ) : (
                           <Text type="secondary" className="text-xs">
-                            仅创建者可关闭
+                            {t('Only the owner can close this room.')}
                           </Text>
                         ))}
                     </div>
@@ -1305,56 +1378,35 @@ export default function AdminPage() {
           <div className="tongmu-admin-page__settings">
             {settingsLoading ? (
               <div className="py-12">
-                <Spinner tip="加载中..." size={32} />
+                <Spinner tip={t('Loading…')} size={32} />
               </div>
             ) : (
               <>
                 <Title level={5} className="mb-4">
-                  房间自动清理设置
+                  {t('Room retention')}
                 </Title>
                 <div className="mb-4">
-                  <Switch
-                    label="自动删除无人访问的房间"
-                    checked={settings.autoDeleteInactiveRooms}
-                    onChange={(e) =>
-                      setSettings((prev) => ({
-                        ...prev,
-                        autoDeleteInactiveRooms: e.target.checked,
-                      }))
-                    }
-                  />
-                </div>
-                <div className="mb-6 max-w-xs">
-                  <InputNumber
-                    label="超过小时数未访问则自动删除"
-                    min={1}
-                    max={720}
-                    step={1}
-                    value={settings.autoDeleteAfterHours}
-                    disabled={!settings.autoDeleteInactiveRooms}
-                    onChange={(value) =>
-                      setSettings((prev) => ({
-                        ...prev,
-                        autoDeleteAfterHours: value ?? 1,
-                      }))
-                    }
-                  />
+                  <Paragraph type="secondary">
+                    {t(
+                      'Temporary rooms are removed after 24 continuous hours with no members. Returning resets the deadline. Fixed rooms retain their settings, queues and playback position while releasing idle activity resources.'
+                    )}
+                  </Paragraph>
                 </div>
 
                 <Title level={5} className="mb-4 mt-6">
-                  房间创建权限
+                  {t('Room creation')}
                 </Title>
                 <div className="mb-6 max-w-md">
                   <Select
-                    label="允许创建房间的用户范围"
+                    label={t('Who can create rooms')}
                     value={settings.roomCreationMode}
                     options={[
                       {
-                        label: '仅管理员（root / admin）',
+                        label: t('Administrators only (root / admin)'),
                         value: 'admin-only',
                       },
                       {
-                        label: '所有登录用户（user / admin / root）',
+                        label: t('All signed-in users'),
                         value: 'all-users',
                       },
                     ]}
@@ -1366,16 +1418,18 @@ export default function AdminPage() {
                     }
                   />
                   <p className="mt-1.5 text-xs text-[var(--md-sys-color-on-surface-variant)]">
-                    切换为「所有登录用户」后，普通用户也可在主页点击「开始共享」创建房间；游客始终不能创建房间。
+                    {t(
+                      'All signed-in users can create rooms when enabled. Guests cannot create rooms.'
+                    )}
                   </p>
                 </div>
 
                 <Title level={5} className="mb-4 mt-6">
-                  Beta 功能
+                  {t('Optional features')}
                 </Title>
                 <div className="mb-6">
                   <Switch
-                    label="启用 Beta 功能（Kazumi / AniSubs 番剧源 / B站视频下载）"
+                    label={t('Enable Kazumi, AniSubs and Bilibili downloads')}
                     checked={settings.betaFeaturesEnabled}
                     onChange={(e) =>
                       setSettings((prev) => ({
@@ -1385,19 +1439,20 @@ export default function AdminPage() {
                     }
                   />
                   <p className="mt-1.5 text-xs text-[var(--md-sys-color-on-surface-variant)]">
-                    关闭时，房间内的 Kazumi 与 AniSubs 番剧添加入口、个人中心的
-                    B站视频下载按钮及其相关设置将被隐藏。
+                    {t(
+                      'When disabled, Kazumi and AniSubs in rooms and the Bilibili download controls in your profile are hidden.'
+                    )}
                   </p>
                 </div>
 
                 {settings.betaFeaturesEnabled && (
                   <>
                     <Title level={5} className="mb-4 mt-6">
-                      Kazumi 规则源
+                      {t('Kazumi sources')}
                     </Title>
                     <div className="mb-4">
                       <label className="mb-1.5 block text-sm font-medium text-[var(--md-sys-color-on-surface-variant)]">
-                        Kazumi 规则地址（每行一个，留空使用默认）
+                        {t('Rule URLs (one per line; blank uses defaults)')}
                       </label>
                       <textarea
                         rows={4}
@@ -1420,8 +1475,9 @@ export default function AdminPage() {
                         }
                       />
                       <p className="mt-1 text-xs text-[var(--md-sys-color-on-surface-variant)]">
-                        修改后保存即可自动加载 Kazumi XPath 规则源；规则中
-                        useWebview 的源可能无法直接解析播放
+                        {t(
+                          'Save to load these Kazumi XPath rules. Sources that require useWebview may need browser resolution.'
+                        )}
                       </p>
                     </div>
 
@@ -1450,14 +1506,14 @@ export default function AdminPage() {
                 )}
 
                 <Title level={5} className="mb-4 mt-6">
-                  服务器 DASH 流
+                  {t('Server DASH')}
                   <span className="ml-2 text-xs font-normal text-[var(--md-sys-color-on-surface-variant)]">
-                    （已废弃，不建议关闭）
+                    {t('(legacy option)')}
                   </span>
                 </Title>
                 <div className="mb-6">
                   <Switch
-                    label="禁用服务器端 DASH 模式"
+                    label={t('Disable server DASH')}
                     checked={settings.dashDisabled}
                     onChange={(e) =>
                       setSettings((prev) => ({
@@ -1467,17 +1523,18 @@ export default function AdminPage() {
                     }
                   />
                   <p className="mt-1.5 text-xs text-[var(--md-sys-color-on-surface-variant)]">
-                    开启后，服务器端 B站 解析将强制使用 MP4 模式，不再返回 DASH
-                    流。仅影响服务器端解析，不影响 CLI 代理的 DASH 模式。
+                    {t(
+                      'Forces the server Bilibili resolver to use MP4 instead of DASH. The CLI resolver can still use DASH.'
+                    )}
                   </p>
                 </div>
 
                 <Title level={5} className="mb-4 mt-6">
-                  播放引擎
+                  {t('Playback engine')}
                 </Title>
                 <div className="mb-6">
                   <Switch
-                    label="启用浏览器播放引擎（playsvideo）"
+                    label={t('Enable the browser compatibility engine')}
                     checked={settings.playsvideoEnabled}
                     onChange={(e) =>
                       setSettings((prev) => ({
@@ -1487,29 +1544,30 @@ export default function AdminPage() {
                     }
                   />
                   <p className="mt-1.5 text-xs text-[var(--md-sys-color-on-surface-variant)]">
-                    开启后，MKV/AVI/TS 等容器或 DTS/AC3/FLAC
-                    等音轨由浏览器端重封装/转码播放（兼容性最佳）。
-                    关闭后全部原生直连播放，不兼容的编码将无声或无法播放。
-                    影片级开关（添加影片时）需同时开启才会启用。
+                    {t(
+                      'Enables local browser conversion for containers such as MKV, AVI and TS or audio such as DTS, AC3 and FLAC when required for playback. When disabled, unsupported codecs may not play or may have no audio. The per-video compatibility setting must also be enabled.'
+                    )}
                   </p>
                 </div>
 
                 {isRoot && (
                   <>
                     <Title level={5} className="mb-4 mt-6">
-                      版本更新
+                      {t('Software updates')}
                     </Title>
                     <div className="tongmu-admin-page__section mb-6">
                       <div className="flex items-center justify-between pb-3 mb-3 border-b border-[var(--md-sys-color-outline-variant)]">
                         <div className="flex-1 min-w-0 pr-3">
                           <Text className="text-sm font-medium">
-                            接收预发布版本更新
+                            {t('Include prerelease updates')}
                           </Text>
                           <Text
                             type="secondary"
                             className="block text-xs mt-0.5"
                           >
-                            开启后可更新到预发布版本，关闭则仅在正式版之间更新
+                            {t(
+                              'Enable prereleases, or keep updates limited to stable releases.'
+                            )}
                           </Text>
                         </div>
                         <Switch
@@ -1528,13 +1586,15 @@ export default function AdminPage() {
                         <div className="flex items-center justify-between pb-3">
                           <div className="flex-1 min-w-0 pr-3">
                             <Text className="text-sm font-medium">
-                              更新 CDN 加速
+                              {t('Update download proxy')}
                             </Text>
                             <Text
                               type="secondary"
                               className="block text-xs mt-0.5"
                             >
-                              开启后，更新检测和 Release 下载将走 CDN 代理加速
+                              {t(
+                                'Use a CDN proxy for update checks and release downloads.'
+                              )}
                             </Text>
                           </div>
                           <Switch
@@ -1551,7 +1611,7 @@ export default function AdminPage() {
                           <div className="space-y-3">
                             <div>
                               <Text className="mb-1.5 block text-[10px] uppercase tracking-wide text-[var(--md-sys-color-on-surface-variant)]">
-                                CDN 代理地址
+                                {t('CDN proxy URL')}
                               </Text>
                               <Input
                                 value={settings.cdnProxyUrl}
@@ -1567,28 +1627,38 @@ export default function AdminPage() {
                                 type="secondary"
                                 className="block text-xs mt-1.5"
                               >
-                                使用 GitHub 代理前缀方式加速，默认
-                                https://gh-proxy.com，可替换为自建代理。
+                                {t(
+                                  'GitHub proxy prefix. Default: https://gh-proxy.com. You can use your own proxy.'
+                                )}
                               </Text>
                             </div>
                           </div>
                         )}
                       </div>
-                      {/* 更新进度条：下载/上传/解压/启动各阶段实时显示 */}
+                      {/* 更新进度 comments：Download/Upload/解压/启动各阶段实时显示 */}
                       {updateProgress && (
                         <div className="mb-3 rounded-[var(--md-sys-radius-small)] bg-[var(--md-sys-color-surface-container-high)] p-3">
                           <div className="flex items-center justify-between gap-2">
                             <Text className="text-xs font-medium text-[var(--md-sys-color-on-surface-variant)]">
                               {updateProgress.stage === 'downloading' &&
-                                (updateProgress.message || '正在下载更新包…')}
+                                t(
+                                  updateProgress.message ||
+                                    'Downloading the update…'
+                                )}
                               {updateProgress.stage === 'extracting' &&
-                                '正在解压更新包…'}
+                                t('Extracting the update…')}
                               {updateProgress.stage === 'starting' &&
-                                '正在启动更新脚本…'}
+                                t('Starting the update…')}
                               {updateProgress.stage === 'done' &&
-                                (updateProgress.message || '更新已触发')}
+                                englishErrorMessage(
+                                  updateProgress.message,
+                                  'Update started.'
+                                )}
                               {updateProgress.stage === 'error' &&
-                                (updateProgress.message || '更新失败')}
+                                englishErrorMessage(
+                                  updateProgress.message,
+                                  'Update failed.'
+                                )}
                             </Text>
                             {updateProgress.stage === 'downloading' &&
                               updateProgress.total > 0 && (
@@ -1598,7 +1668,7 @@ export default function AdminPage() {
                                 </Text>
                               )}
                           </div>
-                          {/* 进度条 */}
+                          {/* 进度 comments */}
                           <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--md-sys-color-surface-container-lowest)]">
                             {updateProgress.stage === 'downloading' ? (
                               updateProgress.total > 0 ? (
@@ -1636,19 +1706,19 @@ export default function AdminPage() {
                       )}
                       {updateLoading ? (
                         <div className="py-4">
-                          <Spinner tip="检查更新中..." size={24} />
+                          <Spinner tip={t('Checking for updates…')} size={24} />
                         </div>
                       ) : updateInfo ? (
                         <div className="space-y-3">
                           <div className="flex items-center justify-between">
                             <Text className="text-sm">
-                              当前版本：
+                              {t('Installed version:')}
                               <span className="font-mono text-[var(--md-sys-color-on-surface-variant)]">
                                 {updateInfo.currentVersion}
                               </span>
                             </Text>
                             <Text className="text-sm">
-                              远程版本：
+                              {t('Available version:')}
                               <span className="font-mono text-[var(--md-sys-color-on-surface-variant)]">
                                 {updateInfo.remoteVersion}
                               </span>
@@ -1657,21 +1727,22 @@ export default function AdminPage() {
                           {updateInfo.isPrerelease && (
                             <div className="inline-flex rounded-full bg-[var(--md-sys-color-tertiary-container)] px-2 py-0.5">
                               <span className="text-[10px] font-medium uppercase tracking-wide text-[var(--md-sys-color-on-tertiary-container)]">
-                                预发布版本
+                                {t('Prerelease')}
                               </span>
                             </div>
                           )}
                           {updateInfo.publishedAt && (
                             <Text type="secondary" className="text-xs">
-                              发布时间：
+                              {t('Published:')}
                               {new Date(updateInfo.publishedAt).toLocaleString(
-                                'zh-CN'
+                                getLocale() === 'zh' ? 'zh-CN' : 'en-US'
                               )}
                             </Text>
                           )}
                           {updateInfo.assetSize > 0 && (
                             <Text type="secondary" className="text-xs">
-                              构建产物：{updateInfo.assetName} (
+                              {t('Package:')}
+                              {updateInfo.assetName} (
                               {(updateInfo.assetSize / (1024 * 1024)).toFixed(
                                 1
                               )}
@@ -1697,7 +1768,9 @@ export default function AdminPage() {
                               loading={applyLoading}
                               disabled={applyLoading || !updateInfo.hasUpdate}
                             >
-                              {updateInfo.hasUpdate ? '一键更新' : '已是最新'}
+                              {updateInfo.hasUpdate
+                                ? t('Install update')
+                                : t('Up to date')}
                             </Button>
                             <Button
                               variant="secondary"
@@ -1705,7 +1778,7 @@ export default function AdminPage() {
                               onClick={checkUpdate}
                               disabled={updateLoading}
                             >
-                              重新检测
+                              {t('Check again')}
                             </Button>
                             {updateInfo.releaseUrl && (
                               <a
@@ -1714,7 +1787,7 @@ export default function AdminPage() {
                                 rel="noreferrer"
                                 className="text-xs text-[var(--md-sys-color-primary)] hover:underline"
                               >
-                                查看发布
+                                {t('View release')}
                               </a>
                             )}
                           </div>
@@ -1723,7 +1796,7 @@ export default function AdminPage() {
                           {/* 手动导入压缩包 */}
                           <div className="space-y-2">
                             <Text className="text-xs font-medium text-[var(--md-sys-color-on-surface-variant)]">
-                              手动导入更新包
+                              {t('Import update package')}
                             </Text>
                             <div className="flex items-center gap-2">
                               <input
@@ -1741,10 +1814,10 @@ export default function AdminPage() {
                                 loading={uploadLoading}
                                 disabled={uploadLoading}
                               >
-                                选择压缩包
+                                {t('Choose archive')}
                               </Button>
                               <Text type="secondary" className="text-xs">
-                                支持 .zip / .tar.gz 格式
+                                {t('.zip or .tar.gz archives')}
                               </Text>
                             </div>
                           </div>
@@ -1753,7 +1826,7 @@ export default function AdminPage() {
                         <div className="space-y-3">
                           <div className="flex items-center justify-between py-2">
                             <Text type="secondary" className="text-sm">
-                              未获取版本信息
+                              {t('Version information is unavailable.')}
                             </Text>
                             <Button
                               variant="secondary"
@@ -1761,13 +1834,13 @@ export default function AdminPage() {
                               onClick={checkUpdate}
                               disabled={updateLoading}
                             >
-                              检查更新
+                              {t('Check for updates')}
                             </Button>
                           </div>
                           <div className="my-2 border-t border-[var(--md-sys-color-outline-variant)]" />
                           <div className="space-y-2">
                             <Text className="text-xs font-medium text-[var(--md-sys-color-on-surface-variant)]">
-                              手动导入更新包
+                              {t('Import update package')}
                             </Text>
                             <div className="flex items-center gap-2">
                               <input
@@ -1785,10 +1858,10 @@ export default function AdminPage() {
                                 loading={uploadLoading}
                                 disabled={uploadLoading}
                               >
-                                选择压缩包
+                                {t('Choose archive')}
                               </Button>
                               <Text type="secondary" className="text-xs">
-                                支持 .zip / .tar.gz 格式
+                                {t('.zip or .tar.gz archives')}
                               </Text>
                             </div>
                           </div>
@@ -1805,7 +1878,7 @@ export default function AdminPage() {
                   loading={savingSettings}
                   disabled={savingSettings}
                 >
-                  保存
+                  {t('Save')}
                 </Button>
               </>
             )}
@@ -1816,40 +1889,43 @@ export default function AdminPage() {
       <ConfirmModal
         open={!!userDelete}
         onClose={() => setUserDelete(null)}
-        title="删除用户"
+        title={t('Remove user')}
         onOk={handleDeleteUser}
         onCancel={() => setUserDelete(null)}
-        okText="删除"
-        cancelText="取消"
+        okText={t('Remove')}
+        cancelText={t('Cancel')}
       >
-        确定要删除用户 <strong>{userDelete?.username}</strong>{' '}
-        吗？此操作不可撤销。
+        {t('Remove user {name}? This cannot be undone.', {
+          name: userDelete?.username ?? '',
+        })}
       </ConfirmModal>
 
       <ConfirmModal
         open={!!userApprove}
         onClose={() => setUserApprove(null)}
-        title="审核用户"
+        title={t('Approve user')}
         onOk={handleApproveUser}
         onCancel={() => setUserApprove(null)}
-        okText="通过审核"
-        cancelText="取消"
+        okText={t('Approve')}
+        cancelText={t('Cancel')}
       >
-        确定通过 <strong>{userApprove?.username}</strong>{' '}
-        的注册申请吗？审核后该用户将变为普通用户并可正常使用。
+        {t('Approve {name} as a member? They will be able to sign in.', {
+          name: userApprove?.username ?? '',
+        })}
       </ConfirmModal>
 
       <ConfirmModal
         open={!!roomClose}
         onClose={() => setRoomClose(null)}
-        title="强制关闭房间"
+        title={t('Close room')}
         onOk={handleCloseRoom}
         onCancel={() => setRoomClose(null)}
-        okText="关闭"
-        cancelText="取消"
+        okText={t('Close')}
+        cancelText={t('Cancel')}
       >
-        确定要强制关闭房间 <strong>{roomClose?.roomId}</strong>{' '}
-        吗？所有连接将断开。
+        {t('Close room {id}? All members will be disconnected.', {
+          id: roomClose?.roomId ?? '',
+        })}
       </ConfirmModal>
 
       <ConfirmModal
@@ -1857,42 +1933,46 @@ export default function AdminPage() {
         onClose={() => {
           if (!cleanupLoading) setCleanupConfirm(false)
         }}
-        title="移除无人使用的房间"
+        title={t('Remove empty rooms')}
         onOk={handleCleanupUnusedRooms}
         onCancel={() => setCleanupConfirm(false)}
-        okText="确认"
-        cancelText="取消"
+        okText={t('Confirm')}
+        cancelText={t('Cancel')}
         confirmLoading={cleanupLoading}
       >
-        确定要移除{isRoot ? '所有' : '你创建的'}
-        当前无人使用的房间吗？此操作不可撤销。
+        {t(
+          isRoot
+            ? 'Remove all empty rooms? This cannot be undone.'
+            : 'Remove your empty rooms? This cannot be undone.'
+        )}
       </ConfirmModal>
 
       <ConfirmModal
         open={batchDeleteConfirm}
         onClose={() => setBatchDeleteConfirm(false)}
-        title="批量删除房间"
+        title={t('Remove selected rooms')}
         onOk={handleBatchDeleteRooms}
         onCancel={() => setBatchDeleteConfirm(false)}
-        okText="删除"
-        cancelText="取消"
+        okText={t('Remove')}
+        cancelText={t('Cancel')}
         confirmLoading={batchDeleteLoading}
       >
-        确定要删除选中的 <strong>{selectedRoomIds.size}</strong>{' '}
-        个房间吗？此操作不可撤销。
+        {t('Remove the selected {count} rooms? This cannot be undone.', {
+          count: selectedRoomIds.size,
+        })}
       </ConfirmModal>
 
       <ConfirmModal
         open={deleteAllConfirm}
         onClose={() => setDeleteAllConfirm(false)}
-        title="删除所有房间"
+        title={t('Remove all rooms')}
         onOk={handleDeleteAllRooms}
         onCancel={() => setDeleteAllConfirm(false)}
-        okText="全部删除"
-        cancelText="取消"
+        okText={t('Remove all')}
+        cancelText={t('Cancel')}
         confirmLoading={deleteAllLoading}
       >
-        确定要删除所有房间吗？此操作不可撤销，所有房间数据将被清除。
+        {t('Remove all rooms and their saved state? This cannot be undone.')}
       </ConfirmModal>
     </div>
   )

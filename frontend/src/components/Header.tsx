@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useLocation, useSearchParams } from 'react-router-dom'
 import { createPortal } from 'react-dom'
@@ -55,14 +56,17 @@ import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { message } from '@/components/ui/message'
 import { Avatar } from '@/components/ui/Avatar'
-import { ReturnToRoomButton } from '@/components/ReturnToRoomButton'
 import { cn } from '@/lib/utils'
 import { useRoomExitGuard } from '@/hooks/useRoomExitGuard'
 import { AppNavigation } from './AppNavigation'
 import { AppearanceMenu } from './AppearanceMenu'
 import { JoinRoomDialog } from './JoinRoomDialog'
+import { LanguageSwitch } from './LanguageSwitch'
+import { disclosureExitDuration } from './ui/motion'
 
 export function Header() {
+  useTranslation()
+
   const location = useLocation()
   const [searchParams, setSearchParams] = useSearchParams()
   const { guardNavigate, confirmModal: exitGuardModal } = useRoomExitGuard()
@@ -81,6 +85,7 @@ export function Header() {
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false)
   const [joinOpen, setJoinOpen] = useState(false)
   const [userClosing, setUserClosing] = useState(false)
+  const userCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [serverModalOpen, setServerModalOpen] = useState(false)
   const [customApiUrl, setCustomApiUrlState] = useState(getCustomApiUrl())
   const [customSocketUrl, setCustomSocketUrlState] =
@@ -116,15 +121,22 @@ export function Header() {
     right: number
   } | null>(null)
 
-  const closeUser = () => {
+  const closeUser = useCallback(() => {
+    if (userCloseTimerRef.current) clearTimeout(userCloseTimerRef.current)
     setUserClosing(true)
-    const timer = setTimeout(() => {
+    userCloseTimerRef.current = setTimeout(() => {
       setUserOpen(false)
       setUserClosing(false)
       setUserMenuPos(null)
-    }, 200)
-    return () => clearTimeout(timer)
-  }
+      userCloseTimerRef.current = null
+    }, disclosureExitDuration())
+  }, [])
+  useEffect(
+    () => () => {
+      if (userCloseTimerRef.current) clearTimeout(userCloseTimerRef.current)
+    },
+    []
+  )
 
   const computeUserPos = useCallback(() => {
     if (!userBtnRef.current) return
@@ -162,8 +174,18 @@ export function Header() {
       closeUser()
     }
     window.addEventListener('mousedown', handleClick)
-    return () => window.removeEventListener('mousedown', handleClick)
-  }, [userOpen])
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      closeUser()
+      userBtnRef.current?.focus()
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => {
+      window.removeEventListener('mousedown', handleClick)
+      window.removeEventListener('keydown', handleKey)
+    }
+  }, [userOpen, closeUser])
 
   const handleLogout = async () => {
     setUserOpen(false)
@@ -175,7 +197,9 @@ export function Header() {
     } catch (err) {
       // 后端调用失败也继续登出前端状态，避免用户卡在已登录状态
       console.warn('[Header] logout API failed:', err)
-      message.error('退出登录请求失败，已强制清除本地状态')
+      message.error(
+        t('Sign-out request failed. Your local session was cleared.')
+      )
     } finally {
       // 清除本地 Bearer token（跨站 HTTP fallback）
       clearAuthTokens()
@@ -209,7 +233,9 @@ export function Header() {
       )
     } else {
       message.info(
-        '请前往 https://github.com/Zero-wyc/ZViewerCLI 下载对应版本 CLI'
+        t(
+          'Download the matching CLI from https://github.com/Zero-wyc/ZViewerCLI'
+        )
       )
     }
   }, [])
@@ -224,7 +250,7 @@ export function Header() {
       ? [
           {
             icon: <UserRound className="w-4 h-4" />,
-            label: '我的空间',
+            label: 'Your account',
             to: '/profile',
           },
         ]
@@ -233,24 +259,24 @@ export function Header() {
       ? [
           {
             icon: <Shield className="w-4 h-4" />,
-            label: '管理后台',
+            label: 'Administration',
             to: '/admin',
           },
         ]
       : []),
     {
       icon: <Server className="w-4 h-4" />,
-      label: '服务器连接',
+      label: 'Server connection',
       onClick: openServerModal,
     },
     {
       icon: <Download className="w-4 h-4" />,
-      label: '下载 CLI 高画质代理',
+      label: 'Download CLI proxy',
       onClick: handleDownloadCli,
     },
     {
       icon: <GithubIcon className="w-4 h-4" />,
-      label: '开源项目',
+      label: 'Open source',
       onClick: () =>
         window.open(
           'https://github.com/XYL333FYQ/TongMu',
@@ -266,14 +292,14 @@ export function Header() {
         <div className="tongmu-header__inner">
           <div className="flex min-w-0 items-center gap-2">
             <button
-              aria-label="返回大厅"
+              aria-label={t('TongMu hall')}
               onClick={() => guardNavigate('/')}
               className="relative z-50 flex w-fit min-w-0 items-center gap-2 cursor-pointer"
             >
               <img
-                src="/favicon.jpg"
+                src="/tongmu-mark.png"
                 alt="TongMu"
-                className="w-8 h-8 shrink-0 rounded-[var(--md-sys-shape-corner)] object-cover"
+                className="tongmu-header__mark w-8 h-8 shrink-0 rounded-[var(--md-sys-shape-corner)] object-cover"
               />
               <span className="hidden md:inline font-semibold text-base text-[var(--md-sys-color-on-surface)]">
                 TongMu
@@ -303,8 +329,8 @@ export function Header() {
               className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--md-sys-color-on-surface-variant)]"
             />
             <Input
-              aria-label="搜索房间"
-              placeholder="搜索房间名称或房间号"
+              aria-label={t('Search rooms')}
+              placeholder={t('Search name or room ID')}
               value={searchValue}
               onChange={(event) => {
                 const value = event.target.value
@@ -321,24 +347,26 @@ export function Header() {
           </form>
 
           <div className="tongmu-header__actions flex items-center justify-self-end gap-2">
-            <ReturnToRoomButton />
             <button
               type="button"
-              aria-label="搜索房间"
+              aria-label={t('Search rooms')}
               className="tongmu-header__mobile-search md:hidden"
               onClick={() => setMobileSearchOpen(true)}
             >
               <Search className="h-5 w-5" aria-hidden="true" />
             </button>
+            <LanguageSwitch />
             <AppearanceMenu />
             {isAuthenticated && user && (
               <div className="relative">
                 <button
                   ref={userBtnRef}
                   onClick={() => {
-                    if (userOpen) {
+                    if (userOpen && !userClosing) {
                       closeUser()
                     } else {
+                      if (userCloseTimerRef.current)
+                        clearTimeout(userCloseTimerRef.current)
                       setUserOpen(true)
                       setUserClosing(false)
                     }
@@ -352,18 +380,15 @@ export function Header() {
                   style={{
                     border: '1px solid var(--md-sys-color-outline)',
                   }}
-                  title="账户菜单"
+                  title={t('Account menu')}
+                  aria-label={t('Account menu')}
+                  aria-expanded={userOpen && !userClosing}
+                  aria-controls={userOpen ? 'tongmu-account-menu' : undefined}
                 >
                   <Avatar
                     size="sm"
                     alt={user.username}
-                    src={
-                      user.avatar
-                        ? user.avatar
-                        : user.role === 'root'
-                          ? '/root-avatar.jpg'
-                          : undefined
-                    }
+                    src={user.avatar || undefined}
                   />
                   <span className="hidden xl:inline text-xs font-medium max-w-[4rem] truncate">
                     {user.username}
@@ -381,6 +406,9 @@ export function Header() {
                   createPortal(
                     <div
                       ref={userMenuRef}
+                      id="tongmu-account-menu"
+                      role="dialog"
+                      aria-label={t('Account menu')}
                       className={cn(
                         'glass-strong fixed w-52 rounded-[var(--md-sys-shape-corner)] p-1.5 shadow-lg',
                         userClosing ? 'zen-dropdown-exit' : 'zen-dropdown-enter'
@@ -398,20 +426,14 @@ export function Header() {
                         style={
                           {
                             backgroundColor: 'var(--glass-bg)',
-                            '--item-delay': '0ms',
+                            '--item-index': 0,
                           } as React.CSSProperties
                         }
                       >
                         <Avatar
                           size="md"
                           alt={user.username}
-                          src={
-                            user.avatar
-                              ? user.avatar
-                              : user.role === 'root'
-                                ? '/root-avatar.jpg'
-                                : undefined
-                          }
+                          src={user.avatar || undefined}
                         />
                         <div className="min-w-0 flex-1">
                           <p className="text-sm font-medium text-[var(--md-sys-color-on-surface)] truncate">
@@ -419,12 +441,12 @@ export function Header() {
                           </p>
                           <p className="text-xs text-[var(--md-sys-color-on-surface-variant)]">
                             {user.role === 'root'
-                              ? '超级管理员'
+                              ? t('Root administrator')
                               : user.role === 'admin'
-                                ? '管理员'
+                                ? t('Administrator')
                                 : user.role === 'guest'
-                                  ? '访客'
-                                  : '普通用户'}
+                                  ? t('Guest')
+                                  : t('Member')}
                           </p>
                         </div>
                       </div>
@@ -443,13 +465,13 @@ export function Header() {
                             <span className="text-[var(--md-sys-color-on-surface-variant)]">
                               {item.icon}
                             </span>
-                            {item.label}
+                            {t(item.label)}
                           </>
                         )
                         const className =
                           'zen-dropdown-item flex items-center gap-2.5 w-full px-2.5 py-2 rounded-[var(--md-sys-shape-corner)] text-sm text-[var(--md-sys-color-on-surface)] transition-all hover:bg-[var(--md-sys-color-surface-container-highest)] hover:translate-x-0.5'
                         const itemStyle = {
-                          '--item-delay': `${(idx + 1) * 50}ms`,
+                          '--item-index': idx + 1,
                         } as React.CSSProperties
                         return (
                           <button
@@ -487,12 +509,12 @@ export function Header() {
                           className="zen-dropdown-item flex items-center gap-2.5 w-full px-2.5 py-2 rounded-[var(--md-sys-shape-corner)] text-sm text-[var(--md-sys-color-primary)] transition-all hover:bg-[var(--md-sys-color-primary-container)] hover:translate-x-0.5"
                           style={
                             {
-                              '--item-delay': `${(menuItems.length + 1) * 50}ms`,
+                              '--item-index': menuItems.length + 1,
                             } as React.CSSProperties
                           }
                         >
                           <LogIn className="w-4 h-4" />
-                          登录
+                          {t('Sign in')}
                         </button>
                       ) : (
                         <button
@@ -500,12 +522,12 @@ export function Header() {
                           className="zen-dropdown-item flex items-center gap-2.5 w-full px-2.5 py-2 rounded-[var(--md-sys-shape-corner)] text-sm text-[var(--md-sys-color-error)] transition-all hover:bg-[var(--md-sys-color-error-container)] hover:translate-x-0.5"
                           style={
                             {
-                              '--item-delay': `${(menuItems.length + 1) * 50}ms`,
+                              '--item-index': menuItems.length + 1,
                             } as React.CSSProperties
                           }
                         >
                           <LogOut className="w-4 h-4" />
-                          退出登录
+                          {t('Sign out')}
                         </button>
                       )}
                     </div>,
@@ -517,7 +539,7 @@ export function Header() {
         </div>
       </header>
 
-      {/* 顶部占位，避免内容被 fixed header 遮挡 */}
+      {/* Top占位，避免内容被 fixed header 遮挡 */}
       <div className="tongmu-header__spacer" />
 
       <JoinRoomDialog
@@ -529,7 +551,7 @@ export function Header() {
       <Modal
         open={mobileSearchOpen}
         onClose={() => setMobileSearchOpen(false)}
-        title="搜索房间"
+        title={t('Search rooms')}
         footer={null}
       >
         <form
@@ -546,8 +568,8 @@ export function Header() {
         >
           <Input
             autoFocus
-            aria-label="搜索房间名称或房间号"
-            placeholder="搜索房间名称或房间号"
+            aria-label={t('Search name or room ID')}
+            placeholder={t('Search name or room ID')}
             value={searchValue}
             onChange={(event) => {
               const value = event.target.value
@@ -561,7 +583,7 @@ export function Header() {
             }}
           />
           <Button type="submit" variant="primary">
-            搜索
+            {t('Search')}
           </Button>
         </form>
       </Modal>
@@ -569,14 +591,14 @@ export function Header() {
       <Modal
         open={serverModalOpen}
         onClose={() => setServerModalOpen(false)}
-        title="自定义后端地址"
+        title={t('Server connection')}
         footer={
           <>
             <Button
               variant="secondary"
               onClick={() => setServerModalOpen(false)}
             >
-              取消
+              {t('Cancel')}
             </Button>
             <Button
               variant="primary"
@@ -589,17 +611,19 @@ export function Header() {
                 resetSocket()
                 if (hasMixedContent) {
                   message.warning(
-                    '已保存，但 HTTPS 页面无法访问 HTTP 后端。请配置反向代理或后端 HTTPS。'
+                    t(
+                      'Saved. This HTTPS page requires an HTTPS backend or reverse proxy.'
+                    )
                   )
                 } else {
-                  message.success('后端地址已保存，即将刷新页面生效')
+                  message.success(t('Connection saved. Reloading…'))
                 }
                 setServerModalOpen(false)
                 // 刷新页面确保所有模块级 API_URL 缓存重新计算
                 setTimeout(() => window.location.reload(), 600)
               }}
             >
-              保存
+              {t('Save')}
             </Button>
           </>
         }
@@ -615,100 +639,102 @@ export function Header() {
               <Info className="mt-0.5 h-4 w-4 shrink-0 text-[var(--md-sys-color-primary)]" />
               <div className="space-y-1.5 text-xs leading-relaxed text-[var(--md-sys-color-on-surface-variant)]">
                 <p className="font-medium text-[var(--md-sys-color-on-surface)]">
-                  只需填写一个域名即可
+                  {t('Use one server URL')}
                 </p>
                 <p>
-                  填写你的服务器域名（例如{' '}
+                  {t('Enter your server URL, such as')}{' '}
                   <code className="rounded bg-[var(--md-sys-color-surface-container)] px-1 py-0.5">
-                    example.com
+                    {t('example.com')}
                   </code>
-                  ），其余三项留空将自动跟随。请确保已在服务器上配置反向代理（Nginx
-                  / Caddy），将以下路径统一转发到后端服务：
+                  {t(
+                    '. Leave optional values blank to use this address. Your reverse proxy (Nginx or Caddy) must forward these paths:'
+                  )}
                 </p>
                 <ul className="ml-1 list-inside list-disc space-y-0.5">
                   <li>
                     <code className="rounded bg-[var(--md-sys-color-surface-container)] px-1 py-0.5">
                       /api/*
                     </code>{' '}
-                    → REST API（端口 3333）
+                    {t('→ REST API (port 3333)')}
                   </li>
                   <li>
                     <code className="rounded bg-[var(--md-sys-color-surface-container)] px-1 py-0.5">
                       /socket.io/*
                     </code>{' '}
-                    → WebSocket 信令（端口 3333）
+                    {t('→ WebSocket signaling (port 3333)')}
                   </li>
                   <li>
                     <code className="rounded bg-[var(--md-sys-color-surface-container)] px-1 py-0.5">
                       /live/*
                     </code>{' '}
-                    → HTTP-FLV 拉流（端口 3335）
+                    {t('→ HTTP-FLV streaming (port 3335)')}
                   </li>
                 </ul>
                 <p>
-                  反向代理需启用 HTTPS（SSL 证书），否则 HTTPS
-                  页面下的连接会被浏览器阻止。
+                  {t(
+                    'Use HTTPS on the reverse proxy. Otherwise, this HTTPS page cannot connect to the server.'
+                  )}
                 </p>
               </div>
             </div>
           </div>
 
           <Input
-            label="服务器域名"
+            label={t('Server URL')}
             value={customApiUrl}
             onChange={(e) => setCustomApiUrlState(e.target.value)}
-            placeholder="例如: example.com"
+            placeholder={t('For example: example.com')}
             size="md"
           />
           <details className="text-xs text-[var(--md-sys-color-on-surface-variant)]">
             <summary className="cursor-pointer select-none font-medium">
-              高级设置（通常无需修改）
+              {t('Advanced connection settings')}
             </summary>
             <div className="mt-3 space-y-3">
               <Input
-                label="WebSocket / 信令地址（留空则跟随上方域名）"
+                label={t('WebSocket URL (optional)')}
                 value={customSocketUrl}
                 onChange={(e) => setCustomSocketUrlState(e.target.value)}
-                placeholder="留空即可"
+                placeholder={t('Leave blank for automatic configuration')}
                 size="md"
               />
               <Input
-                label="HTTP-FLV 拉流基础地址（留空则自动推断）"
+                label={t('HTTP-FLV URL (optional)')}
                 value={customFlvBaseUrl}
                 onChange={(e) => setCustomFlvBaseUrlState(e.target.value)}
-                placeholder="留空即可"
+                placeholder={t('Leave blank for automatic configuration')}
                 size="md"
               />
               <Input
-                label="RTMP 推流端口（留空则使用默认 3334）"
+                label={t('RTMP port (default: 3334)')}
                 value={customRtmpPort}
                 onChange={(e) => setCustomRtmpPortState(e.target.value)}
-                placeholder="留空即可"
+                placeholder={t('Leave blank for automatic configuration')}
                 size="md"
               />
             </div>
           </details>
           <div className="space-y-1 text-xs text-[var(--md-sys-color-on-surface-variant)]">
             <p>
-              当前 API 地址:{' '}
+              {t('Current API:')}{' '}
               <code className="bg-[var(--md-sys-color-surface-container)] px-1 py-0.5 rounded">
                 {getApiUrl()}
               </code>
             </p>
             <p>
-              当前 WebSocket 地址:{' '}
+              {t('Current WebSocket:')}{' '}
               <code className="bg-[var(--md-sys-color-surface-container)] px-1 py-0.5 rounded">
                 {getSocketUrl()}
               </code>
             </p>
             <p>
-              当前 FLV 基础地址:{' '}
+              {t('Current FLV URL:')}{' '}
               <code className="bg-[var(--md-sys-color-surface-container)] px-1 py-0.5 rounded">
-                {getFlvBaseUrl() || '(相对路径 /live)'}
+                {getFlvBaseUrl() || t('(relative path /live)')}
               </code>
             </p>
             <p>
-              当前 RTMP 端口:{' '}
+              {t('Current RTMP port:')}{' '}
               <code className="bg-[var(--md-sys-color-surface-container)] px-1 py-0.5 rounded">
                 {getRtmpPort()}
               </code>
@@ -727,34 +753,41 @@ export function Header() {
             >
               <div className="flex items-center gap-2 text-sm font-medium">
                 <ShieldAlert className="h-4 w-4 shrink-0" />
-                <span>检测到混合内容（HTTPS → HTTP）</span>
+                <span>{t('HTTPS / HTTP connection mismatch')}</span>
               </div>
               <p className="mt-1.5 text-xs leading-relaxed">
-                当前页面为 HTTPS，但后端地址为 HTTP。浏览器会阻止 HTTPS
-                页面发起的 HTTP 请求，API 和 WebSocket 连接均无法正常工作。
+                {t(
+                  'This page uses HTTPS but the backend uses HTTP. Your browser blocks those requests, so API and WebSocket connections cannot work.'
+                )}
               </p>
-              <p className="mt-2 text-xs font-medium">推荐方案：</p>
+              <p className="mt-2 text-xs font-medium">
+                {t('Connection options:')}
+              </p>
               <ul className="mt-1 list-inside list-disc space-y-0.5 text-xs">
                 <li>
-                  使用反向代理（Nginx / Caddy）统一提供
-                  HTTPS，后端通过反向代理访问
+                  {t(
+                    'Use an HTTPS reverse proxy (Nginx / Caddy). Connect to the backend through that proxy.'
+                  )}
                 </li>
-                <li>或为后端 Express 服务直接配置 HTTPS 证书</li>
+                <li>{t('Configure an HTTPS certificate on the backend.')}</li>
                 <li>
-                  或使用 Docker 部署，前端 Nginx 自动代理 /api 和 /socket.io
-                  到后端
+                  {t(
+                    'Use the Docker deployment, which proxies /api and /socket.io to the backend.'
+                  )}
                 </li>
               </ul>
             </div>
           )}
 
           <div className="text-xs text-[var(--md-sys-color-on-surface-variant)]">
-            提示：留空将使用环境变量或页面默认值，保存后会自动刷新页面使配置生效。
+            {t(
+              'Blank values use the configured defaults. Saving reloads this page.'
+            )}
           </div>
         </div>
       </Modal>
 
-      {/* 离开房间确认对话框 */}
+      {/* 离开房间Confirm对话框 */}
       {exitGuardModal}
     </>
   )

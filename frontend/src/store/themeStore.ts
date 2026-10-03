@@ -9,10 +9,10 @@ export const RADIUS_PRESETS: {
   label: string
   px: number
 }[] = [
-  { value: 'none', label: '无', px: 0 },
-  { value: 'small', label: '小', px: 8 },
-  { value: 'medium', label: '中', px: 16 },
-  { value: 'large', label: '大', px: 28 },
+  { value: 'none', label: 'None', px: 0 },
+  { value: 'small', label: 'Small', px: 8 },
+  { value: 'medium', label: 'Medium', px: 16 },
+  { value: 'large', label: 'Large', px: 28 },
 ]
 
 export const DEFAULT_RADIUS_PRESET: RadiusPreset = 'medium'

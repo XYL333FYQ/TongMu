@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import { Settings2 } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { Space } from '@/components/ui/Space'
@@ -20,6 +21,8 @@ interface MediaSettingsCardProps {
 }
 
 export function MediaSettingsCard(props: MediaSettingsCardProps): JSX.Element {
+  useTranslation()
+
   const {
     frameRate,
     maxBitrateMbps,
@@ -37,13 +40,13 @@ export function MediaSettingsCard(props: MediaSettingsCardProps): JSX.Element {
       <Space direction="vertical" className="w-full py-2" size="lg">
         <Space align="center" size="sm" className="mb-1">
           <Settings2 className="h-4 w-4 text-[var(--md-sys-color-primary)]" />
-          <Text className="font-medium">媒体设置</Text>
+          <Text className="font-medium">{t('Capture settings')}</Text>
         </Space>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <label className="mb-1.5 block text-xs font-medium text-[var(--md-sys-color-on-surface-variant)]">
-              帧率
+              {t('Frame rate')}
             </label>
             <Select
               options={FRAME_RATE_OPTIONS}
@@ -54,7 +57,7 @@ export function MediaSettingsCard(props: MediaSettingsCardProps): JSX.Element {
           </div>
           <div>
             <label className="mb-1.5 block text-xs font-medium text-[var(--md-sys-color-on-surface-variant)]">
-              最大码率（Mbps）
+              {t('Maximum bitrate (Mbps)')}
             </label>
             <InputNumber
               min={0.5}
@@ -70,22 +73,23 @@ export function MediaSettingsCard(props: MediaSettingsCardProps): JSX.Element {
               type="secondary"
               className="m-0 mt-1 text-[10px] leading-tight"
             >
-              推荐 {frameRate}fps ≥ {Math.max(2, Math.round(frameRate * 0.267))}{' '}
-              Mbps
-              {frameRate >= 45 && '，码率不足将导致降帧'}
+              {t('Recommended')} {frameRate}fps ≥{' '}
+              {Math.max(2, Math.round(frameRate * 0.267))} Mbps
+              {frameRate >= 45 &&
+                t('，A low bitrate may reduce the frame rate.')}
             </Paragraph>
           </div>
         </div>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Switch
-            label="共享系统音频"
+            label={t('Share system audio')}
             checked={shareSystemAudio}
             onChange={(e) => onShareSystemAudioChange(e.target.checked)}
             disabled={isSharing}
           />
           <Switch
-            label="共享麦克风"
+            label={t('Share microphone')}
             checked={shareMicrophone}
             onChange={(e) => onShareMicrophoneChange(e.target.checked)}
             disabled={isSharing}
@@ -94,7 +98,7 @@ export function MediaSettingsCard(props: MediaSettingsCardProps): JSX.Element {
 
         {isSharing && (
           <Paragraph type="secondary" className="m-0 text-xs">
-            共享期间无法修改媒体设置，请先结束共享。
+            {t('Stop sharing before changing capture settings.')}
           </Paragraph>
         )}
       </Space>

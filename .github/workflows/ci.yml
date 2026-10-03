@@ -57,13 +57,15 @@ jobs:
       - name: E2E tests
         env:
           PLAYWRIGHT_CHANNEL: chrome
+          SLICE_CACHE_E2E: 'true'
+          SLICE_CACHE_ENABLED: 'true'
         run: npm run test:e2e -- --reporter=line
 
       - name: Validate recommended Compose
         run: docker compose config --quiet
 
   docker_smoke:
-    name: Gate main deployment with Docker browser smoke
+    name: Verify Linux Docker browser runtime
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: verify
     uses: ./.github/workflows/docker.yml

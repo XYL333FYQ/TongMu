@@ -44,6 +44,10 @@ export function safePlay(
       })
     }
     // 其他错误（如 AbortError：play() 被 load() 中断）静默处理
-    console.warn('[safePlay] play failed:', err?.name, redactMediaError(err?.message))
+    console.warn(
+      '[safePlay] play failed:',
+      err?.name,
+      redactMediaError(err?.message)
+    )
   })
 }

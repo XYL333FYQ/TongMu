@@ -48,8 +48,8 @@ export class PlaybackMemoryHandler implements SocketEventHandler {
       await realtimeSyncCore.withRoomLock(roomId, async () => {
         try {
           const permission = await roomPermissionService.canPerform(socket, roomId, 'playback.play');
-          if (!permission.allowed) {
-            safeAck(callback, { success: false, code: 'FORBIDDEN', message: permission.reason });
+          if (!permission.allowed || !(await roomPermissionService.isRoomHost(socket, roomId))) {
+            safeAck(callback, { success: false, code: 'FORBIDDEN', message: permission.allowed ? '仅当前主持者可广播播放状态' : permission.reason });
             return;
           }
           if (!(await roomPermissionService.isWatchTogetherRoom(roomId))) {
@@ -209,7 +209,7 @@ export class PlaybackMemoryHandler implements SocketEventHandler {
           const authoritative = await playbackMemoryService.setPlayback(
             payload.roomId,
             transition.result.state,
-            socket.id,
+            (raw as typeof raw & { hostSocketId?: string }).hostSocketId || socket.id,
             {
               version: committed.version,
               sourceGeneration: committed.sourceGeneration,

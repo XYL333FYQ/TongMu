@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { t, useTranslation } from '@/i18n'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useRoomStore } from '@/store/roomStore'
 import { useAuthStore } from '@/store/authStore'
@@ -19,12 +20,15 @@ import { CommentPanel } from '@/components/CommentPanel'
 import { Spinner } from '@/components/ui/Spinner'
 import { message } from '@/components/ui/message'
 import { SharePage, WatchPage } from '@/modules/screen-sharing'
+import WebrtcWatchPage from '@/modules/screen-sharing/components/WebrtcWatchPage'
 import type { P2PStateSnapshot } from '@/modules/screen-sharing/components/WebrtcSharePage'
 import type { MediaFormat } from '@/lib/mediaFormat'
 
 import type { RoomMode } from '@/store/roomStore'
 import { storeRoomMediaGrant } from '@/modules/media/roomMediaGrant'
 import { dispatchRoomMediaTeardown } from '@/lib/mediaTeardown'
+import { useRoomExperience } from './useRoomExperience'
+import { useRoomExperienceStore } from '@/store/roomExperienceStore'
 
 // sessionStorage key：标记当前用户是哪个房间的房主。
 // 房主创建房间时写入，RoomPage 据此判断身份并走 register-host 流程。
@@ -50,6 +54,7 @@ function clearHostRoomMark(roomId: string) {
 }
 
 function RoomPage() {
+  useTranslation()
   const { roomId } = useParams<{ roomId?: string }>()
   const navigate = useNavigate()
   // 身份判断：仅通过 sessionStorage 标记判断房主身份，URL 不再携带 role/mode 参数。
@@ -57,6 +62,7 @@ function RoomPage() {
   const isHost = roomId ? isHostOfRoom(roomId) : false
 
   const storeMode = useRoomStore((state) => state.mode)
+  const storedRoomId = useRoomStore((state) => state.roomId)
   const setMode = useRoomStore((state) => state.setMode)
   const setShareMethod = useRoomStore((state) => state.setShareMethod)
   const setStreamKey = useRoomStore((state) => state.setStreamKey)
@@ -133,6 +139,12 @@ function RoomPage() {
     setDanmakuMeta,
   ])
   const { socket } = useSocket()
+  useRoomExperience(roomId, socket)
+  const experience = useRoomExperienceStore((state) => state.snapshot)
+  const actingHost = experience
+    ? experience.host.socketId === socket?.id
+    : isHost
+  const canSelect = experience?.permissions.selectContent ?? isHost
   const username = useAuthStore((state) => state.user?.username)
   const [hostPeerConnection, setHostPeerConnection] =
     useState<RTCPeerConnection | null>(null)
@@ -161,7 +173,6 @@ function RoomPage() {
       })
     }
     setRoomId(roomId)
-    setActiveRoomId(roomId)
     setClientLoggerRoomId(roomId)
     setDanmakuRoomId(roomId)
     void loadDanmakuTracks(roomId)
@@ -190,9 +201,10 @@ function RoomPage() {
     const handleRoomClosed = (data: { roomId: string }) => {
       if (data.roomId !== roomId) return
       dispatchRoomMediaTeardown(true)
+      useRoomStore.getState().exitRoom()
       clearHostRoomMark(roomId)
-      message.warning(`房间 ${data.roomId} 已关闭`)
-      navigate('/room', { replace: true })
+      message.warning(`Room ${data.roomId} closed.`)
+      navigate('/', { replace: true })
     }
     const handleDisconnect = () => dispatchRoomMediaTeardown(false)
 
@@ -310,7 +322,9 @@ function RoomPage() {
                 return
               }
               hostAlreadyInRoomRetriesRef.current = 0
-              message.error(response.message ?? '该账户已在此房间内')
+              message.error(
+                response.message ?? 'This account is already in the room.'
+              )
               navigate('/', { replace: true })
               return
             }
@@ -324,6 +338,7 @@ function RoomPage() {
           // AckResponse 标准格式：业务数据在 data 字段内
           hostAlreadyInRoomRetriesRef.current = 0
           const data = response.data
+          setActiveRoomId(roomId)
           storeRoomMediaGrant(roomId, data?.mediaGrant)
           // 使用后端返回的房间真实模式，避免 store 默认值 screen-share 导致 UI 错误。
           // 模式不再写入 URL，由后端房间状态唯一确定。
@@ -385,6 +400,7 @@ function RoomPage() {
     setStreamKey,
     setRoomName,
     setRoomSettings,
+    setActiveRoomId,
     navigate,
   ])
 
@@ -394,6 +410,12 @@ function RoomPage() {
   if (!roomId) {
     return <RoomPanel />
   }
+
+  // Explicit exit clears the store before navigation finishes. Do not turn the
+  // released host tree into WatchPage, whose join flow would restore ownership
+  // and reload the document. Initial entry and failed host recovery still join
+  // normally because their room ID remains in the store.
+  if (hostRegistered && storedRoomId !== roomId) return null
 
   const voiceChatPanel = (
     <VoiceChatPanel
@@ -409,44 +431,61 @@ function RoomPage() {
 
   // 房主：使用 RoomLayout，根据模式渲染对应播放器
   if (isHost) {
-    const mainContent =
-      mode === 'watch-together' ? (
-        // 等待 register-host 回调完成后再渲染 WatchTogetherPanel，
-        // 确保 useWatchTogether 挂载时 initialPlayback 已可用，
-        // 避免 fetchMovies/current-movie 先到达导致 loadMovie effect
-        // 在 initialPlayback=null 时执行而丢失播放进度恢复。
-        hostRegistered ? (
-          <WatchTogetherPanel
-            key={playerRemountKey}
-            roomId={roomId}
-            isHost
-            isWebFullscreen={isWebFullscreen}
-            onToggleWebFullscreen={() => setIsWebFullscreen((prev) => !prev)}
-            initialPlayback={recoveredPlayback}
-          />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center">
-            <Spinner tip="正在恢复房间..." size={32} />
-          </div>
-        )
-      ) : (
-        <SharePage
-          onStatsPeerConnectionChange={setHostPeerConnection}
-          onP2PStateChange={setP2pState}
+    const videoContent =
+      // 等待 register-host 回调完成后再渲染 WatchTogetherPanel，
+      // 确保 useWatchTogether 挂载时 initialPlayback 已可用，
+      // 避免 fetchMovies/current-movie 先到达导致 loadMovie effect
+      // 在 initialPlayback=null 时执行而丢失播放进度恢复。
+      hostRegistered ? (
+        <WatchTogetherPanel
+          key={playerRemountKey}
+          roomId={roomId}
+          isHost={actingHost}
+          isWebFullscreen={isWebFullscreen}
+          onToggleWebFullscreen={() => setIsWebFullscreen((prev) => !prev)}
+          initialPlayback={recoveredPlayback}
         />
-      )
-
-    const controls =
-      mode === 'screen-share' ? (
-        <RoomInfoPanel roomId={roomId} isHost />
       ) : (
-        <>
-          <RoomInfoPanel roomId={roomId} isHost />
-          <MovieListPanel isHost />
-          <MoviePushPanel isHost />
-          <TogetherListenPanel roomId={roomId} isHost />
-        </>
+        <div className="flex h-full w-full items-center justify-center">
+          <Spinner tip={t('Restoring your room…')} size={32} />
+        </div>
       )
+    const mainContent = (
+      <>
+        <div className="tm-stage-layer" hidden={mode !== 'watch-together'}>
+          {videoContent}
+        </div>
+        {mode === 'screen-share' && (
+          <div className="tm-stage-layer">
+            {experience &&
+            (!experience.permissions.screenShare ||
+              (experience.screenPresenter &&
+                experience.screenPresenter !== socket?.id)) ? (
+              <WebrtcWatchPage
+                roomId={roomId}
+                embedded
+                onStatsPeerConnectionChange={setHostPeerConnection}
+                onP2PStateChange={setP2pState}
+              />
+            ) : (
+              <SharePage
+                onStatsPeerConnectionChange={setHostPeerConnection}
+                onP2PStateChange={setP2pState}
+              />
+            )}
+          </div>
+        )}
+      </>
+    )
+
+    const controls = (
+      <>
+        <RoomInfoPanel roomId={roomId} isHost />
+        <MovieListPanel isHost={canSelect} />
+        <MoviePushPanel isHost />
+        <TogetherListenPanel roomId={roomId} isHost />
+      </>
+    )
 
     return (
       <>
@@ -462,17 +501,19 @@ function RoomPage() {
             />
           }
           peerConnection={hostPeerConnection}
+          sharingRole={
+            experience?.screenPresenter &&
+            experience.screenPresenter !== socket?.id
+              ? 'receiver'
+              : 'sender'
+          }
           p2pEnabled={p2pState.enabled}
           p2pPC={p2pState.pc}
           p2pStatus={p2pState.status}
           p2pFallbackNotice={p2pState.fallbackNotice}
           onToggleP2P={p2pState.toggle}
           controls={controls}
-          controlLabels={
-            mode === 'screen-share'
-              ? ['房间状态']
-              : ['房间状态', '影片列表', '添加影片', '一起听']
-          }
+          controlLabels={['Members', 'Queue', 'Add content', 'Music']}
           webFullscreen={isWebFullscreen}
         />
         {voiceChatPanel}

@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import { BilibiliLinkPreview } from './BilibiliLinkPreview'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { MovieSubmissionError } from '@/lib/movieSubmission'
@@ -25,13 +26,9 @@ import { Tag } from '@/components/ui/Tag'
 import { message } from '@/components/ui/message'
 import { useRoomStore } from '@/store/roomStore'
 import { AniSubsSelector } from '@/modules/anisubs/AniSubsSelector'
-import {
-  type AniSubsEpisode,
-} from '@/modules/anisubs'
+import { type AniSubsEpisode } from '@/modules/anisubs'
 import { KazumiSelector } from '@/modules/kazumi/KazumiSelector'
-import {
-  type KazumiEpisode,
-} from '@/modules/kazumi'
+import { type KazumiEpisode } from '@/modules/kazumi'
 import {
   buildBilibiliImageProxyUrl,
   getBilibiliQrCode,
@@ -62,6 +59,9 @@ import {
   type MountType,
 } from '@/modules/mounts'
 import { useAuthStore } from '@/store/authStore'
+import { useSocket } from '@/hooks/useSocket'
+import { useRoomExperienceStore } from '@/store/roomExperienceStore'
+import { roomErrorMessage } from '../roomErrors'
 import { useSystemSettingsStore } from '@/store/systemSettingsStore'
 import { cn } from '@/lib/utils'
 import {
@@ -75,8 +75,14 @@ import {
   buildServerFileStorageReference,
   buildStorageReference,
 } from '@/modules/media/storageReference'
-import { buildMediaServerReference, type MediaServerProviderId } from '@/modules/media/mediaServerReference'
-import { buildAnimeProviderReference, stripTransientAnimeDescriptor } from '@/modules/media/animeReference'
+import {
+  buildMediaServerReference,
+  type MediaServerProviderId,
+} from '@/modules/media/mediaServerReference'
+import {
+  buildAnimeProviderReference,
+  stripTransientAnimeDescriptor,
+} from '@/modules/media/animeReference'
 
 type SourceType =
   | 'bilibili'
@@ -95,16 +101,16 @@ const ALL_SOURCE_OPTIONS: {
   label: string
   rootOnly?: boolean
 }[] = [
-  { value: 'bilibili', label: '哔哩哔哩' },
-  { value: 'mp4', label: '视频链接 / 网页' },
+  { value: 'bilibili', label: 'Bilibili' },
+  { value: 'mp4', label: 'Link or webpage' },
   { value: 'webdav', label: 'WebDAV' },
   { value: 'ftp', label: 'FTP' },
   { value: 'openlist', label: 'OpenList' },
   { value: 'emby', label: 'Emby' },
   { value: 'jellyfin', label: 'Jellyfin' },
-  { value: 'anime', label: 'ani-subs 番剧源' },
-  { value: 'kazumi', label: 'Kazumi 番剧源' },
-  { value: 'server-files', label: '服务器文件', rootOnly: true },
+  { value: 'anime', label: 'ani-subs' },
+  { value: 'kazumi', label: 'Kazumi' },
+  { value: 'server-files', label: 'Server files', rootOnly: true },
 ]
 
 function extractTitleFromUrl(url: string) {
@@ -126,7 +132,7 @@ function mediaServerMoviePayload(
   provider: MediaServerProviderId,
   mountId: number,
   itemId: string,
-  resolved: ResolvedMedia,
+  resolved: ResolvedMedia
 ) {
   const media = resolved.descriptor
   return {
@@ -161,17 +167,33 @@ function formatDuration(seconds: number): string {
 function mediaResolveMessage(error: unknown): string {
   if (error instanceof MediaResolveError) {
     switch (error.code) {
-      case 'DRM_UNSUPPORTED': return '检测到 DRM 加密，无法作为普通媒体播放'
-      case 'NO_MEDIA_FOUND': return '网页中未找到可播放的视频，请检查链接或尝试其他来源'
-      case 'ACCESS_DENIED': return '源站拒绝访问该页面，请确认你有访问权限'
-      case 'TARGET_BLOCKED': return '该地址不符合安全访问规则，请检查链接'
-      case 'BROWSER_BUSY': return '浏览器解析繁忙，请稍后重试'
-      case 'CANCELLED': return '解析已取消，请重试'
-      case 'TIMEOUT': return '解析超时，请稍后重试'
-      default: break
+      case 'DRM_UNSUPPORTED':
+        return t(
+          'This source is protected by DRM and cannot be shared as a video.'
+        )
+      case 'NO_MEDIA_FOUND':
+        return t(
+          'No playable video was found on the page. Check the URL or try another source.'
+        )
+      case 'ACCESS_DENIED':
+        return t(
+          'The source denied access. Check that you have permission to use it.'
+        )
+      case 'TARGET_BLOCKED':
+        return t('This address is not allowed. Check the URL.')
+      case 'BROWSER_BUSY':
+        return t('The browser resolver is busy. Try again shortly.')
+      case 'CANCELLED':
+        return t('Resolving was cancelled. Try again.')
+      case 'TIMEOUT':
+        return t('Resolving timed out. Try again.')
+      default:
+        break
     }
   }
-  return '暂时无法解析此链接，请确认链接可访问后重试'
+  return t(
+    'Could not resolve this link. Check that it is accessible and try again.'
+  )
 }
 
 interface MoviePushPanelProps {
@@ -179,13 +201,22 @@ interface MoviePushPanelProps {
 }
 
 export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
+  useTranslation()
+
+  const { socket } = useSocket()
+  const canSelect =
+    useRoomExperienceStore(
+      (state) => state.snapshot?.permissions.selectContent
+    ) ?? isHost
+  const canPlay =
+    useRoomExperienceStore((state) => state.snapshot?.permissions.playback) ??
+    isHost
+  const [addMode, setAddMode] = useState<'queue' | 'play'>('queue')
+  const playNextRef = useRef(false)
   const userRole = useAuthStore((state) => state.user?.role)
   const { betaFeaturesEnabled, fetchSettings } = useSystemSettingsStore()
   const addMovieStore = useRoomStore((state) => state.addMovie)
   const fetchMovies = useRoomStore((state) => state.fetchMovies)
-  const setPendingPreviewPlay = useRoomStore(
-    (state) => state.setPendingPreviewPlay
-  )
   const roomId = useRoomStore((state) => state.roomId)
   // TongMu 默认就是统一入口；专用来源面板仍保留给高级配置与质量切换。
   const [sourceType, setSourceType] = useState<SourceType>('mp4')
@@ -201,15 +232,82 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
   // B站 源保持启用：开关本就不显示（解析出的 MP4/DASH 必定原生可播），
   // 且保留原生失败时的 playsvideo 管线回退保险；其余源跟随面板开关。
   const addMovie = useCallback(
-    (_roomId: string, payload: Parameters<typeof addMovieStore>[1]) =>
-      addMovieStore(_roomId, {
+    async (_roomId: string, payload: Parameters<typeof addMovieStore>[1]) => {
+      const content = {
         ...payload,
         playsvideoEnabled:
           payload.source === 'bilibili'
             ? true
             : (payload.playsvideoEnabled ?? playsvideoEnabled),
-      }),
-    [addMovieStore, playsvideoEnabled]
+      }
+      if (canSelect) {
+        const created = await addMovieStore(_roomId, content)
+        if (canPlay && playNextRef.current && socket?.connected) {
+          playNextRef.current = false
+          setAddMode('queue')
+          await new Promise<void>((resolve, reject) =>
+            socket
+              .timeout(8000)
+              .emit(
+                'play-movie',
+                { roomId: _roomId, movieId: created.id },
+                (
+                  timeout: Error | null,
+                  response: { success: boolean; message?: string }
+                ) => {
+                  if (timeout || !response?.success)
+                    reject(
+                      new Error(
+                        'Added to the queue, but playback did not start. Use Play in the queue.'
+                      )
+                    )
+                  else {
+                    useRoomStore.getState().requestMoviePlay(created.id)
+                    resolve()
+                  }
+                }
+              )
+          ).catch(() =>
+            message.warning(
+              t(
+                'Added to the queue. Playback did not start; use Play in the queue.'
+              )
+            )
+          )
+        }
+        return
+      }
+      if (!socket?.connected)
+        throw new Error('Reconnect before suggesting content.')
+      await new Promise<void>((resolve, reject) =>
+        socket
+          .timeout(10000)
+          .emit(
+            'room:content:suggest',
+            { roomId: _roomId, content },
+            (
+              timeout: Error | null,
+              response: { success: boolean; message?: string }
+            ) => {
+              if (timeout || !response?.success)
+                reject(
+                  new Error(
+                    timeout
+                      ? 'The suggestion timed out. Try again.'
+                      : roomErrorMessage(response?.message)
+                  )
+                )
+              else {
+                message.success(
+                  'Suggestion sent. The host can add it to the queue.'
+                )
+                resolve()
+              }
+            }
+          )
+      )
+    },
+    [addMovieStore, canSelect, canPlay, playsvideoEnabled, socket]
   )
   const [resolvedMovie, setResolvedMovie] = useState<ResolvedSource | null>(
     null
@@ -268,7 +366,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
   const [qrModalOpen, setQrModalOpen] = useState(false)
   const [qrDataUrl, setQrDataUrl] = useState('')
   const [qrStatus, setQrStatus] = useState(0)
-  const [qrMessage, setQrMessage] = useState('请使用哔哩哔哩 App 扫码登录')
+  const [qrMessage, setQrMessage] = useState('Scan with the Bilibili app.')
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isPollingRef = useRef(false)
   const qrRetryCountRef = useRef(0)
@@ -279,10 +377,13 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
   const resolveAbortRef = useRef<AbortController | null>(null)
   const addInFlightRef = useRef(false)
 
-  useEffect(() => () => {
-    resolveRevisionRef.current += 1
-    resolveAbortRef.current?.abort()
-  }, [])
+  useEffect(
+    () => () => {
+      resolveRevisionRef.current += 1
+      resolveAbortRef.current?.abort()
+    },
+    []
+  )
 
   const invalidateResolvedInput = useCallback(() => {
     resolveRevisionRef.current += 1
@@ -366,20 +467,20 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           qrRetryCountRef.current = 0
           setQrStatus(result.status)
           if (result.status === 0) {
-            setQrMessage('请使用哔哩哔哩 App 扫码登录')
+            setQrMessage(t('Scan with the Bilibili app.'))
           } else if (result.status === 1) {
-            setQrMessage('已扫码，请在 App 中确认登录')
+            setQrMessage(t('Scanned. Confirm in the app.'))
           } else if (result.status === 2) {
-            setQrMessage('登录成功')
+            setQrMessage(t('Signed in.'))
             setBilibiliLoggedIn(true)
             const info = await getBilibiliUserInfo()
             if (info) setBilibiliUser(info)
             setQrModalOpen(false)
-            message.success('B站 登录成功')
+            message.success(t('Signed in to Bilibili.'))
             stopQrPolling()
             return
           } else if (result.status === 3) {
-            setQrMessage('二维码已过期，请重新获取')
+            setQrMessage(t('This code expired. Generate a new one.'))
             stopQrPolling()
             return
           }
@@ -388,10 +489,10 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           console.error('[MoviePushPanel] QR poll error:', err)
           qrRetryCountRef.current += 1
           if (qrRetryCountRef.current <= 2) {
-            setQrMessage('轮询状态失败，正在重试…')
+            setQrMessage(t('Could not check the code. Retrying…'))
             pollTimerRef.current = setTimeout(poll, 2000)
           } else {
-            setQrMessage('轮询状态失败，请重新获取')
+            setQrMessage(t('Could not check the code. Generate a new one.'))
             stopQrPolling()
           }
         }
@@ -405,14 +506,16 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
   const handleOpenQrModal = useCallback(async () => {
     stopQrPolling()
     setQrStatus(0)
-    setQrMessage('请使用哔哩哔哩 App 扫码登录')
+    setQrMessage(t('Scan with the Bilibili app.'))
     setQrModalOpen(true)
     try {
       const data = await getBilibiliQrCode()
       setQrDataUrl(data.qrDataUrl)
       startQrPolling(data.qrcodeKey)
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '获取二维码失败')
+      message.error(
+        err instanceof Error ? err.message : t('Could not generate a code.')
+      )
       setQrModalOpen(false)
     }
   }, [stopQrPolling, startQrPolling])
@@ -427,49 +530,38 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
       await logoutBilibili()
       setBilibiliLoggedIn(false)
       setBilibiliUser(null)
-      message.success('已退出 B站 登录')
+      message.success(t('Signed out of Bilibili.'))
     } catch {
-      message.error('退出登录失败')
+      message.error(t('Could not sign out.'))
     }
   }, [])
 
   const handleSelectAnimeEpisode = useCallback(
     async (sourceId: string, episode: AniSubsEpisode, title: string) => {
       if (!isHost) {
-        message.info('只有房主可以播放影片')
+        message.info(t('You do not have permission to play videos.'))
         return
       }
       if (!roomId) {
-        message.error('未连接房间')
+        message.error(t('Reconnect to the room first.'))
         return
       }
 
       setLoading(true)
       try {
-        const sourceInput = buildAnimeProviderReference('anisubs', sourceId, episode)
+        const sourceInput = buildAnimeProviderReference(
+          'anisubs',
+          sourceId,
+          episode
+        )
         const resolved = await resolveMediaInput(sourceInput, { roomId })
-        const finalUrl = resolved.plan.candidateUrl ?? resolved.descriptor.finalUrl
-
-        // 1. 触发实时预览播放（通过 store 解耦 useWatchTogether）
-        //    代理 URL 已包含防盗链信息，无需再传 headers
-        setPendingPreviewPlay({
-          url: finalUrl,
-          title,
-          sourceType: 'anime',
-          format: resolved.descriptor.container,
-          audioUrl: resolved.descriptor.audioUrl,
-          videoCodec: resolved.descriptor.videoCodec,
-          audioCodec: resolved.descriptor.audioCodec,
-          duration: resolved.descriptor.duration,
-          playsvideoEnabled,
-        })
 
         // 2. 同时异步加入影片列表（不阻塞预览播放）
         //    ani-subs 的视频地址带 token/signature，短期有效，
         //    因此存储 sourceMeta 元数据而非解析后的 URL。
         //    播放时（含刷新恢复）通过 sourceMeta 重新解析获取最新地址。
         //    url 字段存储 sourceId 作为标识，便于调试和日志追踪。
-        void addMovie(roomId, {
+        await addMovie(roomId, {
           url: sourceInput,
           title,
           source: 'anime',
@@ -481,62 +573,45 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           audioCodec: resolved.descriptor.audioCodec,
           duration: resolved.descriptor.duration,
         })
-          .then(() => fetchMovies(roomId))
-          .catch((err) => {
-            console.error(
-              '[MoviePushPanel] addMovie/fetchMovies after preview failed:',
-              err
-            )
-          })
-
-        message.success('已开始播放并加入列表')
+        await fetchMovies(roomId)
+        message.success(
+          canSelect
+            ? t('Added your selection.')
+            : t('Suggestion sent to the host.')
+        )
       } catch (err) {
         console.error('[MoviePushPanel] select anime episode error:', err)
-        message.error(err instanceof Error ? err.message : '加载番剧集数失败')
+        message.error(
+          err instanceof Error ? err.message : t('Could not load the episode.')
+        )
       } finally {
         setLoading(false)
       }
     },
-    [
-      isHost,
-      roomId,
-      addMovie,
-      fetchMovies,
-      setPendingPreviewPlay,
-      playsvideoEnabled,
-    ]
+    [isHost, roomId, addMovie, fetchMovies, canSelect]
   )
 
   const handleSelectKazumiEpisode = useCallback(
     async (sourceId: string, episode: KazumiEpisode, title: string) => {
       if (!isHost) {
-        message.info('只有房主可以播放影片')
+        message.info(t('You do not have permission to play videos.'))
         return
       }
       if (!roomId) {
-        message.error('未连接房间')
+        message.error(t('Reconnect to the room first.'))
         return
       }
 
       setLoading(true)
       try {
-        const sourceInput = buildAnimeProviderReference('kazumi', sourceId, episode)
+        const sourceInput = buildAnimeProviderReference(
+          'kazumi',
+          sourceId,
+          episode
+        )
         const resolved = await resolveMediaInput(sourceInput, { roomId })
-        const finalUrl = resolved.plan.candidateUrl ?? resolved.descriptor.finalUrl
 
-        setPendingPreviewPlay({
-          url: finalUrl,
-          title,
-          sourceType: 'kazumi',
-          format: resolved.descriptor.container,
-          audioUrl: resolved.descriptor.audioUrl,
-          videoCodec: resolved.descriptor.videoCodec,
-          audioCodec: resolved.descriptor.audioCodec,
-          duration: resolved.descriptor.duration,
-          playsvideoEnabled,
-        })
-
-        void addMovie(roomId, {
+        await addMovie(roomId, {
           url: sourceInput,
           title,
           source: 'kazumi',
@@ -548,30 +623,22 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           audioCodec: resolved.descriptor.audioCodec,
           duration: resolved.descriptor.duration,
         })
-          .then(() => fetchMovies(roomId))
-          .catch((err) => {
-            console.error(
-              '[MoviePushPanel] addMovie/fetchMovies after kazumi preview failed:',
-              err
-            )
-          })
-
-        message.success('已开始播放并加入列表')
+        await fetchMovies(roomId)
+        message.success(
+          canSelect
+            ? t('Added your selection.')
+            : t('Suggestion sent to the host.')
+        )
       } catch (err) {
         console.error('[MoviePushPanel] select kazumi episode error:', err)
-        message.error(err instanceof Error ? err.message : '加载番剧集数失败')
+        message.error(
+          err instanceof Error ? err.message : t('Could not load the episode.')
+        )
       } finally {
         setLoading(false)
       }
     },
-    [
-      isHost,
-      roomId,
-      addMovie,
-      fetchMovies,
-      setPendingPreviewPlay,
-      playsvideoEnabled,
-    ]
+    [isHost, roomId, addMovie, fetchMovies, canSelect]
   )
 
   useEffect(() => {
@@ -662,47 +729,49 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
   const handleSelectFilesFromMount = useCallback(
     async (paths: string[]) => {
       if (!isHost) {
-        message.info('只有房主可以添加影片')
+        message.info(t('You do not have permission to add content.'))
         return
       }
       if (!roomId) {
-        message.error('未连接房间')
+        message.error(t('Reconnect to the room first.'))
         return
       }
 
       const mountId = Number(selectedMountId)
       if (!mountId) {
-        message.warning('请选择已保存的挂载')
+        message.warning(t('Choose a saved source.'))
         return
       }
 
       setLoading(true)
-      setResolveProgress(`正在批量解析 ${paths.length} 个文件...`)
+      setResolveProgress(
+        t('Resolving  {value1}  files…', { value1: paths.length })
+      )
       try {
         let added = 0
-          for (const path of paths) {
-            const normalizedPath = normalizeMountPath(path)
-            if (sourceType === 'webdav' || sourceType === 'openlist') {
-              const sourceInput = buildStorageReference({
-                provider: sourceType,
-                mountId,
-                path: normalizedPath,
-              })
-              const resolved = await resolveMediaInput(sourceInput, { roomId })
-              const media = resolved.descriptor
-              const mount = mounts.find((item) => item.id === mountId)
-              await addMovie(roomId, {
-                url: media.finalUrl,
-                title: media.title || extractTitleFromUrl(normalizedPath),
-                source: sourceType,
-                sourceInput,
-                mediaDescriptor: stripTransientMediaDescriptor(media),
-                format: media.container,
-                duration: media.duration,
-                serverUrl: mount?.serverUrl,
-                path: normalizedPath,
-                directLink: resolved.plan.candidateMode === 'DIRECT',
-              })
+        for (const path of paths) {
+          const normalizedPath = normalizeMountPath(path)
+          if (sourceType === 'webdav' || sourceType === 'openlist') {
+            const sourceInput = buildStorageReference({
+              provider: sourceType,
+              mountId,
+              path: normalizedPath,
+            })
+            const resolved = await resolveMediaInput(sourceInput, { roomId })
+            const media = resolved.descriptor
+            const mount = mounts.find((item) => item.id === mountId)
+            await addMovie(roomId, {
+              url: media.finalUrl,
+              title: media.title || extractTitleFromUrl(normalizedPath),
+              source: sourceType,
+              sourceInput,
+              mediaDescriptor: stripTransientMediaDescriptor(media),
+              format: media.container,
+              duration: media.duration,
+              serverUrl: mount?.serverUrl,
+              path: normalizedPath,
+              directLink: resolved.plan.candidateMode === 'DIRECT',
+            })
             added++
           } else if (sourceType === 'ftp') {
             const sourceInput = buildStorageReference({
@@ -726,35 +795,50 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
             })
             added++
           } else if (sourceType === 'emby') {
-            const sourceInput = buildMediaServerReference({ provider: 'emby', mountId, itemId: normalizedPath })
+            const sourceInput = buildMediaServerReference({
+              provider: 'emby',
+              mountId,
+              itemId: normalizedPath,
+            })
             const resolved = await resolveMediaInput(sourceInput, { roomId })
-            await addMovie(roomId, mediaServerMoviePayload('emby', mountId, normalizedPath, resolved))
+            await addMovie(
+              roomId,
+              mediaServerMoviePayload('emby', mountId, normalizedPath, resolved)
+            )
             added++
           } else if (sourceType === 'jellyfin') {
-            const sourceInput = buildMediaServerReference({ provider: 'jellyfin', mountId, itemId: normalizedPath })
+            const sourceInput = buildMediaServerReference({
+              provider: 'jellyfin',
+              mountId,
+              itemId: normalizedPath,
+            })
             const resolved = await resolveMediaInput(sourceInput, { roomId })
-            await addMovie(roomId, mediaServerMoviePayload('jellyfin', mountId, normalizedPath, resolved))
+            await addMovie(
+              roomId,
+              mediaServerMoviePayload(
+                'jellyfin',
+                mountId,
+                normalizedPath,
+                resolved
+              )
+            )
             added++
           }
         }
-        message.success(`已添加 ${added} 部影片`)
+        message.success(t('Added  {value1} videos', { value1: added }))
       } catch (err) {
         console.error('[MoviePushPanel] batch add error:', err)
-        message.error(err instanceof Error ? err.message : '批量添加失败')
+        message.error(
+          err instanceof Error
+            ? err.message
+            : t('Could not add the selected files.')
+        )
       } finally {
         setLoading(false)
         setResolveProgress('')
       }
     },
-    [
-      isHost,
-      roomId,
-      selectedMountId,
-      sourceType,
-      ftp.serverUrl,
-      mounts,
-      addMovie,
-    ]
+    [isHost, roomId, selectedMountId, sourceType, mounts, addMovie]
   )
 
   // 本地服务器文件批量添加：与挂载浏览（handleSelectFilesFromMount）行为对齐，
@@ -762,16 +846,18 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
   const handleSelectFilesFromServer = useCallback(
     async (paths: string[]) => {
       if (!isHost) {
-        message.info('只有房主可以添加影片')
+        message.info(t('You do not have permission to add content.'))
         return
       }
       if (!roomId) {
-        message.error('未连接房间')
+        message.error(t('Reconnect to the room first.'))
         return
       }
 
       setLoading(true)
-      setResolveProgress(`正在批量解析 ${paths.length} 个文件...`)
+      setResolveProgress(
+        t('Resolving  {value1}  files…', { value1: paths.length })
+      )
       try {
         let added = 0
         for (const path of paths) {
@@ -792,10 +878,14 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           })
           added++
         }
-        message.success(`已添加 ${added} 部影片`)
+        message.success(t('Added  {value1} videos', { value1: added }))
       } catch (err) {
         console.error('[MoviePushPanel] batch add server files error:', err)
-        message.error(err instanceof Error ? err.message : '批量添加失败')
+        message.error(
+          err instanceof Error
+            ? err.message
+            : t('Could not add the selected files.')
+        )
       } finally {
         setLoading(false)
         setResolveProgress('')
@@ -821,28 +911,29 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
   // 链接入口先识别并预览，再确认加入；媒体库沿用现有选择流程。
   const handleResolve = async () => {
     if (!isHost) {
-      message.info('只有房主可以添加影片')
+      message.info(t('You do not have permission to add content.'))
       return
     }
     if (!roomId) {
-      message.error('未连接房间')
+      message.error(t('Reconnect to the room first.'))
       return
     }
     if (sourceType !== 'bilibili' && sourceType !== 'mp4') return
     if (!url.trim()) {
-      message.warning('请输入视频地址')
+      message.warning(t('Paste a video URL.'))
       return
     }
 
     if (addInFlightRef.current) return
-    if (resolveAbortRef.current && !resolveAbortRef.current.signal.aborted) return
+    if (resolveAbortRef.current && !resolveAbortRef.current.signal.aborted)
+      return
     const revision = ++resolveRevisionRef.current
     const controller = new AbortController()
     resolveAbortRef.current = controller
     const input = url.trim()
     setMediaResolveError('')
     setLoading(true)
-    setResolveProgress('正在初始化解析...')
+    setResolveProgress(t('Preparing the source…'))
     try {
       const bvid = extractBvid(input)
 
@@ -851,7 +942,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
       const cliProxyUrl = getActiveCliProxyUrl()
       if (cliProxyUrl && bvid) {
         try {
-          setResolveProgress('正在通过 CLI 代理解析...')
+          setResolveProgress(t('Resolving through your CLI…'))
           resolved = await resolveBilibiliViaCli(
             cliProxyUrl,
             bvid,
@@ -865,10 +956,14 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           // CLI 代理解析失败：连接失败或后端返回错误，自动回退到服务器端解析
           if (cliErr instanceof CliConnectionError) {
             console.warn(
-              '[MoviePushPanel] CLI 代理连接失败，回退到服务器端解析'
+              '[MoviePushPanel] CLI 代理Connection failed，回退到服务器端Resolve'
             )
           } else if (cliErr instanceof CliResolveError) {
-            message.warning(`${cliErr.message}，已回退到服务器端解析`)
+            message.warning(
+              t('{value1}. Using the server resolver.', {
+                value1: t(cliErr.message),
+              })
+            )
           }
           // resolved 保持 undefined，下方走服务器端解析
         }
@@ -876,7 +971,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
 
       if (revision !== resolveRevisionRef.current) return
       if (!resolved) {
-        setResolveProgress('正在通过服务器解析...')
+        setResolveProgress(t('Resolving through the server…'))
         const mediaResolved = await resolveMediaInput(input, {
           roomId,
           browserSniff: true,
@@ -888,7 +983,9 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
         if (mediaResolved.descriptor.resolver !== 'bilibili') {
           setResolvedMovie(null)
           if (sourceType === 'bilibili') {
-            setMediaResolveError('这个链接不是 B 站视频，请使用通用链接入口')
+            setMediaResolveError(
+              t('This is not a Bilibili video. Choose Link or webpage.')
+            )
             return
           }
           setMediaDiagnostics(mediaResolved)
@@ -932,7 +1029,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
     const revision = ++resolveRevisionRef.current
     const input = url.trim()
     setQualityLoading(true)
-    setResolveProgress('正在切换清晰度...')
+    setResolveProgress(t('Changing quality…'))
     try {
       const bvid = extractBvid(input)
 
@@ -941,7 +1038,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
       const cliProxyUrl = getActiveCliProxyUrl()
       if (cliProxyUrl && bvid) {
         try {
-          setResolveProgress('正在通过 CLI 代理切换清晰度...')
+          setResolveProgress(t('Changing quality through the CLI…'))
           resolved = await resolveBilibiliViaCli(
             cliProxyUrl,
             bvid,
@@ -954,17 +1051,21 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           if (revision !== resolveRevisionRef.current) return
           if (cliErr instanceof CliConnectionError) {
             console.warn(
-              '[MoviePushPanel] CLI 代理连接失败，回退到服务器端解析'
+              '[MoviePushPanel] CLI 代理Connection failed，回退到服务器端Resolve'
             )
           } else if (cliErr instanceof CliResolveError) {
-            message.warning(`${cliErr.message}，已回退到服务器端解析`)
+            message.warning(
+              t('{value1}. Using the server resolver.', {
+                value1: t(cliErr.message),
+              })
+            )
           }
         }
       }
 
       if (revision !== resolveRevisionRef.current) return
       if (!resolved) {
-        setResolveProgress('正在通过服务器切换清晰度...')
+        setResolveProgress(t('Changing quality through the server…'))
         const mediaResolved = await resolveMediaInput(input, {
           roomId,
           requestedQn: qn,
@@ -983,7 +1084,9 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
     } catch (err) {
       if (revision !== resolveRevisionRef.current) return
       console.error('[MoviePushPanel] switch quality error:', err)
-      message.error(err instanceof Error ? err.message : '切换清晰度失败')
+      message.error(
+        err instanceof Error ? err.message : t('Could not change quality.')
+      )
     } finally {
       if (revision === resolveRevisionRef.current) {
         setQualityLoading(false)
@@ -1002,7 +1105,12 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
     const input = url.trim()
     setShowPageSelector(false)
     setPageSelectLoading(true)
-    setResolveProgress(`正在解析 P${page} ${targetPage.part}...`)
+    setResolveProgress(
+      t('Resolving episode {value1} {value2}...', {
+        value1: page,
+        value2: targetPage.part,
+      })
+    )
     try {
       const bvid = extractBvid(input)
 
@@ -1011,7 +1119,11 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
       const cliProxyUrl = getActiveCliProxyUrl()
       if (cliProxyUrl && bvid) {
         try {
-          setResolveProgress(`正在通过 CLI 代理解析 P${page}...`)
+          setResolveProgress(
+            t('Resolving through your CLI: episode {value1}...', {
+              value1: page,
+            })
+          )
           resolved = await resolveBilibiliViaCli(
             cliProxyUrl,
             bvid,
@@ -1024,17 +1136,25 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           if (revision !== resolveRevisionRef.current) return
           if (cliErr instanceof CliConnectionError) {
             console.warn(
-              '[MoviePushPanel] CLI 代理连接失败，回退到服务器端解析'
+              '[MoviePushPanel] CLI 代理Connection failed，回退到服务器端Resolve'
             )
           } else if (cliErr instanceof CliResolveError) {
-            message.warning(`${cliErr.message}，已回退到服务器端解析`)
+            message.warning(
+              t('{value1}. Using the server resolver.', {
+                value1: t(cliErr.message),
+              })
+            )
           }
         }
       }
 
       if (revision !== resolveRevisionRef.current) return
       if (!resolved) {
-        setResolveProgress(`正在通过服务器解析 P${page}...`)
+        setResolveProgress(
+          t('Resolving through the server: episode {value1}...', {
+            value1: page,
+          })
+        )
         const mediaResolved = await resolveMediaInput(input, {
           roomId,
           requestedQn: resolvedMovie.currentQn,
@@ -1053,7 +1173,9 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
     } catch (err) {
       if (revision !== resolveRevisionRef.current) return
       console.error('[MoviePushPanel] page select error:', err)
-      message.error(err instanceof Error ? err.message : '切换分P失败')
+      message.error(
+        err instanceof Error ? err.message : t('Could not change episode.')
+      )
     } finally {
       if (revision === resolveRevisionRef.current) {
         setPageSelectLoading(false)
@@ -1066,19 +1188,22 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
   const handleAddMovie = async () => {
     if (addInFlightRef.current || qualityLoading || pageSelectLoading) return
     if (!isHost) {
-      message.info('只有房主可以添加影片')
+      message.info(t('You do not have permission to add content.'))
       return
     }
     if (!roomId) {
-      message.error('未连接房间')
+      message.error(t('Reconnect to the room first.'))
       return
     }
     addInFlightRef.current = true
     const inputRevision = resolveRevisionRef.current
     setLoading(true)
-    setResolveProgress('正在添加影片...')
+    setResolveProgress(t('Adding content…'))
     try {
-      if ((sourceType === 'bilibili' || sourceType === 'mp4') && resolvedMovie) {
+      if (
+        (sourceType === 'bilibili' || sourceType === 'mp4') &&
+        resolvedMovie
+      ) {
         const title = resolvedMovie.title || url.trim()
         const serverMedia =
           mediaDiagnostics?.descriptor.resolver === 'bilibili'
@@ -1110,15 +1235,19 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           currentPage: resolvedMovie.currentPage ?? 1,
         })
         if (inputRevision === resolveRevisionRef.current) resetForm()
-        message.success('影片已添加')
+        message.success(t('Added to the queue.'))
       } else if (sourceType === 'mp4') {
         if (!url.trim() || !mediaDiagnostics) {
-          message.warning('请先解析当前链接')
+          message.warning(t('Resolve this link first.'))
           return
         }
         const resolved = mediaDiagnostics
         if (resolved.plan.engine === 'blocked') {
-          message.warning('当前设备没有可用播放方式，请更换设备或链接')
+          message.warning(
+            t(
+              'This browser cannot play the source. Try another browser or source.'
+            )
+          )
           return
         }
         const media = resolved.descriptor
@@ -1141,7 +1270,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
         if (inputRevision === resolveRevisionRef.current) {
           resetForm()
         }
-        message.success('影片已添加')
+        message.success(t('Added to the queue.'))
       } else if (sourceType === 'webdav' || sourceType === 'openlist') {
         const mountPath = (
           sourceType === 'webdav' ? webdav.path : openlist.path
@@ -1149,15 +1278,17 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
         const label = sourceType === 'webdav' ? 'WebDAV' : 'OpenList'
 
         if (!mountPath) {
-          message.warning('请填写文件路径')
+          message.warning(t('Enter a file path.'))
           return
         }
         const mountId = Number(selectedMountId)
         if (!mountId) {
-          message.warning(`请选择已保存的 ${label} 挂载`)
+          message.warning(
+            t('Choose your saved {value1} source', { value1: label })
+          )
           return
         }
-        setResolveProgress(`正在解析 ${label} 文件...`)
+        setResolveProgress(t('Resolving  {value1}  file…', { value1: label }))
         const sourceInput = buildStorageReference({
           provider: sourceType,
           mountId,
@@ -1179,16 +1310,16 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           directLink: resolved.plan.candidateMode === 'DIRECT',
         })
         if (inputRevision === resolveRevisionRef.current) resetForm()
-        message.success('影片已添加')
+        message.success(t('Added to the queue.'))
       } else if (sourceType === 'ftp') {
         if (!ftp.serverUrl.trim() || !ftp.path.trim()) {
-          message.warning('请填写服务器地址与路径')
+          message.warning(t('Enter the server URL and file path.'))
           return
         }
-        setResolveProgress('正在解析 FTP 文件...')
+        setResolveProgress(t('Resolving the FTP file…'))
         const mountId = Number(selectedMountId)
         if (!mountId) {
-          message.warning('请选择已保存的 FTP 挂载')
+          message.warning(t('Choose your saved FTP source'))
           return
         }
         const sourceInput = buildStorageReference({
@@ -1211,52 +1342,70 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           path: ftp.path.trim(),
         })
         if (inputRevision === resolveRevisionRef.current) resetForm()
-        message.success('影片已添加')
+        message.success(t('Added to the queue.'))
       } else if (sourceType === 'emby') {
         const mountId = Number(selectedMountId)
         if (!mountId) {
-          message.warning('请选择已保存的 Emby 挂载')
+          message.warning(t('Choose your saved Emby source'))
           return
         }
         // Emby 是媒体库型，需通过浏览选择条目（itemId）
         // 手动输入场景仅支持已复制的 itemId 直加
         const itemId = url.trim()
         if (!itemId) {
-          message.warning('请通过「浏览 Emby 媒体库」选择条目，或粘贴 itemId')
+          message.warning(
+            t('Browse Emby to select an item, or enter its item ID.')
+          )
           return
         }
-        setResolveProgress('正在解析 Emby 条目...')
-        const sourceInput = buildMediaServerReference({ provider: 'emby', mountId, itemId })
+        setResolveProgress(t('Resolving the Emby item…'))
+        const sourceInput = buildMediaServerReference({
+          provider: 'emby',
+          mountId,
+          itemId,
+        })
         const resolved = await resolveMediaInput(sourceInput, { roomId })
-        await addMovie(roomId, mediaServerMoviePayload('emby', mountId, itemId, resolved))
+        await addMovie(
+          roomId,
+          mediaServerMoviePayload('emby', mountId, itemId, resolved)
+        )
         if (inputRevision === resolveRevisionRef.current) resetForm()
-        message.success('影片已添加')
+        message.success(t('Added to the queue.'))
       } else if (sourceType === 'jellyfin') {
         const mountId = Number(selectedMountId)
         if (!mountId) {
-          message.warning('请选择已保存的 Jellyfin 挂载')
+          message.warning(t('Choose your saved Jellyfin source'))
           return
         }
         const itemId = url.trim()
         if (!itemId) {
           message.warning(
-            '请通过「浏览 Jellyfin 媒体库」选择条目，或粘贴 itemId'
+            t('Browse Jellyfin to select an item, or enter its item ID.')
           )
           return
         }
-        setResolveProgress('正在解析 Jellyfin 条目...')
-        const sourceInput = buildMediaServerReference({ provider: 'jellyfin', mountId, itemId })
+        setResolveProgress(t('Resolving the Jellyfin item…'))
+        const sourceInput = buildMediaServerReference({
+          provider: 'jellyfin',
+          mountId,
+          itemId,
+        })
         const resolved = await resolveMediaInput(sourceInput, { roomId })
-        await addMovie(roomId, mediaServerMoviePayload('jellyfin', mountId, itemId, resolved))
+        await addMovie(
+          roomId,
+          mediaServerMoviePayload('jellyfin', mountId, itemId, resolved)
+        )
         if (inputRevision === resolveRevisionRef.current) resetForm()
-        message.success('影片已添加')
+        message.success(t('Added to the queue.'))
       } else if (sourceType === 'server-files') {
         if (!serverFilePath.trim()) {
-          message.warning('请选择服务器文件')
+          message.warning(t('Choose a server file.'))
           return
         }
-        setResolveProgress('正在解析服务器文件...')
-        const sourceInput = buildServerFileStorageReference(serverFilePath.trim())
+        setResolveProgress(t('Resolving Server files...'))
+        const sourceInput = buildServerFileStorageReference(
+          serverFilePath.trim()
+        )
         const resolved = await resolveMediaInput(sourceInput, { roomId })
         const media = resolved.descriptor
         await addMovie(roomId, {
@@ -1271,14 +1420,22 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           audioCodec: media.audioCodec ?? undefined,
         })
         if (inputRevision === resolveRevisionRef.current) resetForm()
-        message.success('影片已添加')
+        message.success(t('Added to the queue.'))
       }
     } catch (err) {
       if (inputRevision !== resolveRevisionRef.current) return
-      const errorMessage = err instanceof MovieSubmissionError ? err.message : sourceType === 'mp4'
-        ? mediaResolveMessage(err)
-        : err instanceof Error ? err.message : '添加影片失败'
-      console.error('[MoviePushPanel] add movie error:', sourceType === 'mp4' ? errorMessage : err)
+      const errorMessage =
+        err instanceof MovieSubmissionError
+          ? err.message
+          : sourceType === 'mp4'
+            ? mediaResolveMessage(err)
+            : err instanceof Error
+              ? err.message
+              : 'Could not add content.'
+      console.error(
+        '[MoviePushPanel] add movie error:',
+        sourceType === 'mp4' ? errorMessage : err
+      )
       if (sourceType === 'mp4') setMediaResolveError(errorMessage)
       message.error(errorMessage)
     } finally {
@@ -1301,7 +1458,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           onClick={() => setAnimeOpen(true)}
           disabled={!isHost}
         >
-          搜索番剧
+          {t('Find anime')}
         </Button>
       )
     }
@@ -1317,7 +1474,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           onClick={() => setKazumiOpen(true)}
           disabled={!isHost}
         >
-          搜索番剧
+          {t('Find anime')}
         </Button>
       )
     }
@@ -1332,9 +1489,14 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
             loading={loading}
             icon={<Plus className="h-4 w-4" />}
             onClick={handleAddMovie}
-            disabled={!isHost || qualityLoading || pageSelectLoading || mediaDiagnostics?.plan.engine === 'blocked'}
+            disabled={
+              !isHost ||
+              qualityLoading ||
+              pageSelectLoading ||
+              mediaDiagnostics?.plan.engine === 'blocked'
+            }
           >
-            添加
+            {t('Add')}
           </Button>
         )
       }
@@ -1348,7 +1510,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           onClick={() => void handleResolve()}
           disabled={!isHost}
         >
-          解析
+          {t('Resolve')}
         </Button>
       )
     }
@@ -1364,14 +1526,14 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
         onClick={() => void handleAddMovie()}
         disabled={!isHost}
       >
-        添加
+        {t('Add')}
       </Button>
     )
   }
 
   const renderSourceForm = () => {
     const getMountOptions = (type: MountType) => [
-      { value: '', label: '手动填写' },
+      { value: '', label: t('Enter manually') },
       ...mounts
         .filter((m) => m.type === type)
         .map((m) => ({ value: String(m.id), label: m.name })),
@@ -1385,13 +1547,15 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           onChange={(e) => changeUrl(e.target.value)}
           placeholder={
             sourceType === 'bilibili'
-              ? '视频 Url 或 bv 号'
-              : '影片网页、MP4/MKV、M3U8、MPD、FLV 或无后缀媒体 URL'
+              ? t('Bilibili URL or BV ID')
+              : t('Paste a video, playlist or webpage URL')
           }
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault()
-              void (resolvedMovie || mediaDiagnostics ? handleAddMovie() : handleResolve())
+              void (resolvedMovie || mediaDiagnostics
+                ? handleAddMovie()
+                : handleResolve())
             }
           }}
         />
@@ -1402,7 +1566,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
       return (
         <Space direction="vertical" className="w-full" size="sm">
           <Dropdown
-            label="使用已保存的 WebDAV 挂载"
+            label={t('Your WebDAV sources')}
             value={selectedMountId}
             options={getMountOptions('webdav')}
             onChange={handleMountSelect}
@@ -1418,7 +1582,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
                 if (mount) setBrowsingMount(mount)
               }}
             >
-              浏览文件
+              {t('Browse files')}
             </Button>
           )}
           {!selectedMountId && (
@@ -1428,7 +1592,9 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
               onChange={(e) =>
                 setWebdav((prev) => ({ ...prev, serverUrl: e.target.value }))
               }
-              placeholder="WebDAV 服务器地址，如 https://example.com/dav（直链模式必填）"
+              placeholder={t(
+                'WebDAV server URL, such as https://example.com/dav'
+              )}
             />
           )}
           <Input
@@ -1442,8 +1608,8 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
             }
             placeholder={
               selectedMountId
-                ? '文件路径（已选挂载，留空可从挂载根目录浏览）'
-                : '文件路径，如 /movies/video.mp4'
+                ? t('File path (or browse your source)')
+                : 'File path, such as /movies/video.mp4'
             }
           />
           <Dropdown
@@ -1451,10 +1617,10 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
               isWebdavInternal ? 'proxy' : webdavDirectLink ? 'direct' : 'proxy'
             }
             options={[
-              { value: 'proxy', label: '服务器转发' },
+              { value: 'proxy', label: t('Server relay') },
               {
                 value: 'direct',
-                label: '直链直连',
+                label: t('Direct connection'),
                 disabled: isWebdavInternal,
               },
             ]}
@@ -1462,7 +1628,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           />
           {isWebdavInternal && (
             <div className="rounded border border-[var(--md-sys-color-outline-variant)] bg-[var(--md-sys-color-surface-container-high)] px-3 py-2 text-xs text-[var(--md-sys-color-on-surface-variant)]">
-              检测到内网地址，浏览器无法直连，已强制使用服务器转发模式
+              {t('This source uses a private address. Using server relay.')}
             </div>
           )}
         </Space>
@@ -1473,7 +1639,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
       return (
         <Space direction="vertical" className="w-full" size="sm">
           <Dropdown
-            label="使用已保存的 FTP 挂载"
+            label={t('Your FTP sources')}
             value={selectedMountId}
             options={getMountOptions('ftp')}
             onChange={handleMountSelect}
@@ -1489,7 +1655,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
                 if (mount) setBrowsingMount(mount)
               }}
             >
-              浏览文件
+              {t('Browse files')}
             </Button>
           )}
           {!selectedMountId && (
@@ -1500,7 +1666,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
                 onChange={(e) =>
                   setFtp((prev) => ({ ...prev, serverUrl: e.target.value }))
                 }
-                placeholder="FTP 服务器地址，如 ftp.example.com"
+                placeholder={t('FTP server, such as ftp.example.com')}
               />
               <Input
                 size="sm"
@@ -1512,7 +1678,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
                     port: Number(e.target.value) || 21,
                   }))
                 }
-                placeholder="端口，默认 21"
+                placeholder={t('Port (default: 21)')}
               />
               <Input
                 size="sm"
@@ -1520,7 +1686,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
                 onChange={(e) =>
                   setFtp((prev) => ({ ...prev, username: e.target.value }))
                 }
-                placeholder="用户名（可选）"
+                placeholder={t('Username (optional)')}
               />
               <Input
                 size="sm"
@@ -1529,7 +1695,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
                 onChange={(e) =>
                   setFtp((prev) => ({ ...prev, password: e.target.value }))
                 }
-                placeholder="密码（可选）"
+                placeholder={t('Password (optional)')}
               />
             </>
           )}
@@ -1544,8 +1710,8 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
             }
             placeholder={
               selectedMountId
-                ? '文件路径（已选挂载，留空可从挂载根目录浏览）'
-                : '文件路径，如 /movies/video.mp4'
+                ? t('File path (or browse your source)')
+                : 'File path, such as /movies/video.mp4'
             }
           />
         </Space>
@@ -1556,7 +1722,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
       return (
         <div className="rounded-[var(--md-sys-shape-corner)] border border-[var(--md-sys-color-outline)] bg-[var(--glass-bg)] p-3">
           <Text className="text-xs text-[var(--md-sys-color-on-surface-variant)]">
-            从 ani-subs 订阅源搜索番剧并选择集数播放。
+            {t('Find an episode from your ani-subs subscriptions.')}
           </Text>
         </div>
       )
@@ -1566,7 +1732,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
       return (
         <div className="rounded-[var(--md-sys-shape-corner)] border border-[var(--md-sys-color-outline)] bg-[var(--glass-bg)] p-3">
           <Text className="text-xs text-[var(--md-sys-color-on-surface-variant)]">
-            从 Kazumi XPath 规则源搜索番剧并选择集数播放。
+            {t('Find an episode using your Kazumi sources.')}
           </Text>
         </div>
       )
@@ -1576,7 +1742,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
       return (
         <Space direction="vertical" className="w-full" size="sm">
           <Dropdown
-            label="使用已保存的 OpenList 挂载"
+            label={t('Your OpenList sources')}
             value={selectedMountId}
             options={getMountOptions('openlist')}
             onChange={handleMountSelect}
@@ -1592,7 +1758,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
                 if (mount) setBrowsingMount(mount)
               }}
             >
-              浏览文件
+              {t('Browse files')}
             </Button>
           )}
           {!selectedMountId && (
@@ -1602,7 +1768,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
               onChange={(e) =>
                 setOpenlist((prev) => ({ ...prev, serverUrl: e.target.value }))
               }
-              placeholder="OpenList 服务器地址（直链模式必填，已选挂载自动填充）"
+              placeholder={t('OpenList server URL')}
             />
           )}
           <Input
@@ -1616,8 +1782,8 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
             }
             placeholder={
               selectedMountId
-                ? '文件路径（已选挂载，留空可从挂载根目录浏览）'
-                : '文件路径，如 /movies/video.mp4'
+                ? t('File path (or browse your source)')
+                : 'File path, such as /movies/video.mp4'
             }
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
@@ -1635,10 +1801,10 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
                   : 'proxy'
             }
             options={[
-              { value: 'proxy', label: '服务器转发' },
+              { value: 'proxy', label: t('Server relay') },
               {
                 value: 'direct',
-                label: '直链直连',
+                label: t('Direct connection'),
                 disabled: isOpenlistInternal,
               },
             ]}
@@ -1646,7 +1812,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           />
           {isOpenlistInternal && (
             <div className="rounded border border-[var(--md-sys-color-outline-variant)] bg-[var(--md-sys-color-surface-container-high)] px-3 py-2 text-xs text-[var(--md-sys-color-on-surface-variant)]">
-              检测到内网地址，浏览器无法直连，已强制使用服务器转发模式
+              {t('This source uses a private address. Using server relay.')}
             </div>
           )}
         </Space>
@@ -1657,7 +1823,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
       return (
         <Space direction="vertical" className="w-full" size="sm">
           <Dropdown
-            label="使用已保存的 Emby 挂载"
+            label={t('Your Emby sources')}
             value={selectedMountId}
             options={getMountOptions('emby')}
             onChange={handleMountSelect}
@@ -1674,7 +1840,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
                 if (mount) setBrowsingMount(mount)
               }}
             >
-              浏览 Emby 媒体库
+              {t('Browse Emby')}
             </Button>
           )}
           {!selectedMountId && (
@@ -1682,7 +1848,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
               size="sm"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              placeholder="粘贴 Emby itemId（可选，一般通过浏览选择）"
+              placeholder={t('Emby item ID (or browse the library)')}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault()
@@ -1692,18 +1858,22 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
             />
           )}
           <Dropdown
-            label="播放方式"
+            label={t('Connection')}
             value={embyDirectLink ? 'direct' : 'proxy'}
             options={[
-              { value: 'proxy', label: '服务器转发' },
-              { value: 'direct', label: '直链直连' },
+              { value: 'proxy', label: t('Server relay') },
+              { value: 'direct', label: t('Direct connection') },
             ]}
             onChange={(value) => setEmbyDirectLink(value === 'direct')}
           />
           <Text className="text-xs text-[var(--md-sys-color-on-surface-variant)]">
             {selectedMountId
-              ? '已选择挂载，点击「浏览 Emby 媒体库」逐级选择电影 / 剧集，多选模式可批量添加。'
-              : '选择挂载后点击「浏览 Emby 媒体库」逐级选择电影 / 剧集，多选模式可批量添加。服务器转发由本服务中转（跨域/防盗链友好）；直链直连由浏览器直接访问 Emby 服务器。'}
+              ? t(
+                  'Browse your Emby movies and series. Select multiple items to add them to the queue.'
+                )
+              : t(
+                  'Choose a source, then browse Emby movies and series. Direct connection plays from Emby; server relay is available when needed.'
+                )}
           </Text>
         </Space>
       )
@@ -1713,7 +1883,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
       return (
         <Space direction="vertical" className="w-full" size="sm">
           <Dropdown
-            label="使用已保存的 Jellyfin 挂载"
+            label={t('Your Jellyfin sources')}
             value={selectedMountId}
             options={getMountOptions('jellyfin')}
             onChange={handleMountSelect}
@@ -1730,7 +1900,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
                 if (mount) setBrowsingMount(mount)
               }}
             >
-              浏览 Jellyfin 媒体库
+              {t('Browse Jellyfin')}
             </Button>
           )}
           {!selectedMountId && (
@@ -1738,7 +1908,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
               size="sm"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              placeholder="粘贴 Jellyfin itemId（可选，一般通过浏览选择）"
+              placeholder={t('Jellyfin item ID (or browse the library)')}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault()
@@ -1748,18 +1918,22 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
             />
           )}
           <Dropdown
-            label="播放方式"
+            label={t('Connection')}
             value={jellyfinDirectLink ? 'direct' : 'proxy'}
             options={[
-              { value: 'proxy', label: '服务器转发' },
-              { value: 'direct', label: '直链直连' },
+              { value: 'proxy', label: t('Server relay') },
+              { value: 'direct', label: t('Direct connection') },
             ]}
             onChange={(value) => setJellyfinDirectLink(value === 'direct')}
           />
           <Text className="text-xs text-[var(--md-sys-color-on-surface-variant)]">
             {selectedMountId
-              ? '已选择挂载，点击「浏览 Jellyfin 媒体库」逐级选择电影 / 剧集，多选模式可批量添加。'
-              : '选择挂载后点击「浏览 Jellyfin 媒体库」逐级选择电影 / 剧集，多选模式可批量添加。服务器转发由本服务中转（跨域/防盗链友好）；直链直连由浏览器直接访问 Jellyfin 服务器。'}
+              ? t(
+                  'Browse your Jellyfin movies and series. Select multiple items to add them to the queue.'
+                )
+              : t(
+                  'Choose a source, then browse Jellyfin movies and series. Direct connection plays from Jellyfin; server relay is available when needed.'
+                )}
           </Text>
         </Space>
       )
@@ -1774,13 +1948,13 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
             icon={<FolderOpen className="h-4 w-4" />}
             onClick={() => setServerFilesBrowserOpen(true)}
           >
-            浏览服务器文件
+            {t('Browse server files')}
           </Button>
           <Input
             size="sm"
             value={serverFilePath}
             onChange={(e) => setServerFilePath(e.target.value)}
-            placeholder="手动输入路径，或点击上方按钮浏览选择（支持多选批量添加）"
+            placeholder={t('File path, or browse and select files')}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
@@ -1813,13 +1987,13 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           </div>
           <div className="flex min-w-0 flex-1 flex-col">
             <Text className="text-sm font-semibold leading-tight">
-              添加影片
+              {t('Add content')}
             </Text>
             <Text
               type="secondary"
               className="text-[10px] uppercase tracking-wide"
             >
-              选择来源并添加
+              {t('Select only the content you want to share.')}
             </Text>
           </div>
         </div>
@@ -1829,7 +2003,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           <div
             className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5"
             role="group"
-            aria-label="内容来源"
+            aria-label={t('Content sources')}
           >
             {ALL_SOURCE_OPTIONS.filter(
               (opt) =>
@@ -1852,40 +2026,80 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
                     : 'border-[var(--glass-border)] hover:bg-[var(--md-sys-color-surface-container-high)]'
                 )}
               >
-                {option.label}
+                {t(option.label)}
               </button>
             ))}
           </div>
 
-          {(['webdav', 'ftp', 'openlist', 'emby', 'jellyfin'] as const).includes(sourceType as MountType) &&
+          {(
+            ['webdav', 'ftp', 'openlist', 'emby', 'jellyfin'] as const
+          ).includes(sourceType as MountType) &&
             !mounts.some((mount) => mount.type === sourceType) && (
               <div className="rounded-xl border border-[var(--md-sys-color-outline-variant)] px-3 py-2 text-xs text-[var(--md-sys-color-on-surface-variant)]">
-                尚未连接此来源。{['webdav', 'ftp', 'openlist'].includes(sourceType) && '可以在下方手动填写，或'}
-                <a className="text-[var(--md-sys-color-primary)] underline" href="/profile" target="_blank" rel="noopener noreferrer">
-                  到个人空间添加挂载
+                {t('You have no saved sources of this type.')}{' '}
+                {['webdav', 'ftp', 'openlist'].includes(sourceType) &&
+                  t('Enter the connection below, or ')}
+                <a
+                  className="text-[var(--md-sys-color-primary)] underline"
+                  href="/profile"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {t('Connect a source in your account')}
                 </a>
-                。只有房主可以将影片加入房间。
+                . Only the selected items are shared with the room.
               </div>
             )}
 
           {renderSourceForm()}
 
+          {canSelect && canPlay && (
+            <fieldset className="tm-content-disposition">
+              <legend>{t('After selecting content')}</legend>
+              <label>
+                <input
+                  type="radio"
+                  name="content-disposition"
+                  checked={addMode === 'queue'}
+                  onChange={() => {
+                    setAddMode('queue')
+                    playNextRef.current = false
+                  }}
+                />
+                {t('Keep in the queue')}
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="content-disposition"
+                  checked={addMode === 'play'}
+                  onChange={() => {
+                    setAddMode('play')
+                    playNextRef.current = true
+                  }}
+                />
+                {t('Play the first selection now')}
+              </label>
+            </fieldset>
+          )}
+
           {renderActionButton()}
 
-          {/* 浏览器转码引擎开关：仅挂载/文件类源显示。B站 源解析出的
-              MP4/DASH 浏览器必定原生可播，无转码需求，隐藏开关避免困惑。 */}
+          {/* Optional browser compatibility engine开关：仅挂载/文件类源显示。B站 源Resolve出的
+              MP4/DASH Browse器必定原生可播，无转码需求，隐藏开关避免困惑。 */}
           {sourceType !== 'bilibili' && (
             <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-[var(--md-sys-shape-corner)] bg-[var(--md-sys-color-surface-container-high)]">
               <div className="min-w-0">
                 <Text className="block text-xs font-medium">
-                  浏览器转码引擎
+                  {t('Optional browser compatibility engine')}
                 </Text>
                 <Text
                   type="secondary"
                   className="block text-[11px] leading-snug mt-0.5"
                 >
-                  开启：MKV/DTS
-                  等非常规格式由浏览器端重封装/转码播放。关闭：强制原生直连，不兼容编码将无声。
+                  {t(
+                    'Enable for formats such as MKV/DTS. This may remux media or convert unsupported audio in this browser. Original video quality stays unchanged. Off by default.'
+                  )}
                 </Text>
               </div>
               <button
@@ -1922,9 +2136,15 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
               }}
             >
               <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
-              <Text className="text-xs">{resolveProgress}</Text>
+              <Text className="text-xs">{t(resolveProgress)}</Text>
               {!addInFlightRef.current && resolveAbortRef.current && (
-                <Button size="sm" variant="secondary" onClick={invalidateResolvedInput}>取消解析</Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={invalidateResolvedInput}
+                >
+                  {t('Cancel resolving')}
+                </Button>
               )}
             </div>
           )}
@@ -1932,54 +2152,62 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           {sourceType === 'mp4' && mediaDiagnostics && !resolvedMovie && (
             <div className="rounded-[var(--md-sys-shape-corner)] bg-[var(--md-sys-color-surface-container-high)] px-3 py-2 text-[11px] leading-relaxed">
               <Text className="block text-xs font-medium">
-                {mediaDiagnostics.descriptor.title || extractTitleFromUrl(url)} ·{' '}
-                已识别 {mediaDiagnostics.descriptor.container.toUpperCase()} ·{' '}
+                {mediaDiagnostics.descriptor.title || extractTitleFromUrl(url)}{' '}
+                {t('· Detected')}{' '}
+                {mediaDiagnostics.descriptor.container.toUpperCase()} ·{' '}
                 {mediaDiagnostics.plan.engine === 'blocked'
-                  ? '当前设备无法播放'
-                  : '已找到播放方式'}
+                  ? t('This browser cannot play this media.')
+                  : t('Ready for this browser')}
               </Text>
               <details>
-                <summary className="cursor-pointer">技术详情</summary>
-                <Text type="secondary" className="block">播放地址已隐藏</Text>
+                <summary className="cursor-pointer">
+                  {t('Technical details')}
+                </summary>
+                <Text type="secondary" className="block">
+                  {t('Private media addresses are hidden.')}
+                </Text>
                 <Text type="secondary" className="block break-all">
-                  Resolver: {mediaDiagnostics.descriptor.resolver} · Source:{' '}
-                  {mediaDiagnostics.descriptor.sourceType} · Detected:{' '}
+                  {t('Resolver:')} {mediaDiagnostics.descriptor.resolver}{' '}
+                  {t('· Source:')} {mediaDiagnostics.descriptor.sourceType}{' '}
+                  {t('· Detected:')}{' '}
                   {mediaDiagnostics.descriptor.container.toUpperCase()}
                 </Text>
                 <Text type="secondary" className="block">
-                  Range:{' '}
-                  {mediaDiagnostics.descriptor.rangeSupported ? 'yes' : 'no'} ·
-                  Engine: {mediaDiagnostics.plan.engine} · Mode:{' '}
-                  {mediaDiagnostics.plan.mode} · Proxy:{' '}
-                  {mediaDiagnostics.plan.proxy ? 'signed handle' : 'no'}
+                  {t('Range:')}{' '}
+                  {mediaDiagnostics.descriptor.rangeSupported
+                    ? t('yes')
+                    : t('no')}{' '}
+                  {t('· Engine:')} {mediaDiagnostics.plan.engine} {t('· Mode:')}{' '}
+                  {mediaDiagnostics.plan.mode} {t('· Proxy:')}{' '}
+                  {mediaDiagnostics.plan.proxy ? t('signed handle') : t('no')}
                 </Text>
                 <Text type="secondary" className="block">
-                  Resolution:{' '}
+                  {t('Resolution:')}{' '}
                   {mediaDiagnostics.descriptor.width &&
                   mediaDiagnostics.descriptor.height
                     ? `${mediaDiagnostics.descriptor.width}×${mediaDiagnostics.descriptor.height}`
-                    : 'unknown'}{' '}
-                  · Duration:{' '}
+                    : t('unknown')}{' '}
+                  {t('· Duration:')}{' '}
                   {mediaDiagnostics.descriptor.duration
                     ? `${Math.round(mediaDiagnostics.descriptor.duration)}s`
-                    : 'unknown'}
+                    : t('unknown')}
                 </Text>
               </details>
             </div>
           )}
 
-          {(sourceType === 'mp4' || sourceType === 'bilibili') && mediaResolveError && (
-            <div className="rounded-[var(--md-sys-shape-corner)] bg-[var(--md-sys-color-error-container)] px-3 py-2 text-[11px] leading-relaxed text-[var(--md-sys-color-on-error-container)]">
-              <Text className="block text-xs font-medium">
-                无法解析
-              </Text>
-              <Text className="block break-all">
-                {mediaResolveError}
-              </Text>
-            </div>
-          )}
+          {(sourceType === 'mp4' || sourceType === 'bilibili') &&
+            mediaResolveError && (
+              <div className="rounded-[var(--md-sys-shape-corner)] bg-[var(--md-sys-color-error-container)] px-3 py-2 text-[11px] leading-relaxed text-[var(--md-sys-color-on-error-container)]">
+                <Text className="block text-xs font-medium">
+                  {t('Could not resolve this source')}
+                </Text>
+                <Text className="block break-all">{t(mediaResolveError)}</Text>
+              </div>
+            )}
 
-          {(sourceType === 'bilibili' || sourceType === 'mp4') && resolvedMovie && (<BilibiliLinkPreview movie={resolvedMovie} />)}
+          {(sourceType === 'bilibili' || sourceType === 'mp4') &&
+            resolvedMovie && <BilibiliLinkPreview movie={resolvedMovie} />}
 
           {(sourceType === 'bilibili' || sourceType === 'mp4') &&
             resolvedMovie?.acceptQuality &&
@@ -2018,8 +2246,16 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
                 disabled={pageSelectLoading || !isHost}
               >
                 {resolvedMovie.currentPage
-                  ? `P${resolvedMovie.currentPage} ${resolvedMovie.pages.find((p) => p.page === resolvedMovie.currentPage)?.part ?? ''} · 点击切换`
-                  : `共 ${resolvedMovie.pages.length} P · 点击选择`}
+                  ? t('P{value1} {value2} · Change', {
+                      value1: resolvedMovie.currentPage,
+                      value2:
+                        resolvedMovie.pages.find(
+                          (p) => p.page === resolvedMovie.currentPage
+                        )?.part ?? '',
+                    })
+                  : t('Total: {value1} P · Choose', {
+                      value1: resolvedMovie.pages.length,
+                    })}
               </Button>
             )}
 
@@ -2039,7 +2275,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
                   type="secondary"
                   className="text-[10px] uppercase tracking-wide"
                 >
-                  B站 登录状态
+                  {t('Bilibili account')}
                 </Text>
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-2 rounded-[var(--md-sys-shape-corner)] p-1">
@@ -2071,14 +2307,14 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
                         className="shrink-0 px-1.5 py-0 text-[10px]"
                       >
                         <Crown className="mr-0.5 h-3 w-3" />
-                        大会员
+                        {t('Premium')}
                       </Tag>
                     ) : (
                       <Tag
                         color="default"
                         className="shrink-0 px-1.5 py-0 text-[10px]"
                       >
-                        普通账号
+                        {t('Standard account')}
                       </Tag>
                     )}
                     <Button
@@ -2091,7 +2327,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
                         handleLogoutBilibili()
                       }}
                     >
-                      退出
+                      {t('Disconnect')}
                     </Button>
                   </>
                 ) : (
@@ -2105,16 +2341,20 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
                       handleOpenQrModal()
                     }}
                   >
-                    扫码登录 B站
+                    {t('Connect with QR code')}
                   </Button>
                 )}
               </div>
               <Paragraph type="secondary" className="m-0 mt-1.5 text-[11px]">
                 {bilibiliLoggedIn
                   ? bilibiliUser?.vipStatus === 1
-                    ? '大会员账号，可解析 4K / 1080P 高码率等专属画质'
-                    : '已登录，可解析高画质视频'
-                  : '未登录时只能解析低画质或试看片段'}
+                    ? t(
+                        'Premium quality, including eligible 4K and high-bitrate video, is available.'
+                      )
+                    : t('Connected. Eligible higher quality is available.')
+                  : t(
+                      'Connect Bilibili for the quality available to your account.'
+                    )}
               </Paragraph>
             </div>
           )}
@@ -2142,10 +2382,10 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
       <Modal
         open={qrModalOpen}
         onClose={handleCloseQrModal}
-        title="扫码登录哔哩哔哩"
+        title={t('Connect Bilibili')}
         footer={
           <Button variant="secondary" size="sm" onClick={handleCloseQrModal}>
-            关闭
+            {t('Close')}
           </Button>
         }
       >
@@ -2153,7 +2393,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
           {qrDataUrl ? (
             <img
               src={qrDataUrl}
-              alt="哔哩哔哩登录二维码"
+              alt={t('Bilibili sign-in code')}
               className="rounded-lg border"
               style={{
                 width: 200,
@@ -2169,7 +2409,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
                 height: 200,
               }}
             >
-              <Text>正在生成二维码…</Text>
+              <Text>{t('Generating a code…')}</Text>
             </div>
           )}
           <Paragraph
@@ -2182,11 +2422,11 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
             }
             className="m-0 text-sm"
           >
-            {qrMessage}
+            {t(qrMessage)}
           </Paragraph>
           {qrStatus === 3 && (
             <Button variant="primary" size="sm" onClick={handleOpenQrModal}>
-              重新获取二维码
+              {t('Generate a new code')}
             </Button>
           )}
         </div>
@@ -2224,107 +2464,110 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
         onConfirm={handleSelectFilesFromServer}
       />
 
-      {(sourceType === 'bilibili' || sourceType === 'mp4') && resolvedMovie?.pages && (
-        <Modal
-          open={showPageSelector}
-          onClose={() => setShowPageSelector(false)}
-          title={
-            <div className="flex items-center gap-2.5">
-              <div
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--md-sys-shape-corner)]"
-                style={{
-                  backgroundColor: 'var(--md-sys-color-primary-container)',
-                }}
-              >
-                <ListVideo
-                  className="h-4 w-4"
+      {(sourceType === 'bilibili' || sourceType === 'mp4') &&
+        resolvedMovie?.pages && (
+          <Modal
+            open={showPageSelector}
+            onClose={() => setShowPageSelector(false)}
+            title={
+              <div className="flex items-center gap-2.5">
+                <div
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--md-sys-shape-corner)]"
                   style={{
-                    color: 'var(--md-sys-color-on-primary-container)',
+                    backgroundColor: 'var(--md-sys-color-primary-container)',
                   }}
-                />
-              </div>
-              <div className="flex min-w-0 flex-1 flex-col">
-                <Text className="text-sm font-semibold leading-tight">
-                  选择分集
-                </Text>
-                <Text
-                  type="secondary"
-                  className="text-[10px] uppercase tracking-wide"
                 >
-                  {resolvedMovie.pages.length} P · 点击选择要添加的章节
-                </Text>
-              </div>
-            </div>
-          }
-          footer={
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => setShowPageSelector(false)}
-            >
-              取消（使用当前分集）
-            </Button>
-          }
-        >
-          <div className="flex max-h-[400px] flex-col gap-1.5 overflow-y-auto">
-            {resolvedMovie.pages.map((page) => {
-              const isSelected = page.page === (resolvedMovie.currentPage ?? 1)
-              return (
-                <button
-                  key={page.page}
-                  type="button"
-                  aria-pressed={isSelected}
-                  className={cn(
-                    'flex cursor-pointer items-center gap-3 rounded-[var(--md-sys-shape-corner)] border p-3 transition-all hover:-translate-y-0.5 hover:shadow-md',
-                    isSelected
-                      ? 'border-[var(--md-sys-color-primary)] bg-[var(--md-sys-color-primary-container)]'
-                      : 'glass border-transparent hover:border-[var(--md-sys-color-outline-variant)]'
-                  )}
-                  onClick={() => void handlePageSelect(page.page)}
-                >
-                  <div
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--md-sys-shape-corner)] text-xs font-medium"
+                  <ListVideo
+                    className="h-4 w-4"
                     style={{
-                      backgroundColor: isSelected
-                        ? 'var(--md-sys-color-primary)'
-                        : 'color-mix(in srgb, var(--md-sys-color-primary) 12%, transparent)',
-                      color: isSelected
-                        ? 'var(--md-sys-color-on-primary)'
-                        : 'var(--md-sys-color-primary)',
+                      color: 'var(--md-sys-color-on-primary-container)',
                     }}
+                  />
+                </div>
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <Text className="text-sm font-semibold leading-tight">
+                    {t('Choose an episode')}
+                  </Text>
+                  <Text
+                    type="secondary"
+                    className="text-[10px] uppercase tracking-wide"
                   >
-                    {page.page}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <Paragraph
-                      className={cn(
-                        'm-0 truncate text-sm font-medium',
-                        isSelected &&
-                          'text-[var(--md-sys-color-on-primary-container)]'
-                      )}
-                      title={page.part}
+                    {resolvedMovie.pages.length}{' '}
+                    {t('episodes · Choose what to add')}
+                  </Text>
+                </div>
+              </div>
+            }
+            footer={
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setShowPageSelector(false)}
+              >
+                {t('Cancel (keep the current episode)')}
+              </Button>
+            }
+          >
+            <div className="flex max-h-[400px] flex-col gap-1.5 overflow-y-auto">
+              {resolvedMovie.pages.map((page) => {
+                const isSelected =
+                  page.page === (resolvedMovie.currentPage ?? 1)
+                return (
+                  <button
+                    key={page.page}
+                    type="button"
+                    aria-pressed={isSelected}
+                    className={cn(
+                      'flex cursor-pointer items-center gap-3 rounded-[var(--md-sys-shape-corner)] border p-3 transition-all hover:-translate-y-0.5 hover:shadow-md',
+                      isSelected
+                        ? 'border-[var(--md-sys-color-primary)] bg-[var(--md-sys-color-primary-container)]'
+                        : 'glass border-transparent hover:border-[var(--md-sys-color-outline-variant)]'
+                    )}
+                    onClick={() => void handlePageSelect(page.page)}
+                  >
+                    <div
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--md-sys-shape-corner)] text-xs font-medium"
+                      style={{
+                        backgroundColor: isSelected
+                          ? 'var(--md-sys-color-primary)'
+                          : 'color-mix(in srgb, var(--md-sys-color-primary) 12%, transparent)',
+                        color: isSelected
+                          ? 'var(--md-sys-color-on-primary)'
+                          : 'var(--md-sys-color-primary)',
+                      }}
                     >
-                      {page.part}
-                    </Paragraph>
-                    {page.duration > 0 && (
-                      <Text
-                        type="secondary"
+                      {page.page}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <Paragraph
                         className={cn(
-                          'text-[10px] uppercase tracking-wide',
+                          'm-0 truncate text-sm font-medium',
                           isSelected &&
                             'text-[var(--md-sys-color-on-primary-container)]'
                         )}
+                        title={page.part}
                       >
-                        {formatDuration(page.duration)}
-                      </Text>
-                    )}
-                  </div>
-                </button>
-              )
-            })}
-          </div>
-        </Modal>
-      )}
+                        {page.part}
+                      </Paragraph>
+                      {page.duration > 0 && (
+                        <Text
+                          type="secondary"
+                          className={cn(
+                            'text-[10px] uppercase tracking-wide',
+                            isSelected &&
+                              'text-[var(--md-sys-color-on-primary-container)]'
+                          )}
+                        >
+                          {formatDuration(page.duration)}
+                        </Text>
+                      )}
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          </Modal>
+        )}
     </>
   )
 }

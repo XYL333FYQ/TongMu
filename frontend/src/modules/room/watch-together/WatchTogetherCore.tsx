@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 /**
  * WatchTogetherCore —— 一起看播放器业务核心（ArtPlayer 版）。
  *
@@ -26,6 +27,8 @@ import { useSocket } from '@/hooks/useSocket'
 import { useSubtitles, type EmbeddedSource } from '@/hooks/useSubtitles'
 import { useCliAgent } from '@/hooks/useCliAgent'
 import { useRoomStore } from '@/store/roomStore'
+import { useRoomExperienceStore } from '@/store/roomExperienceStore'
+import { roomErrorMessage } from '../roomErrors'
 import { useDanmakuStore } from '@/store/danmakuStore'
 import { useCliAgentStore } from '@/store/cliAgentStore'
 import { getBilibiliParseOptions } from '@/modules/bilibili/parseOptions'
@@ -101,6 +104,8 @@ export function WatchTogetherCore({
   onToggleWebFullscreen,
   initialPlayback,
 }: WatchTogetherCoreProps) {
+  useTranslation()
+
   const { socket } = useSocket()
   // CLI 代理健康检查与 socket 事件监听提升到全局级别，
   // 确保 localOnline/agents 始终更新，不依赖 BilibiliParseSettings 是否渲染。
@@ -232,14 +237,20 @@ export function WatchTogetherCore({
       currentMovieSourceType === 'jellyfin'
     ) {
       addPlayerNotice(
-        `音轨编码 ${codec.toUpperCase()} 不受浏览器支持，已由媒体服务器转码为 AAC`,
+        t(
+          'Audio codec  {value1} is unsupported by this browser. The media server is converting it to AAC.',
+          { value1: codec.toUpperCase() }
+        ),
         'info'
       )
     } else {
       // 本地文件 / WebDAV / OpenList / FTP / 直链源：playsvideo 引擎会
       // 在起播时探测并自行决定直通或转码，无需任何开关许可。
       addPlayerNotice(
-        `音轨编码 ${codec.toUpperCase()} 不受浏览器支持，playsvideo 引擎正在浏览器内实时转码为 AAC`,
+        t(
+          'Audio codec  {value1} is unsupported by this browser. The compatibility engine is converting it locally to AAC.',
+          { value1: codec.toUpperCase() }
+        ),
         'info'
       )
     }
@@ -353,9 +364,9 @@ export function WatchTogetherCore({
   } | null>(null)
   // 合并后的申请状态（P2-Opt#11）：支持多观众合并
   const [seekRequest, setSeekRequest] = useState<{
-    /** 申请者 socket ID 列表 */
+    /** 申请者 socket ID List */
     viewerSocketIds: string[]
-    /** 申请者用户名列表（用于展示） */
+    /** 申请者UsernameList（用于展示） */
     viewerUsernames: string[]
     /** 目标时间 */
     time: number
@@ -691,7 +702,10 @@ export function WatchTogetherCore({
         danmakuLayerRef.current?.seek(videoRef.current?.currentTime ?? 0)
       })
       .catch((err) => {
-        console.error('[WatchTogether] load danmaku error:', redactMediaError(err))
+        console.error(
+          '[WatchTogether] load danmaku error:',
+          redactMediaError(err)
+        )
       })
   }, [watchTogether.cid, watchTogether.sourceType, setDefaultTrack, videoRef])
 
@@ -953,7 +967,7 @@ export function WatchTogetherCore({
       if (autoApproveRef.current) {
         if (videoRef.current) {
           void videoRef.current.play().catch(() => {
-            /* 浏览器自动播放策略可能拒绝，忽略 */
+            /* Browse器自动Play策略可能Decline，忽略 */
           })
         }
         socket.emit(
@@ -1004,12 +1018,14 @@ export function WatchTogetherCore({
         // 自动通过模式下申请时已提示“已跳转”，此处不再重复提示
         if (!autoApproveRef.current) {
           addPlayerNotice(
-            `房主已同意跳转到 ${formatDuration(data.time ?? 0)}`,
+            t('The host accepted the seek to  {value1}', {
+              value1: formatDuration(data.time ?? 0),
+            }),
             'success'
           )
         }
       } else {
-        addPlayerNotice('房主拒绝了您的跳转申请', 'info')
+        addPlayerNotice(t('The host declined your seek request.'), 'info')
       }
     }
     const handlePauseResponse = (data: { accept: boolean }) => {
@@ -1031,10 +1047,10 @@ export function WatchTogetherCore({
         }
         // 自动通过模式下申请时已提示“已暂停”，此处不再重复提示
         if (!autoApproveRef.current) {
-          addPlayerNotice('房主已同意暂停', 'success')
+          addPlayerNotice(t('The host accepted your pause request.'), 'success')
         }
       } else {
-        addPlayerNotice('房主拒绝了您的暂停申请', 'info')
+        addPlayerNotice(t('The host declined your pause request.'), 'info')
       }
     }
     const handlePlayResponse = (data: { accept: boolean }) => {
@@ -1052,15 +1068,15 @@ export function WatchTogetherCore({
         const video = videoRef.current
         if (video && video.paused) {
           void video.play().catch(() => {
-            /* 浏览器自动播放策略可能拒绝，忽略 */
+            /* Browse器自动Play策略可能Decline，忽略 */
           })
         }
         // 自动通过模式下申请时已提示“继续播放”，此处不再重复提示
         if (!autoApproveRef.current) {
-          addPlayerNotice('房主已同意继续播放', 'success')
+          addPlayerNotice(t('The host accepted your play request.'), 'success')
         }
       } else {
-        addPlayerNotice('房主拒绝了您的继续播放申请', 'info')
+        addPlayerNotice(t('The host declined your play request.'), 'info')
       }
     }
 
@@ -1111,9 +1127,9 @@ export function WatchTogetherCore({
       { viewerSocketId },
       (response: { success: boolean; message?: string }) => {
         if (response.success) {
-          message.success('已允许加入')
+          message.success(t('Request accepted.'))
         } else {
-          message.error(response.message || '操作失败')
+          message.error(roomErrorMessage(response.message))
         }
       }
     )
@@ -1129,9 +1145,9 @@ export function WatchTogetherCore({
       { viewerSocketId },
       (response: { success: boolean; message?: string }) => {
         if (response.success) {
-          message.info('已拒绝加入')
+          message.info(t('Join request declined.'))
         } else {
-          message.error(response.message || '操作失败')
+          message.error(roomErrorMessage(response.message))
         }
       }
     )
@@ -1229,9 +1245,62 @@ export function WatchTogetherCore({
     setPlayRequest(null)
   }, [playRequest, socket, roomId])
 
-  // ── 观众申请发起（与重构前一致）─────────────────────────
+  const sendMemberControl = useCallback(
+    (action: 'play' | 'pause' | 'seek', value?: number) => {
+      const experience = useRoomExperienceStore.getState().snapshot
+      if (
+        !socket ||
+        experience?.roomId !== roomId ||
+        !experience.permissions.playback ||
+        experience.activity !== 'watch'
+      )
+        return false
+      const state = useRoomStore.getState().watchTogether
+      socket.timeout(8000).emit(
+        'watch-together-control',
+        {
+          roomId,
+          action,
+          value,
+          baseVersion: state.version,
+          sourceGeneration: state.sourceGeneration,
+          mutationId: crypto.randomUUID(),
+          clientTimestamp: Date.now(),
+        },
+        (
+          timeout: Error | null,
+          response: {
+            success: boolean
+            message?: string
+            data?: { state?: typeof state }
+          }
+        ) => {
+          if (timeout || !response?.success)
+            addPlayerNotice(
+              timeout
+                ? 'Playback control timed out. Try again.'
+                : roomErrorMessage(response?.message),
+              'error'
+            )
+          else if (response.data?.state) {
+            useRoomStore.getState().setWatchTogether(response.data.state)
+            const next = response.data.state
+            video.currentTime = next.currentTime
+            video.playbackRate = next.playbackRate
+            if (next.isPlaying) void video.play().catch(() => {})
+            else video.pause()
+          }
+        }
+      )
+      return true
+    },
+    [socket, roomId, addPlayerNotice, video]
+  )
+
+  // Members with playback permission use authoritative control events.
   const handleRequestSeek = useCallback(
     (time: number) => {
+      if (sendMemberControl('seek', time)) return
       if (!socket || isHost || seekPending) return
       if (!Number.isFinite(time)) return
       setSeekPending(true)
@@ -1241,7 +1310,10 @@ export function WatchTogetherCore({
       seekPendingTimeoutRef.current = setTimeout(() => {
         setSeekPending(false)
         seekPendingTimeoutRef.current = null
-        addPlayerNotice('跳转申请已超时，房主未回应', 'info')
+        addPlayerNotice(
+          t('The seek request expired without a response.'),
+          'info'
+        )
       }, 15000)
       socket.emit(
         'seek-request',
@@ -1254,23 +1326,24 @@ export function WatchTogetherCore({
               seekPendingTimeoutRef.current = null
             }
             setSeekPending(false)
-            addPlayerNotice(response.message || '申请跳转失败', 'error')
+            addPlayerNotice(roomErrorMessage(response.message), 'error')
           } else {
             // 服务器已转发给房主，timeout 保留（由 seek-response 事件或超时回退清除）
             addPlayerNotice(
               autoApproveRef.current
-                ? '已跳转'
-                : '已发送跳转申请，等待房主确认',
+                ? t('Seeked.')
+                : t('Seek requested. Waiting for the host.'),
               'info'
             )
           }
         }
       )
     },
-    [socket, isHost, roomId, seekPending, addPlayerNotice]
+    [socket, isHost, roomId, seekPending, addPlayerNotice, sendMemberControl]
   )
 
   const handleRequestPause = useCallback(() => {
+    if (sendMemberControl('pause')) return
     if (!socket || isHost || pausePending) return
     setPausePending(true)
     if (pausePendingTimeoutRef.current)
@@ -1278,7 +1351,10 @@ export function WatchTogetherCore({
     pausePendingTimeoutRef.current = setTimeout(() => {
       setPausePending(false)
       pausePendingTimeoutRef.current = null
-      addPlayerNotice('暂停申请已超时，房主未回应', 'info')
+      addPlayerNotice(
+        t('The pause request expired without a response.'),
+        'info'
+      )
     }, 15000)
     socket.emit(
       'pause-request',
@@ -1290,18 +1366,21 @@ export function WatchTogetherCore({
             pausePendingTimeoutRef.current = null
           }
           setPausePending(false)
-          addPlayerNotice(response.message || '申请暂停失败', 'error')
+          addPlayerNotice(roomErrorMessage(response.message), 'error')
         } else {
           addPlayerNotice(
-            autoApproveRef.current ? '已暂停' : '已发送暂停申请，等待房主确认',
+            autoApproveRef.current
+              ? t('Paused')
+              : t('Pause requested. Waiting for the host.'),
             'info'
           )
         }
       }
     )
-  }, [socket, isHost, roomId, pausePending, addPlayerNotice])
+  }, [socket, isHost, roomId, pausePending, addPlayerNotice, sendMemberControl])
 
   const handleRequestPlay = useCallback(() => {
+    if (sendMemberControl('play')) return
     if (!socket || isHost || playPending) return
     setPlayPending(true)
     if (playPendingTimeoutRef.current)
@@ -1309,7 +1388,7 @@ export function WatchTogetherCore({
     playPendingTimeoutRef.current = setTimeout(() => {
       setPlayPending(false)
       playPendingTimeoutRef.current = null
-      addPlayerNotice('继续播放申请已超时，房主未回应', 'info')
+      addPlayerNotice(t('The play request expired without a response.'), 'info')
     }, 15000)
     socket.emit(
       'play-request',
@@ -1321,18 +1400,18 @@ export function WatchTogetherCore({
             playPendingTimeoutRef.current = null
           }
           setPlayPending(false)
-          addPlayerNotice(response.message || '申请继续播放失败', 'error')
+          addPlayerNotice(roomErrorMessage(response.message), 'error')
         } else {
           addPlayerNotice(
             autoApproveRef.current
-              ? '继续播放'
-              : '已发送继续播放申请，等待房主确认',
+              ? t('Continue playing')
+              : t('Play requested. Waiting for the host.'),
             'info'
           )
         }
       }
     )
-  }, [socket, isHost, roomId, playPending, addPlayerNotice])
+  }, [socket, isHost, roomId, playPending, addPlayerNotice, sendMemberControl])
 
   // ── 控制栏操作 ─────────────────────────────────────────
   const handleToggleDanmaku = useCallback(() => {
@@ -1358,9 +1437,9 @@ export function WatchTogetherCore({
       textarea.select()
       try {
         document.execCommand('copy')
-        message.success('已复制弹幕内容')
+        message.success(t('Comment copied.'))
       } catch {
-        message.error('复制失败')
+        message.error(t('Could not copy.'))
       }
       document.body.removeChild(textarea)
     }
@@ -1368,7 +1447,7 @@ export function WatchTogetherCore({
     if (navigator.clipboard && window.isSecureContext) {
       navigator.clipboard
         .writeText(textToCopy)
-        .then(() => message.success('已复制弹幕内容'))
+        .then(() => message.success(t('Comment copied.')))
         .catch(() => fallbackCopy())
     } else {
       fallbackCopy()
@@ -1390,8 +1469,8 @@ export function WatchTogetherCore({
       }
 
       // 本地立即上屏（发送者自己看到）
-      danmakuLayerRef.current?.sendDanmaku(trimmed, { sender: '我' })
-      addRealtime({ ...item, self: true, sender: '我' })
+      danmakuLayerRef.current?.sendDanmaku(trimmed, { sender: 'You' })
+      addRealtime({ ...item, self: true, sender: 'You' })
 
       if (!socket) return
       // 发送评论（持久化 + 广播 new-comment）
@@ -1400,7 +1479,7 @@ export function WatchTogetherCore({
         { roomId, content: trimmed, isDanmaku: true },
         (response: { success: boolean; message?: string }) => {
           if (!response.success) {
-            message.error(response.message ?? '弹幕发送失败')
+            message.error(roomErrorMessage(response.message))
           }
         }
       )
@@ -1437,10 +1516,7 @@ export function WatchTogetherCore({
       const target = e.target as Node
       // portal 到 body 的浮动菜单（如 FontPicker 下拉）虽在 anchor 外，
       // 但点击它们不应关闭设置面板（否则菜单瞬间卸载无法选中）
-      if (
-        target instanceof Element &&
-        target.closest?.('[data-portal-menu]')
-      ) {
+      if (target instanceof Element && target.closest?.('[data-portal-menu]')) {
         return
       }
       if (
@@ -1469,6 +1545,11 @@ export function WatchTogetherCore({
   // ── 补充快捷键（F 全屏 / M 静音 / 方向键 跳转+音量）──
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (
+        !stageRef.current?.getClientRects().length ||
+        useRoomExperienceStore.getState().snapshot?.activity !== 'watch'
+      )
+        return
       const tag = (document.activeElement?.tagName ?? '').toUpperCase()
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
       if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return
@@ -1521,6 +1602,7 @@ export function WatchTogetherCore({
   }, [
     isHost,
     hostOffline,
+    stageRef,
     art,
     video,
     handleToggleFullscreen,
@@ -1536,22 +1618,22 @@ export function WatchTogetherCore({
   /* eslint-disable react-hooks/refs */
   const requestNotifications: RequestNotificationItem[] = useMemo(() => {
     const list: RequestNotificationItem[] = []
-    if (confirmJoin) {
+    if (confirmJoin && !useRoomExperienceStore.getState().snapshot) {
       list.push({
         id: 'join',
-        title: '观看请求',
-        okText: '允许',
-        cancelText: '拒绝',
+        title: t('Join request'),
+        okText: t('Allow'),
+        cancelText: t('Decline'),
         onOk: handleApproveJoin,
         onCancel: handleRejectJoin,
         autoCloseMs: 12000,
         content: (
           <>
-            有观看者请求加入房间（
+            {t('Someone wants to join the room (')}
             <span style={{ color: 'var(--md-sys-color-primary)' }}>
               {confirmJoin.viewerSocketId.slice(0, 8)}
             </span>
-            ），是否允许？
+            {t('). Allow them to join?')}
           </>
         ),
       })
@@ -1559,23 +1641,25 @@ export function WatchTogetherCore({
     if (seekRequest) {
       list.push({
         id: 'seek',
-        title: '跳转申请',
-        okText: '同意',
-        cancelText: '拒绝',
+        title: t('Seek request'),
+        okText: t('Accept'),
+        cancelText: t('Decline'),
         onOk: handleAcceptSeek,
         onCancel: handleRejectSeek,
         autoCloseMs: 12000,
         content: (
           <>
-            观众{' '}
+            {t('Members')}{' '}
             <span style={{ color: 'var(--md-sys-color-primary)' }}>
               {seekRequest.viewerUsernames[0] ||
                 seekRequest.viewerSocketIds[0].slice(0, 8)}
               {seekRequest.viewerSocketIds.length > 1
-                ? ` 等 ${seekRequest.viewerSocketIds.length} 位观众`
+                ? t(' and {value1} other members', {
+                    value1: seekRequest.viewerSocketIds.length - 1,
+                  })
                 : ''}
             </span>{' '}
-            申请跳转到{' '}
+            {t('requested a seek to')}{' '}
             <span style={{ color: 'var(--md-sys-color-primary)' }}>
               {formatDuration(seekRequest.time)}
             </span>
@@ -1586,23 +1670,25 @@ export function WatchTogetherCore({
     if (pauseRequest) {
       list.push({
         id: 'pause',
-        title: '暂停申请',
-        okText: '同意',
-        cancelText: '拒绝',
+        title: t('Pause request'),
+        okText: t('Accept'),
+        cancelText: t('Decline'),
         onOk: handleAcceptPause,
         onCancel: handleRejectPause,
         autoCloseMs: 12000,
         content: (
           <>
-            观众{' '}
+            {t('Members')}{' '}
             <span style={{ color: 'var(--md-sys-color-primary)' }}>
               {pauseRequest.viewerUsernames[0] ||
                 pauseRequest.viewerSocketIds[0].slice(0, 8)}
               {pauseRequest.viewerSocketIds.length > 1
-                ? ` 等 ${pauseRequest.viewerSocketIds.length} 位观众`
+                ? t(' and {value1} other members', {
+                    value1: pauseRequest.viewerSocketIds.length - 1,
+                  })
                 : ''}
             </span>{' '}
-            申请暂停播放
+            {t('requested a pause.')}
           </>
         ),
       })
@@ -1610,23 +1696,25 @@ export function WatchTogetherCore({
     if (playRequest) {
       list.push({
         id: 'play',
-        title: '播放申请',
-        okText: '同意',
-        cancelText: '拒绝',
+        title: t('Play request'),
+        okText: t('Accept'),
+        cancelText: t('Decline'),
         onOk: handleAcceptPlay,
         onCancel: handleRejectPlay,
         autoCloseMs: 12000,
         content: (
           <>
-            观众{' '}
+            {t('Members')}{' '}
             <span style={{ color: 'var(--md-sys-color-primary)' }}>
               {playRequest.viewerUsernames[0] ||
                 playRequest.viewerSocketIds[0].slice(0, 8)}
               {playRequest.viewerSocketIds.length > 1
-                ? ` 等 ${playRequest.viewerSocketIds.length} 位观众`
+                ? t(' and {value1} other members', {
+                    value1: playRequest.viewerSocketIds.length - 1,
+                  })
                 : ''}
             </span>{' '}
-            申请继续播放
+            {t('requested playback.')}
           </>
         ),
       })
@@ -1657,7 +1745,7 @@ export function WatchTogetherCore({
 
   return (
     <>
-      {/* 字幕样式：使用 Monet 主题变量，字号可调、透明底色 */}
+      {/* Subtitles样式：使用 Monet 主题变量，Font size可调、透明底色 */}
       <style>{`
         .zart-stage video::cue {
           font-size: ${subtitles.subtitleFontSize}px;
@@ -1668,7 +1756,7 @@ export function WatchTogetherCore({
         }
       `}</style>
 
-      {/* 弹幕图层（Portal → ArtPlayer layer） */}
+      {/* On-screen comments图层（Portal → ArtPlayer layer） */}
       {watchTogether.sourceUrl &&
         createPortal(
           <DanmakuLayer
@@ -1689,8 +1777,8 @@ export function WatchTogetherCore({
           slots.danmakuRoot
         )}
 
-      {/* 字幕渲染层（Portal → ArtPlayer overlay layer）
-          使用自定义 SubtitleOverlay 组件替代浏览器原生 <track> + ::cue，
+      {/* Subtitles渲染层（Portal → ArtPlayer overlay layer）
+          使用Custom SubtitleOverlay 组件替代Browse器原生 <track> + ::cue，
           根据 ParsedCue[] 的位置/对齐信息用 HTML/CSS 直接渲染，
           完整保留 SRT/ASS/VTT/SMI/SUB 各格式的样式。 */}
       {watchTogether.sourceUrl &&
@@ -1710,28 +1798,28 @@ export function WatchTogetherCore({
           slots.overlayRoot
         )}
 
-      {/* 影片加载失败重试层（房主端 loadMovie 失败时显示）：
-          之前失败只有 toast，用户没有重试入口，只能切别的影片再切回 */}
+      {/* 影片Could not load this content.Try again层（房主端 loadMovie 失败时显示）：
+          之前失败只有 toast，用户没有Try again入口，只能切别的影片再切回 */}
       {loadMovieError &&
         isHost &&
         createPortal(
           <div className="pointer-events-auto absolute inset-0 z-[60] flex flex-col items-center justify-center gap-4 bg-black/70">
             <div className="text-center">
               <div className="mb-1 text-base font-medium text-white">
-                视频加载失败
+                {t('Could not load the video.')}
               </div>
               <div className="max-w-md px-6 text-xs text-white/60">
-                {loadMovieError}
+                {t(loadMovieError)}
               </div>
             </div>
             <Button variant="primary" onClick={retryLoadMovie}>
-              重试
+              {t('Try again')}
             </Button>
           </div>,
           slots.overlayRoot
         )}
 
-      {/* 播放器内通知（左上角），使用 overlayRoot 让通知始终可见 */}
+      {/* Play器内通知（左上角），使用 overlayRoot 让通知始终可见 */}
       {createPortal(
         <div className="pointer-events-none absolute left-4 top-4 z-50 flex flex-col gap-2">
           {playerNotices.map((notice) => (
@@ -1753,8 +1841,8 @@ export function WatchTogetherCore({
         slots.overlayRoot
       )}
 
-      {/* 覆盖层：解析中 / 重载中加载动画。
-          挂载到 panelRoot（z-index: 70，直接 append 到 $player），
+      {/* 覆盖层：Resolving… / 重载中加载动画。
+          source到 panelRoot（z-index: 70，直接 append 到 $player），
           避免使用 ArtPlayer layer 系统导致 loading 状态下 layer 被隐藏 */}
       {(isResolving || isReloading) &&
         createPortal(
@@ -1764,16 +1852,16 @@ export function WatchTogetherCore({
           slots.panelRoot
         )}
 
-      {/* 缓冲模式：下载进度覆盖层。
-          显示已下载/总字节数 + 进度条，告知用户正在缓存 B站 m4s 流到本地。
-          房主与观众共用同一 UI（数据来自 roomStore.bufferProgress）。 */}
+      {/* Preload video：Download进度覆盖层。
+          显示已Download/总字节数 + 进度 comments，告知用户正在缓存 B站 m4s 流到本地。
+          房主与Members共用同一 UI（数据来自 roomStore.bufferProgress）。 */}
       {bufferProgress &&
         createPortal(
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/60 backdrop-blur-sm">
             <div className="flex flex-col items-center gap-2">
               <Spinner size={28} />
               <Text className="text-sm font-medium text-white">
-                正在缓冲视频
+                {t('Buffering video…')}
               </Text>
               <Text className="text-xs text-white/60">
                 {bufferProgress.title}
@@ -1803,7 +1891,7 @@ export function WatchTogetherCore({
                 <span>
                   {bufferProgress.total > 0
                     ? `${(bufferProgress.total / 1024 / 1024).toFixed(1)} MB`
-                    : '未知大小'}
+                    : t('Unknown size')}
                 </span>
               </div>
             </div>
@@ -1811,24 +1899,26 @@ export function WatchTogetherCore({
           slots.panelRoot
         )}
 
-      {/* 空源占位（覆盖整个播放器区域，与重构前行为一致：隐藏控制栏） */}
+      {/* 空源占位（覆盖整个Play器区域，与重构前行为一致：Hide controls） */}
       {!watchTogether.sourceUrl &&
         createPortal(
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black">
             <img
               src="/player-empty.jpg"
-              alt="等待播放"
+              alt={t('Waiting for content')}
               className="h-32 w-32 rounded-[var(--md-sys-shape-corner)] object-cover"
             />
             <Text className="text-sm text-white">
-              {isHost ? '请在下方添加并播放影片' : '等待房主播放影片'}
+              {isHost
+                ? t('Choose content to get started.')
+                : t('Waiting for someone to start a video')}
             </Text>
           </div>,
           slots.panelRoot
         )}
 
-      {/* 设置面板锚点（右下角，控制栏上方）
-          bottom = 控制栏总高（外层 p-3 + 内层 p-2 + 进度条 + 按钮行 ≈ 88px），
+      {/* Settings面板锚点（右下角，控制栏上方）
+          bottom = 控制栏总高（外层 p-3 + 内层 p-2 + 进度 comments + 按钮行 ≈ 88px），
           使面板底边与控制栏顶边对齐，不再被控制栏遮挡 */}
       {createPortal(
         <div
@@ -1901,7 +1991,7 @@ export function WatchTogetherCore({
         slots.panelRoot
       )}
 
-      {/* 自定义底部玻璃拟态控制栏 */}
+      {/* CustomBottom玻璃拟态控制栏 */}
       {watchTogether.sourceUrl && (
         <PlayerControlBar
           isHost={isHost}
@@ -1932,8 +2022,8 @@ export function WatchTogetherCore({
         />
       )}
 
-      {/* 视频统计信息（右键菜单，绑定 art.video） */}
-      {/* 观众端启用本地 CLI 代理时，统计信息应反映本地代理覆盖后的真实源。 */}
+      {/* Video statistics（右键菜单，绑定 art.video） */}
+      {/* Members端Enable本地 CLI 代理时，统计信息应反映本地代理覆盖后的真实源。 */}
       {(() => {
         const isCliOverrideActive =
           !isHost &&

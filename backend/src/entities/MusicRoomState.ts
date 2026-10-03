@@ -10,7 +10,7 @@ import { Room } from './Room';
 
 export type MusicPlayMode = 'sequential' | 'repeat-one' | 'repeat-all' | 'shuffle';
 
-/** Durable music selection/mode settings. Position and playing are ephemeral. */
+/** Durable selection, queue mode and position. Playback always resumes paused. */
 @Entity('music_room_states')
 export class MusicRoomState {
   @PrimaryColumn({ type: 'varchar', length: 128 })
@@ -25,6 +25,9 @@ export class MusicRoomState {
 
   @Column({ type: 'integer', nullable: true })
   currentQueueItemId!: number | null;
+
+  @Column({ type: 'float', default: 0 })
+  positionSec!: number;
 
   /** Persisted shuffle plan; it is regenerated only when the queue/mode needs it. */
   @Column({ type: 'varchar', length: 128, default: '' })

@@ -6,7 +6,10 @@ import {
   stripTransientMediaDescriptor,
   type MediaDescriptor,
 } from '@/modules/media/mediaApi'
-import { buildAnimeProviderReference, stripTransientAnimeDescriptor } from '@/modules/media/animeReference'
+import {
+  buildAnimeProviderReference,
+  stripTransientAnimeDescriptor,
+} from '@/modules/media/animeReference'
 import { collectPlaybackClientProfile } from '@/modules/media/playbackProfile'
 /**
  * 影片播放源解析器（从 useWatchTogether.loadMovie 抽取）。
@@ -129,32 +132,51 @@ async function resolveMediaCoreMovie(
     storedDescriptor.sourceType === 'jellyfin' ||
     movie.sourceType === 'emby' ||
     movie.sourceType === 'jellyfin'
-  const storedBilibili = (stored.sourceMetadata as
-    | {
-        bilibili?: {
-          cid?: number
-          actualQn?: number
-          availableQualities?: QualityOption[]
+  const storedBilibili = (
+    stored.sourceMetadata as
+      | {
+          bilibili?: {
+            cid?: number
+            actualQn?: number
+            availableQualities?: QualityOption[]
+          }
         }
-      }
-    | undefined)?.bilibili
+      | undefined
+  )?.bilibili
   const storedExpiry = Number(stored.expiresAt ?? 0)
   const volatileProvider = ['anime', 'anisubs', 'kazumi'].includes(
-    String(storedDescriptor.sourceType ?? storedDescriptor.resolver ?? '').toLowerCase(),
+    String(
+      storedDescriptor.sourceType ?? storedDescriptor.resolver ?? ''
+    ).toLowerCase()
   )
   const profile = await collectPlaybackClientProfile()
-  const storedPlan = planPlayback(storedDescriptor, profile, storedDescriptor.transportPlan?.candidates)
+  const storedPlan = planPlayback(
+    storedDescriptor,
+    profile,
+    storedDescriptor.transportPlan?.candidates
+  )
   // Persisted Media Core descriptors deliberately omit request-scoped URLs
   // and plans. A blocked plan here can therefore mean only "needs refresh",
   // not that the source is inherently unplayable; the canonical sourceInput
   // below is still available for the host to resolve again.
-  if (storedPlan.engine === 'blocked' && !movie.sourceInput && !volatileProvider && !(isMediaServerDescriptor && sourceGeneration !== undefined)) {
+  if (
+    storedPlan.engine === 'blocked' &&
+    !movie.sourceInput &&
+    !volatileProvider &&
+    !(isMediaServerDescriptor && sourceGeneration !== undefined)
+  ) {
     throw new Error(storedPlan.reasons.join('；'))
   }
   registerMediaTransport(storedDescriptor)
   // A media-server session is bound to the resolved source generation. Re-resolve
   // for a real host playback generation instead of reusing an old capability.
-  if (!volatileProvider && storedPlan.engine !== 'blocked' && storedPlan.candidateUrl && storedExpiry > Date.now() + 60_000 && !(isMediaServerDescriptor && sourceGeneration !== undefined)) {
+  if (
+    !volatileProvider &&
+    storedPlan.engine !== 'blocked' &&
+    storedPlan.candidateUrl &&
+    storedExpiry > Date.now() + 60_000 &&
+    !(isMediaServerDescriptor && sourceGeneration !== undefined)
+  ) {
     return {
       sourceUrl: storedPlan.candidateUrl ?? movie.url,
       audioUrl: movie.audioUrl,
@@ -164,8 +186,7 @@ async function resolveMediaCoreMovie(
       duration: movie.duration || 0,
       cid: storedBilibili?.cid ?? movie.cid,
       currentQn: storedBilibili?.actualQn ?? movie.currentQn,
-      acceptQuality:
-        storedBilibili?.availableQualities ?? movie.acceptQuality,
+      acceptQuality: storedBilibili?.availableQualities ?? movie.acceptQuality,
       reusedRecoveryUrl: false,
       playsvideoEnabled:
         storedPlan?.engine === 'playsvideo' ||
@@ -175,21 +196,31 @@ async function resolveMediaCoreMovie(
   }
 
   if (roomId && !canRefreshRoomMedia) {
-    throw new Error('房间媒体凭证已过期，正在等待房主统一刷新')
+    throw new Error(
+      'Room media access expired. Waiting for the host to refresh the source.'
+    )
   }
 
   const cached = mediaCoreResolveCache.get(movie.id)
-  if (!volatileProvider && cached && cached.expiresAt > Date.now() + 60_000 && !(isMediaServerDescriptor && sourceGeneration !== undefined)) {
+  if (
+    !volatileProvider &&
+    cached &&
+    cached.expiresAt > Date.now() + 60_000 &&
+    !(isMediaServerDescriptor && sourceGeneration !== undefined)
+  ) {
     const replanned: ResolvedMedia = {
       ...cached.resolved,
-      plan: planPlayback(cached.resolved.descriptor, profile, cached.resolved.descriptor.transportPlan?.candidates),
+      plan: planPlayback(
+        cached.resolved.descriptor,
+        profile,
+        cached.resolved.descriptor.transportPlan?.candidates
+      ),
       profile,
     }
     return mapMediaCoreResult(replanned, movie)
   }
   const bili = stored.sourceMetadata as
-    | { bilibili?: { requestedQn?: number; preferMp4?: boolean } }
-    | undefined
+    { bilibili?: { requestedQn?: number; preferMp4?: boolean } } | undefined
   const resolved = await resolveMediaInput(movie.sourceInput!, {
     browserSniff: true,
     roomId,
@@ -200,7 +231,9 @@ async function resolveMediaCoreMovie(
   })
   if (roomId) {
     await useRoomStore.getState().updateMovie(roomId, movie.id, {
-      url: volatileProvider ? (resolved.sourceReference ?? movie.sourceInput ?? movie.url) : resolved.descriptor.finalUrl,
+      url: volatileProvider
+        ? (resolved.sourceReference ?? movie.sourceInput ?? movie.url)
+        : resolved.descriptor.finalUrl,
       audioUrl: volatileProvider ? undefined : resolved.descriptor.audioUrl,
       mediaDescriptor: {
         ...(volatileProvider
@@ -233,9 +266,12 @@ function mapMediaCoreResult(
     videoCodec: descriptor.videoCodec,
     audioCodec: descriptor.audioCodec,
     isLive: descriptor.isLive,
-    duration: descriptor.isLive ? 0 : descriptor.duration ?? movie.duration ?? 0,
+    duration: descriptor.isLive
+      ? 0
+      : (descriptor.duration ?? movie.duration ?? 0),
     cid: bilibili?.cid ?? movie.cid,
-    currentQn: bilibili?.actualQn ?? descriptor.actualQuality ?? movie.currentQn,
+    currentQn:
+      bilibili?.actualQn ?? descriptor.actualQuality ?? movie.currentQn,
     acceptQuality: bilibili?.availableQualities ?? movie.acceptQuality,
     reusedRecoveryUrl: false,
     mkvFastPath: plan.engine === 'direct' && descriptor.container === 'mkv',
@@ -309,7 +345,9 @@ function mapResolvedSourceToMovieSource(
   movie: Movie
 ): ResolvedMovieSource {
   if (!resolved.videoUrl) {
-    throw new Error('未获取到对应清晰度的播放地址')
+    throw new Error(
+      'This quality is unavailable. Choose another available quality.'
+    )
   }
   return {
     sourceUrl: resolved.videoUrl,
@@ -372,7 +410,12 @@ function purgeBilibiliResolveCache(movieId: number): void {
 export async function resolveBilibiliOnline(
   movie: Movie,
   _onProgress?: (step: string, message: string) => void,
-  options?: { preferMp4?: boolean; forceRefresh?: boolean; roomId?: string; sourceGeneration?: number }
+  options?: {
+    preferMp4?: boolean
+    forceRefresh?: boolean
+    roomId?: string
+    sourceGeneration?: number
+  }
 ): Promise<ResolvedMovieSource> {
   const parsePrefs = getBilibiliParseOptions(movie.id)
   const proxyUrl = parsePrefs.cliEnabled ? getActiveCliProxyUrl() : null
@@ -382,7 +425,9 @@ export async function resolveBilibiliOnline(
   const forceDash = parsePrefs.cliEnabled && !!proxyUrl
 
   if (parsePrefs.cliEnabled && !proxyUrl) {
-    throw new Error('CLI 代理未连接，请先启动本地 zcontrol-cli')
+    throw new Error(
+      'The local CLI agent is disconnected. Start zcontrol-cli and reconnect.'
+    )
   }
 
   const forceRefresh = options?.forceRefresh === true
@@ -420,7 +465,10 @@ export async function resolveBilibiliOnline(
         forceDash
       )
       resolvedSource = mapResolvedSourceToMovieSource(resolved, movie)
-    } else throw new Error('CLI 解析缺少有效 BV 号或 cid')
+    } else
+      throw new Error(
+        'CLI resolution requires a valid Bilibili BV ID and content ID.'
+      )
   } else {
     const core = await resolveMediaInput(movie.sourceInput || movie.url, {
       roomId: options?.roomId,
@@ -454,16 +502,23 @@ export async function resolveBilibiliOnline(
 export async function resolveAnimeOnline(
   movie: Movie,
   roomId?: string,
-  sourceGeneration?: number,
+  sourceGeneration?: number
 ): Promise<ResolvedMovieSource> {
   if (!movie.sourceMeta) {
-    throw new Error('番剧源元数据缺失，请重新添加该番剧')
+    throw new Error('This anime source is incomplete. Add the episode again.')
   }
 
   const { sourceId, episode } = movie.sourceMeta
   const providerFamily = movie.sourceType === 'kazumi' ? 'kazumi' : 'anisubs'
-  const sourceInput = buildAnimeProviderReference(providerFamily, sourceId, episode)
-  const resolved = await resolveMediaInput(sourceInput, { roomId, sourceGeneration })
+  const sourceInput = buildAnimeProviderReference(
+    providerFamily,
+    sourceId,
+    episode
+  )
+  const resolved = await resolveMediaInput(sourceInput, {
+    roomId,
+    sourceGeneration,
+  })
   return { ...mapMediaCoreResult(resolved, movie), mediaCore: resolved }
 }
 
@@ -521,7 +576,12 @@ export async function resolveMovieSource({
   // 新媒体核心创建的影片必须先走 descriptor/handle 路径。尤其是通过统一
   // 入口识别出的 B站 项目，其 movie.url 是句柄，绝不能交给旧 BV 解析器。
   if (isMediaCoreMovie(movie)) {
-    return resolveMediaCoreMovie(movie, roomId, canRefreshRoomMedia, sourceGeneration)
+    return resolveMediaCoreMovie(
+      movie,
+      roomId,
+      canRefreshRoomMedia,
+      sourceGeneration
+    )
   }
 
   if (sourceType === 'bilibili') {
@@ -550,7 +610,10 @@ export async function resolveMovieSource({
         reusedRecoveryUrl: true,
       }
     }
-    return resolveBilibiliOnline(movie, onProgress, { roomId, sourceGeneration })
+    return resolveBilibiliOnline(movie, onProgress, {
+      roomId,
+      sourceGeneration,
+    })
   }
 
   if (sourceType === 'anime' || sourceType === 'kazumi') {
@@ -564,7 +627,7 @@ export async function resolveMovieSource({
     // Re-resolve them through the host-authorized Media Core adapter so a
     // viewer never sends a raw provider URL or credential to the browser.
     if (roomId && !canRefreshRoomMedia) {
-      throw new Error('媒体服务器影片需要房主统一刷新后才能播放')
+      throw new Error('Waiting for the host to refresh this media server item.')
     }
     const core = await resolveMediaInput(`media-movie:${movie.id}`, {
       roomId,

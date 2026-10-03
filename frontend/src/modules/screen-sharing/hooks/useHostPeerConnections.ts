@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Socket } from 'socket.io-client'
 import { message } from '@/components/ui/message'
@@ -79,6 +80,8 @@ interface UseHostPeerConnectionsResult {
 export function useHostPeerConnections(
   options: UseHostPeerConnectionsOptions
 ): UseHostPeerConnectionsResult {
+  useTranslation()
+
   const {
     socket,
     localStream,
@@ -153,7 +156,7 @@ export function useHostPeerConnections(
   const createPeerConnection = useCallback(
     async (viewerSocketId: string) => {
       if (!localStream) {
-        message.warning('尚未开始屏幕共享')
+        message.warning(t('Start sharing your screen first.'))
         return null
       }
 
@@ -327,7 +330,11 @@ export function useHostPeerConnections(
         })
       } catch (err) {
         console.error('[useHostPeerConnections] create offer error:', err)
-        message.error('创建 WebRTC 连接失败')
+        message.error(
+          t(
+            'Unable to establish a screen-sharing connection. Check your network and try again.'
+          )
+        )
       }
     },
     [socket, createPeerConnection]
@@ -363,7 +370,7 @@ export function useHostPeerConnections(
 
   const handleViewerJoined = useCallback(
     (data: ViewerEventPayload) => {
-      message.success('有新的观看者加入房间')
+      message.success(t('A new member joined the room.'))
       setViewerIds((prev) =>
         prev.includes(data.viewerSocketId)
           ? prev
@@ -422,7 +429,11 @@ export function useHostPeerConnections(
           '[useHostPeerConnections] set remote description error:',
           err
         )
-        message.error('处理远端应答失败')
+        message.error(
+          t(
+            'Unable to process the screen-sharing connection response. Try reconnecting.'
+          )
+        )
       }
     },
     []
@@ -447,7 +458,11 @@ export function useHostPeerConnections(
         await pc.addIceCandidate(new RTCIceCandidate(data.data))
       } catch (err) {
         console.error('[useHostPeerConnections] add ice candidate error:', err)
-        message.error('处理网络候选失败')
+        message.error(
+          t(
+            'Unable to establish a network route for screen sharing. Try reconnecting.'
+          )
+        )
       }
     },
     []

@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { apiGet } from '@/lib/api'
 import { useSocket } from '@/hooks/useSocket'
 import { message } from '@/components/ui/message'
+import { useTranslation } from '@/i18n'
 
 interface HealthResponse {
   status: string
@@ -24,6 +25,7 @@ interface HealthResponse {
  * 后续 socket 断开→重连时才检测并提示。
  */
 export function useBackendHealth(): void {
+  const { t } = useTranslation()
   const { socket, connected } = useSocket()
   const lastStartedAtRef = useRef<number | null>(null)
   const wasConnectedRef = useRef(false)
@@ -41,7 +43,7 @@ export function useBackendHealth(): void {
           lastStartedAtRef.current !== data.startedAt
         ) {
           message.info(
-            `后端已自动重启（第 ${data.restartCount} 次），服务已恢复`
+            t('The server restarted and your connection has been restored.')
           )
         }
         lastStartedAtRef.current = data.startedAt
@@ -56,5 +58,5 @@ export function useBackendHealth(): void {
       void checkHealth(wasConnectedRef.current)
     }
     wasConnectedRef.current = connected
-  }, [socket, connected])
+  }, [socket, connected, t])
 }

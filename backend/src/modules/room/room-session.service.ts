@@ -18,6 +18,8 @@ import { roomStateService } from './room-state.service';
 import { playbackMemoryService } from '../playback-memory';
 import { createRoomMediaGrant } from '../../services/media/room-access';
 import { realtimeSyncCore } from '../realtime-sync-core';
+import { roomDelegates } from './room-policy';
+import { roomExperienceService } from './room-experience.service';
 
 /**
  * 房间 Session 服务。
@@ -36,15 +38,18 @@ export class RoomSessionService {
     socket: Socket,
     roomId: string,
     userId: number,
+    lockHeld = false,
   ): Promise<{
     mode: string;
     shareMethod: string;
     name: string | null;
     streamKey: string | null;
     requireApproval: boolean;
+    activity: Room['activity'];
     mediaGrant: string;
     playback?: ReturnType<typeof roomStateService.getPlayback>;
   } | null> {
+    if (!lockHeld) return realtimeSyncCore.withRoomLock(roomId, () => this.registerHost(socket, roomId, userId, true));
     const roomRepo = AppDataSource.getRepository(Room);
     const sessionRepo = AppDataSource.getRepository(Session);
 
@@ -53,6 +58,7 @@ export class RoomSessionService {
 
     // 校验房主身份：ownerUserId 为 null 时（guest 创建的房间），允许任何非 guest 用户接管
     if (room.ownerUserId !== null && room.ownerUserId !== userId) return null;
+    if (!userId || userId <= 0) return null;
 
     // 无 owner 的房间：设置当前用户为 owner
     if (room.ownerUserId === null) {
@@ -61,6 +67,8 @@ export class RoomSessionService {
 
     // 取消重连定时器
     roomStateService.cancelReconnectTimer(roomId);
+    roomExperienceService.cancelDelegate(roomId);
+    await sessionRepo.update({ roomId, socketId: socket.id, role: 'viewer', endedAt: IsNull() }, { endedAt: new Date() });
 
     // 复用旧 session 或创建新的
     const existingSharer = await sessionRepo.findOneBy({
@@ -89,16 +97,22 @@ export class RoomSessionService {
     await socket.join(roomId);
 
     // 更新最后访问时间
-    await roomRepo.update({ roomId }, { lastAccessedAt: new Date() });
+    await roomRepo.update({ roomId }, { lastAccessedAt: new Date(), emptySince: null });
+    roomPermissionService.invalidatePermissionCache(undefined, roomId);
 
     // 更新播放记忆中的 hostSocketId（房主重连）
     await playbackMemoryService.updateHostSocket(roomId, socket.id);
 
     // 从播放记忆服务获取推算后的状态（房主重连后从服务器进度恢复）
     const advancedPlayback = await playbackMemoryService.getAdvancedPlayback(roomId);
+    if (advancedPlayback) {
+      roomStateService.setCurrentMovie(roomId, advancedPlayback.currentMovieId ?? null);
+      roomStateService.setPlayback(roomId, advancedPlayback);
+    }
 
     return {
       mode: room.mode,
+      activity: room.activity,
       shareMethod: room.shareMethod,
       name: room.name,
       streamKey: room.streamKey,
@@ -122,19 +136,23 @@ export class RoomSessionService {
     const roomRepo = AppDataSource.getRepository(Room);
 
     // 更新房间最后访问时间
-    await roomRepo.update({ roomId }, { lastAccessedAt: new Date() });
+    await roomRepo.update({ roomId }, { lastAccessedAt: new Date(), emptySince: null });
+
+    const existing = await sessionRepo.findOneBy({ roomId, socketId: socket.id, endedAt: IsNull() });
+    if (existing) { await socket.join(roomId); return existing; }
 
     // 创建 viewer session
     const session = sessionRepo.create({
       roomId,
       socketId: socket.id,
       role: 'viewer',
-      userId: userId ?? null,
+      userId: userId && userId > 0 ? userId : null,
     });
     await sessionRepo.save(session);
 
     // 加入 socket.io 房间
     await socket.join(roomId);
+    roomPermissionService.invalidatePermissionCache(socket.id, roomId);
 
     return session;
   }
@@ -232,7 +250,7 @@ export class RoomSessionService {
     roomId: string,
     userId: number | null,
   ): Promise<Session | null> {
-    if (userId == null) return null;
+    if (userId == null || userId <= 0) return null;
     const sessionRepo = AppDataSource.getRepository(Session);
     return sessionRepo.findOneBy({
       roomId,
@@ -295,6 +313,8 @@ export class RoomSessionService {
         });
       });
       await playbackMemoryService.updateHostSocket(roomId, newSharerSocketId);
+      roomDelegates.delete(roomId);
+      roomExperienceService.cancelDelegate(roomId);
       roomPermissionService.invalidatePermissionCache(oldSharerSocketId, roomId);
       roomPermissionService.invalidatePermissionCache(newSharerSocketId, roomId);
     });

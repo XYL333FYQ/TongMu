@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import { ChevronLeft, HardDrive, Folder, Check } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Spinner } from '@/components/ui/Spinner'
@@ -6,29 +7,26 @@ import type { SystemDirEntry } from './types'
 
 /** 副面板宽度（px） */
 export const SIDE_PANEL_WIDTH = 300
-/** 动画时长 */
-const DURATION = 240
-
 export interface DirPickerSidePanelProps {
   /** 是否展开 */
   open: boolean
-  /** 加载中 */
+  /** Loading… */
   loading: boolean
   /** 错误信息 */
   error: string
-  /** 目录条目列表 */
+  /** 目录 itemsList */
   entries: SystemDirEntry[]
-  /** 当前路径 */
+  /** CurrentPath */
   currentPath: string
   /** 是否为系统根 */
   isRoot: boolean
   /** 进入子目录 */
   onEnter: (entry: SystemDirEntry) => void
-  /** 返回上一级 */
+  /** Back上一级 */
   onBack: () => void
-  /** 选择当前目录 */
+  /** 选择Current folder */
   onSelect: () => void
-  /** 关闭面板 */
+  /** Close面板 */
   onClose: () => void
 }
 
@@ -48,13 +46,21 @@ export function DirPickerSidePanel({
   onSelect,
   onClose,
 }: DirPickerSidePanelProps) {
+  useTranslation()
+
   return (
     <div
+      ref={(element) => {
+        if (element) element.inert = !open
+      }}
+      role="region"
+      aria-label={t('Choose folder')}
+      aria-hidden={!open}
       className="flex-shrink-0 overflow-hidden"
       style={{
         width: open ? SIDE_PANEL_WIDTH : 0,
         maxWidth: open ? 'calc(100vw - 2rem)' : 0,
-        transition: `width ${DURATION}ms var(--ease-out-expo), max-width ${DURATION}ms var(--ease-out-expo)`,
+        transition: `width var(${open ? '--tm-motion-enter' : '--tm-motion-exit'}) var(${open ? '--ease-out-expo' : '--ease-in-expo'}), max-width var(${open ? '--tm-motion-enter' : '--tm-motion-exit'}) var(${open ? '--ease-out-expo' : '--ease-in-expo'})`,
         willChange: 'width',
       }}
     >
@@ -75,10 +81,12 @@ export function DirPickerSidePanel({
               <HardDrive className="h-4 w-4" />
             </div>
             <span className="text-sm font-medium text-[var(--md-sys-color-on-surface)]">
-              选择目录
+              {t('Choose folder')}
             </span>
           </div>
           <button
+            type="button"
+            aria-label={t('Close')}
             onClick={onClose}
             className="rounded-[var(--md-sys-shape-corner)] p-1 text-[var(--md-sys-color-on-surface-variant)] transition-colors hover:bg-[var(--md-sys-color-surface-container-highest)]"
           >
@@ -86,7 +94,7 @@ export function DirPickerSidePanel({
           </button>
         </div>
 
-        {/* 路径栏 + 返回 */}
+        {/* Path栏 + Back */}
         <div className="mb-2 flex shrink-0 items-center gap-2">
           <Button
             variant="ghost"
@@ -95,17 +103,17 @@ export function DirPickerSidePanel({
             onClick={onBack}
             disabled={isRoot}
           >
-            返回
+            {t('Back')}
           </Button>
           <Text
             className="min-w-0 flex-1 truncate text-xs text-[var(--md-sys-color-on-surface-variant)]"
             title={currentPath}
           >
-            {currentPath || '服务器根目录'}
+            {currentPath || t('Server root folder')}
           </Text>
         </div>
 
-        {/* 目录列表 */}
+        {/* 目录List */}
         <div className="min-h-0 flex-1 overflow-y-auto rounded-md">
           {loading ? (
             <div className="flex items-center justify-center py-4">
@@ -113,11 +121,11 @@ export function DirPickerSidePanel({
             </div>
           ) : error ? (
             <Text className="py-4 text-center text-xs text-[var(--md-sys-color-error)]">
-              {error}
+              {t(error)}
             </Text>
           ) : entries.length === 0 ? (
             <Text className="py-4 text-center text-xs text-[var(--md-sys-color-on-surface-variant)]">
-              无子目录
+              {t('No subfolders.')}
             </Text>
           ) : (
             entries.map((entry) => (
@@ -145,7 +153,7 @@ export function DirPickerSidePanel({
           )}
         </div>
 
-        {/* 选择当前目录按钮 */}
+        {/* 选择Current folder按钮 */}
         {!isRoot && currentPath && !loading && !error && (
           <Button
             variant="primary"
@@ -154,7 +162,7 @@ export function DirPickerSidePanel({
             className="mt-2 shrink-0"
             onClick={onSelect}
           >
-            选择此目录
+            {t('Use this folder')}
           </Button>
         )}
       </div>

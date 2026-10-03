@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { Shield, UserPlus, LogIn } from 'lucide-react'
@@ -11,6 +12,7 @@ import { message } from '@/components/ui/message'
 import { useAuthStore } from '@/store/authStore'
 import { apiFetch, resetSessionExpired, saveAuthTokens } from '@/lib/api'
 import { reconnectSocket } from '@/hooks/useSocket'
+import { englishErrorMessage } from '@/lib/errorMessage'
 import { cn } from '@/lib/utils'
 
 const Fade = ({
@@ -38,6 +40,7 @@ interface AuthForm {
 type AuthMode = 'login' | 'register'
 
 export default function LoginPage() {
+  useTranslation()
   const navigate = useNavigate()
   const location = useLocation()
   const { login } = useAuthStore()
@@ -74,12 +77,12 @@ export default function LoginPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!form.username.trim() || !form.password) {
-      message.warning('请输入用户名和密码')
+      message.warning(t('Enter your username and password.'))
       return
     }
 
     if (!isLogin && form.password.length < 4) {
-      message.warning('密码至少 4 位')
+      message.warning(t('Use at least 4 characters for the password.'))
       return
     }
 
@@ -106,7 +109,12 @@ export default function LoginPage() {
 
       if (data.success && data.user) {
         if (!isLogin && data.user.status === 'pending') {
-          message.success(data.message || '注册成功，请等待管理员审核')
+          message.success(
+            englishErrorMessage(
+              data.message,
+              'Account created. Please wait for administrator approval.'
+            )
+          )
           setMode('login')
           return
         }
@@ -123,14 +131,23 @@ export default function LoginPage() {
         // 登录后 Socket 需要断开重连，以新的认证凭据重新握手，
         // 否则后端 socket.data.role 仍为旧角色（如 guest），导致创建房间等操作被拒绝。
         reconnectSocket()
-        message.success(isLogin ? '登录成功' : '注册成功')
+        message.success(isLogin ? t('Signed in.') : t('Account created.'))
         navigate(from || '/', { replace: true })
       } else {
-        message.error(data.message || (isLogin ? '登录失败' : '注册失败'))
+        message.error(
+          englishErrorMessage(
+            data.message,
+            isLogin ? 'Sign-in failed.' : 'Could not create your account.'
+          )
+        )
       }
     } catch (err) {
       console.error('[LoginPage] auth error:', err)
-      message.error(isLogin ? '登录请求失败' : '注册请求失败')
+      message.error(
+        isLogin
+          ? t('Could not connect to sign in.')
+          : t('Could not connect to create your account.')
+      )
     } finally {
       setLoading(false)
     }
@@ -162,16 +179,18 @@ export default function LoginPage() {
           </Fade>
           <Fade delay={120} key={`login-title-${mode}`}>
             <Title level={3} className="m-0 mt-4">
-              {isLogin ? '登录 TongMu' : '注册账号'}
+              {isLogin ? t('Welcome to TongMu') : t('Create an account')}
             </Title>
             <Paragraph type="secondary" className="m-0 mt-2">
               {isLogin
-                ? '管理员账号可创建共享房间'
+                ? t('Sign in to your account and join your shared space.')
                 : registrationMode === 'closed'
-                  ? '当前已关闭注册'
+                  ? t('Registration is closed.')
                   : registrationMode === 'open'
-                    ? '注册后即可使用'
-                    : '注册后需管理员审核通过，方可成为普通用户'}
+                    ? t('Create an account to get started.')
+                    : t(
+                        'An administrator will review your registration before you can sign in.'
+                      )}
             </Paragraph>
           </Fade>
         </div>
@@ -180,25 +199,27 @@ export default function LoginPage() {
           <Space direction="vertical" className="w-full">
             <Fade delay={180} className="w-full">
               <Input
-                label="用户名"
+                label={t('Username')}
                 type="text"
                 value={form.username}
                 onChange={(e) =>
                   setForm((prev) => ({ ...prev, username: e.target.value }))
                 }
-                placeholder="请输入用户名"
+                placeholder={t('Your username')}
                 size="lg"
               />
             </Fade>
 
             <Fade delay={220} className="w-full">
               <InputPassword
-                label="密码"
+                label={t('Password')}
                 value={form.password}
                 onChange={(e) =>
                   setForm((prev) => ({ ...prev, password: e.target.value }))
                 }
-                placeholder={isLogin ? '请输入密码' : '至少 4 位密码'}
+                placeholder={
+                  isLogin ? t('Your password') : t('At least 4 characters')
+                }
                 size="lg"
               />
             </Fade>
@@ -218,7 +239,7 @@ export default function LoginPage() {
                 }
                 className="mt-2"
               >
-                {isLogin ? '登录' : '注册'}
+                {isLogin ? t('Sign in') : t('Register')}
               </Button>
             </Fade>
           </Space>
@@ -229,32 +250,40 @@ export default function LoginPage() {
             {isLogin ? (
               registrationMode === 'closed' ? (
                 <Paragraph type="secondary" className="text-xs m-0">
-                  当前站点已关闭新用户注册
+                  {t('New account registration is currently closed.')}
                 </Paragraph>
               ) : (
-                <Paragraph type="secondary" className="text-xs m-0">
-                  还没有账号？{' '}
-                  <button
+                <Paragraph
+                  type="secondary"
+                  className="m-0 flex flex-wrap items-center justify-center gap-2 text-xs"
+                >
+                  {t('New to TongMu?')}
+                  <Button
                     type="button"
+                    variant="ghost"
+                    size="sm"
+                    icon={<UserPlus className="h-4 w-4" />}
                     onClick={() => setMode('register')}
-                    className="underline hover:opacity-80"
-                    style={{ color: 'var(--md-sys-color-primary)' }}
                   >
-                    注册账号
-                  </button>
+                    {t('Create an account')}
+                  </Button>
                 </Paragraph>
               )
             ) : (
-              <Paragraph type="secondary" className="text-xs m-0">
-                已有账号？{' '}
-                <button
+              <Paragraph
+                type="secondary"
+                className="m-0 flex flex-wrap items-center justify-center gap-2 text-xs"
+              >
+                {t('Already have an account?')}
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="sm"
+                  icon={<LogIn className="h-4 w-4" />}
                   onClick={() => setMode('login')}
-                  className="underline hover:opacity-80"
-                  style={{ color: 'var(--md-sys-color-primary)' }}
                 >
-                  返回登录
-                </button>
+                  {t('Back to sign in')}
+                </Button>
               </Paragraph>
             )}
           </div>

@@ -260,7 +260,7 @@ router.post(
 
       const payload = verifyRefreshToken(refreshToken);
       if (payload.userId === 0 && payload.role === 'guest') {
-        const { accessToken } = generateTokens(0, 'guest', 'guest');
+        const { accessToken } = generateTokens(0, 'guest', 'guest', payload.guestId);
         setAccessTokenCookie(req, res, accessToken);
         res.json({ success: true, accessToken });
         return;

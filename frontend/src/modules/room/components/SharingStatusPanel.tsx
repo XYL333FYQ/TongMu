@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import {
   Activity,
   Cpu,
@@ -18,21 +19,21 @@ import {
 import type { P2PStatus } from '@/modules/p2p/types'
 
 export interface SharingStatusPanelProps {
-  /** 服务器中转 PC（P2P 未启用时使用） */
+  /** Server relay PC（P2P Off时使用） */
   pc: RTCPeerConnection | null
-  /** 当前角色：发送端 / 接收端 */
+  /** Current角色：Sender / Receiver */
   mode: 'sender' | 'receiver'
-  /** 基础共享模式标签：服务器中转 / P2P 直连 */
+  /** 基础共享模式标签：Server relay / Peer connection */
   sharingMode: SharingMode
-  /** P2P 直连是否已启用（来自外部 useP2PTunnel） */
+  /** Peer connection是否已Enable（来自外部 useP2PTunnel） */
   p2pEnabled: boolean
-  /** P2P 隧道 PC（P2P 启用时切换展示） */
+  /** P2P 隧道 PC（P2P Enable时切换展示） */
   p2pPC: RTCPeerConnection | null
   /** P2P 协商状态 */
   p2pStatus: P2PStatus
-  /** 是否已触发回退到服务器中转 */
+  /** 是否已触发回退到Server relay */
   fallbackNotice: boolean
-  /** P2P 直连开关回调 */
+  /** Peer connection开关回调 */
   onToggleP2P: (enabled: boolean) => void
 }
 
@@ -44,6 +45,8 @@ interface StatRowProps {
 }
 
 function StatRow({ icon, label, value, hint }: StatRowProps) {
+  useTranslation()
+
   return (
     <div
       className={cn(
@@ -93,7 +96,7 @@ function StatRow({ icon, label, value, hint }: StatRowProps) {
 }
 
 function getSharingModeLabel(mode: SharingMode): string {
-  return mode === 'p2p' ? 'P2P 直连' : '服务器中转'
+  return mode === 'p2p' ? t('Peer connection') : t('Server relay')
 }
 
 function getSharingModeColor(): 'success' | 'primary' {
@@ -101,7 +104,7 @@ function getSharingModeColor(): 'success' | 'primary' {
 }
 
 function getRoleLabel(role: 'sender' | 'receiver'): string {
-  return role === 'sender' ? '发送端' : '接收端'
+  return role === 'sender' ? t('Sender') : t('Receiver')
 }
 
 function getConnectionStateColor(
@@ -124,17 +127,17 @@ function getConnectionStateColor(
 function getConnectionStateText(state: RTCPeerConnectionState): string {
   switch (state) {
     case 'new':
-      return '等待连接'
+      return t('Waiting')
     case 'connecting':
-      return '连接中'
+      return t('Connecting')
     case 'connected':
-      return '已连接'
+      return t('Connected')
     case 'disconnected':
-      return '已断开'
+      return t('Disconnected')
     case 'failed':
-      return '连接失败'
+      return t('Connection failed')
     case 'closed':
-      return '连接已关闭'
+      return t('Connection closed')
     default:
       return state
   }
@@ -143,13 +146,13 @@ function getConnectionStateText(state: RTCPeerConnectionState): string {
 function getP2PStatusLabel(status: P2PStatus): string {
   switch (status) {
     case 'idle':
-      return '未启用'
+      return t('Off')
     case 'connecting':
-      return 'P2P 协商中'
+      return t('Connecting peers')
     case 'connected':
-      return 'P2P 直连'
+      return t('Peer connection')
     case 'failed':
-      return '已回退到服务器中转'
+      return t('Using server relay')
   }
 }
 
@@ -178,6 +181,8 @@ export function SharingStatusPanel({
   fallbackNotice,
   onToggleP2P,
 }: SharingStatusPanelProps) {
+  useTranslation()
+
   // P2P 启用时切换为 p2pPC，否则使用服务器中转 PC
   const displayPC = p2pEnabled ? p2pPC : pc
   const displaySharingMode: SharingMode = p2pEnabled ? 'p2p' : sharingMode
@@ -199,7 +204,7 @@ export function SharingStatusPanel({
   const codecText = stats.codec ?? '-'
   const rttText = stats.rtt === null ? '-' : `${stats.rtt} ms`
   const jitterText = stats.jitter === null ? '-' : `${stats.jitter} ms`
-  const bitrateHint = mode === 'sender' ? '上行码率' : '下行码率'
+  const bitrateHint = mode === 'sender' ? 'Upload bitrate' : 'Download bitrate'
 
   return (
     <div className="glass-card flex h-full w-full flex-col gap-3 rounded-2xl p-4">
@@ -214,7 +219,9 @@ export function SharingStatusPanel({
         >
           <Activity className="h-4 w-4" />
         </span>
-        <Paragraph className="m-0 text-sm font-semibold">共享情况</Paragraph>
+        <Paragraph className="m-0 text-sm font-semibold">
+          {t('Sharing status')}
+        </Paragraph>
       </div>
 
       {/* 状态标签 */}
@@ -232,11 +239,11 @@ export function SharingStatusPanel({
           </Tag>
         )}
         {fallbackNotice && !p2pEnabled && (
-          <Tag color="warning">已回退到服务器中转</Tag>
+          <Tag color="warning">{t('Using server relay')}</Tag>
         )}
       </div>
 
-      {/* P2P 直连开关 */}
+      {/* Peer connection开关 */}
       <div
         className="glass flex items-center justify-between rounded-xl px-3 py-2"
         style={{
@@ -251,13 +258,15 @@ export function SharingStatusPanel({
             style={{ color: 'var(--md-sys-color-secondary)' }}
           />
           <div className="leading-tight">
-            <Paragraph className="m-0 text-xs font-medium">P2P 直连</Paragraph>
+            <Paragraph className="m-0 text-xs font-medium">
+              {t('Peer connection')}
+            </Paragraph>
             <Text type="secondary" className="text-[10px] opacity-70">
               {p2pEnabled
                 ? getP2PStatusLabel(p2pStatus)
                 : fallbackNotice
-                  ? '已回退到服务器中转'
-                  : '点击切换至 P2P'}
+                  ? t('Using server relay')
+                  : t('Use peer connection')}
             </Text>
           </div>
         </div>
@@ -267,52 +276,54 @@ export function SharingStatusPanel({
         />
       </div>
 
-      {/* 实时统计字段列表 */}
+      {/* 实时统计字段List */}
       <div className="flex flex-col gap-2 overflow-y-auto pr-1">
         <StatRow
           icon={<Gauge className="h-3.5 w-3.5" />}
-          label="帧率"
+          label={t('Frame rate')}
           value={fpsText}
         />
         <StatRow
           icon={<Signal className="h-3.5 w-3.5" />}
-          label="丢包率"
+          label={t('Packet loss')}
           value={lossText}
         />
         <StatRow
           icon={<Radio className="h-3.5 w-3.5" />}
-          label="实时码率"
+          label={t('Current bitrate')}
           hint={bitrateHint}
           value={bitrateText}
         />
         <StatRow
           icon={<Layers className="h-3.5 w-3.5" />}
-          label="分辨率"
+          label={t('Resolution')}
           value={resolutionText}
         />
         <StatRow
           icon={<Cpu className="h-3.5 w-3.5" />}
-          label="编码格式"
+          label={t('Codec')}
           value={codecText}
         />
         <StatRow
           icon={<Activity className="h-3.5 w-3.5" />}
-          label="RTT 往返时延"
+          label={t('Round-trip time')}
           value={rttText}
         />
         <StatRow
           icon={<Signal className="h-3.5 w-3.5" />}
-          label="抖动"
+          label={t('Jitter')}
           value={jitterText}
         />
       </div>
 
-      {/* 底部说明 */}
+      {/* Bottom说明 */}
       <Text
         type="secondary"
         className="mt-auto text-[10px] leading-tight opacity-70"
       >
-        每 1 秒采样一次 WebRTC 统计；码率为上一秒平均速率。
+        {t(
+          'Updated every second. Bitrate is the average over the previous interval.'
+        )}
       </Text>
     </div>
   )

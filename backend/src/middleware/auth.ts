@@ -12,6 +12,7 @@ export interface JwtPayload {
   userId: number;
   role: UserRole;
   username?: string;
+  guestId?: string;
   /** JWT 标准声明：签发时间（秒级 Unix 时间戳），由 jsonwebtoken.sign 自动写入 */
   iat?: number;
 }
@@ -109,9 +110,10 @@ const GUEST_REFRESH_EXPIRES_IN: jwt.SignOptions['expiresIn'] = '7d';
 
 const IS_PROD = process.env.NODE_ENV === 'production';
 
-export function generateTokens(userId: number, role: UserRole, username?: string) {
+export function generateTokens(userId: number, role: UserRole, username?: string, guestId?: string) {
   const payload: JwtPayload = { userId, role, username };
   const isGuest = userId === 0 && role === 'guest';
+  if (isGuest) payload.guestId = guestId || crypto.randomUUID();
   const accessToken = jwt.sign(payload, JWT_ACCESS_SECRET, {
     expiresIn: isGuest ? GUEST_ACCESS_EXPIRES_IN : JWT_ACCESS_EXPIRES_IN,
   });

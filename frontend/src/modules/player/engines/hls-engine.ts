@@ -40,7 +40,7 @@ function waitForHlsReady(
   video: HTMLVideoElement,
   signal?: AbortSignal,
   timeoutMs = 15000
-  ): Promise<void> {
+): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(createPlayerAbortError())
@@ -65,9 +65,11 @@ function waitForHlsReady(
       if (!data.fatal) return
       settled = true
       cleanup()
-      reject(new Error(
-        `HLS加载失败: type=${data.type} details=${data.details} url=${redactMediaUrl(data.url)}`
-      ))
+      reject(
+        new Error(
+          `HLS loading failed: type=${data.type} details=${data.details} url=${redactMediaUrl(data.url)}`
+        )
+      )
     }
 
     const onAbort = () => {
@@ -81,7 +83,7 @@ function waitForHlsReady(
       if (settled) return
       settled = true
       cleanup()
-      reject(new Error(`HLS加载超时(${timeoutMs}ms)`))
+      reject(new Error(`HLS loading timed out (${timeoutMs} ms). Try again.`))
     }
 
     function cleanup() {
@@ -109,7 +111,12 @@ export const hlsEngine: PlayerEngine = {
     if (source.signal?.aborted) throw createPlayerAbortError()
     resetVideoElement(video)
 
-    const targetUrl = resolveProxyUrl(source.url, source.headers, source.format, { noProxyFallback: source.noProxyFallback })
+    const targetUrl = resolveProxyUrl(
+      source.url,
+      source.headers,
+      source.format,
+      { noProxyFallback: source.noProxyFallback }
+    )
     console.log('[hls-engine] attach start', {
       originalUrl: redactMediaUrl(source.url),
       resolvedUrl: redactMediaUrl(targetUrl),
@@ -145,11 +152,29 @@ export const hlsEngine: PlayerEngine = {
       }
       const onManifestParsed = () => {
         if (disposed || source.signal?.aborted) return
-        hls.currentLevel = hls.levels.reduce((best, level, i, levels) => (level.height || 0) > (levels[best].height || 0) || ((level.height || 0) === (levels[best].height || 0) && level.bitrate > levels[best].bitrate) ? i : best, 0)
+        hls.currentLevel = hls.levels.reduce(
+          (best, level, i, levels) =>
+            (level.height || 0) > (levels[best].height || 0) ||
+            ((level.height || 0) === (levels[best].height || 0) &&
+              level.bitrate > levels[best].bitrate)
+              ? i
+              : best,
+          0
+        )
       }
-      const onError = (_event: string, data: { type: string; details: string; fatal: boolean; url?: string; response?: { code?: number; text?: string } }) => {
+      const onError = (
+        _event: string,
+        data: {
+          type: string
+          details: string
+          fatal: boolean
+          url?: string
+          response?: { code?: number; text?: string }
+        }
+      ) => {
         if (disposed || source.signal?.aborted) return
-        if (data.fatal && video.readyState >= 1) video.dispatchEvent(new Event('error'))
+        if (data.fatal && video.readyState >= 1)
+          video.dispatchEvent(new Event('error'))
         console.error('[hls-engine] hls.js error', {
           type: data.type,
           details: data.details,
@@ -158,7 +183,9 @@ export const hlsEngine: PlayerEngine = {
           response: data.response
             ? {
                 code: data.response.code,
-                text: data.response.text ? redactMediaError(data.response.text) : undefined,
+                text: data.response.text
+                  ? redactMediaError(data.response.text)
+                  : undefined,
               }
             : null,
         })
@@ -172,10 +199,26 @@ export const hlsEngine: PlayerEngine = {
         cleaned = true
         disposed = true
         source.signal?.removeEventListener('abort', destroy)
-        try { hls.off(Hls.Events.MEDIA_ATTACHED, onMediaAttached) } catch { /* ignore */ }
-        try { hls.off(Hls.Events.MANIFEST_PARSED, onManifestParsed) } catch { /* ignore */ }
-        try { hls.off(Hls.Events.ERROR, onError) } catch { /* ignore */ }
-        try { hls.destroy() } catch { /* ignore */ }
+        try {
+          hls.off(Hls.Events.MEDIA_ATTACHED, onMediaAttached)
+        } catch {
+          /* ignore */
+        }
+        try {
+          hls.off(Hls.Events.MANIFEST_PARSED, onManifestParsed)
+        } catch {
+          /* ignore */
+        }
+        try {
+          hls.off(Hls.Events.ERROR, onError)
+        } catch {
+          /* ignore */
+        }
+        try {
+          hls.destroy()
+        } catch {
+          /* ignore */
+        }
         releaseWorker()
         releaseMediaSource()
       }
@@ -225,6 +268,8 @@ export const hlsEngine: PlayerEngine = {
       }
     }
 
-    throw new Error('当前浏览器不支持 HLS 播放且 hls.js 不可用')
+    throw new Error(
+      'HLS playback is unavailable in this browser. Try a supported browser.'
+    )
   },
 }

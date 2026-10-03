@@ -67,7 +67,10 @@ export function publishPlaysVideoSubtitle(
     try {
       listener(subtitle)
     } catch (err) {
-      console.error('[playsvideo-subtitles] 订阅者处理失败:', redactMediaError(err))
+      console.error(
+        '[playsvideo-subtitles] 订阅者处理失败:',
+        redactMediaError(err)
+      )
     }
   }
 }

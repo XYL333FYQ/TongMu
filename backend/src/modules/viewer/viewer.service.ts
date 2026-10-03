@@ -19,6 +19,37 @@ import { roomSessionService } from '../room/room-session.service';
  * 观众服务（单例）。
  */
 export class ViewerService {
+  private readonly pending = new Map<string, Map<string, number>>();
+  addPendingRequest(roomId: string, socketId: string): void {
+    const requests = this.pending.get(roomId) ?? new Map<string, number>();
+    for (const [id, created] of requests) if (Date.now() - created > 15 * 60_000) requests.delete(id);
+    if (requests.size >= 100 && !requests.has(socketId)) throw new Error('等待审核人数过多，请稍后重试');
+    requests.set(socketId, Date.now());
+    this.pending.set(roomId, requests);
+  }
+  hasPendingRequest(roomId: string, socketId: string): boolean {
+    const created = this.pending.get(roomId)?.get(socketId);
+    return created !== undefined && Date.now() - created < 15 * 60_000;
+  }
+  removePendingRequest(roomId: string, socketId: string): void {
+    const requests = this.pending.get(roomId);
+    requests?.delete(socketId);
+    if (!requests?.size) this.pending.delete(roomId);
+  }
+  replayPendingRequests(io: SocketIOServer, roomId: string, hostId: string): void {
+    for (const id of this.pending.get(roomId)?.keys() ?? []) {
+      const candidate = io.sockets.sockets.get(id);
+      if (!candidate?.connected || !this.hasPendingRequest(roomId, id)) { this.removePendingRequest(roomId, id); continue; }
+      io.to(hostId).emit('join-request', { viewerSocketId: id, username: candidate.data.username });
+    }
+  }
+  clearPendingRoom(roomId: string): void { this.pending.delete(roomId); }
+  listPendingRequests(io: SocketIOServer, roomId: string): { socketId: string; username: string }[] {
+    return [...(this.pending.get(roomId)?.keys() ?? [])].filter(id => this.hasPendingRequest(roomId, id) && io.sockets.sockets.get(id)?.connected).map(id => ({ socketId: id, username: String(io.sockets.sockets.get(id)?.data.username || 'Guest').slice(0, 40) }));
+  }
+  clearPendingSocket(socketId: string): void {
+    for (const roomId of this.pending.keys()) this.removePendingRequest(roomId, socketId);
+  }
   /**
    * 获取房间内所有在线观众信息（含 username）。
    *
@@ -38,11 +69,12 @@ export class ViewerService {
 
     for (const session of sessions) {
       const socket = io.sockets.sockets.get(session.socketId);
-      const userId: number | null = socket?.data?.userId ?? null;
+      if (!socket?.connected || !socket.rooms.has(roomId)) continue;
+      const userId = session.userId && session.userId > 0 ? session.userId : null;
       let username: string | undefined = socket?.data?.username;
-      const role: 'sharer' | 'viewer' = (socket?.data?.role ?? 'viewer') as
-        | 'sharer'
-        | 'viewer';
+      const accountRole = socket.data?.role;
+      const role: ViewerDto['role'] = ['root', 'admin', 'user', 'guest'].includes(accountRole)
+        ? accountRole : 'viewer';
 
       // 回查 User 表补充 username
       if (!username && userId != null) {
@@ -53,7 +85,7 @@ export class ViewerService {
       result.push({
         socketId: session.socketId,
         userId,
-        username: username ?? '未知用户',
+        username: username ?? (role === 'guest' ? 'Guest' : 'Member'),
         role,
       });
     }

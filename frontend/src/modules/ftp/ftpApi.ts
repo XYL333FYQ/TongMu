@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api'
+import { englishErrorMessage } from '@/lib/errorMessage'
 import type {
   FTPMount,
   FTPMountFormPayload,
@@ -25,7 +26,9 @@ export async function getFTPMounts(): Promise<FTPMount[]> {
     message?: string
   }
   if (!res.ok || !data.success) {
-    throw new Error(data.message || '获取 FTP 挂载列表失败')
+    throw new Error(
+      englishErrorMessage(data.message, 'Unable to load FTP sources.')
+    )
   }
   return data.mounts || []
 }
@@ -44,7 +47,9 @@ export async function createFTPMount(
     message?: string
   }
   if (!res.ok || !data.success || !data.mount) {
-    throw new Error(data.message || '创建 FTP 挂载失败')
+    throw new Error(
+      englishErrorMessage(data.message, 'Unable to add this FTP source.')
+    )
   }
   return data.mount
 }
@@ -64,7 +69,9 @@ export async function updateFTPMount(
     message?: string
   }
   if (!res.ok || !data.success || !data.mount) {
-    throw new Error(data.message || '更新 FTP 挂载失败')
+    throw new Error(
+      englishErrorMessage(data.message, 'Unable to update this FTP source.')
+    )
   }
   return data.mount
 }
@@ -75,7 +82,9 @@ export async function deleteFTPMount(id: number): Promise<void> {
   })
   const data = (await res.json()) as { success: boolean; message?: string }
   if (!res.ok || !data.success) {
-    throw new Error(data.message || '删除 FTP 挂载失败')
+    throw new Error(
+      englishErrorMessage(data.message, 'Unable to remove this FTP source.')
+    )
   }
 }
 
@@ -93,7 +102,12 @@ export async function testFTPMount(
     message?: string
   }
   if (!res.ok || !data.success) {
-    throw new Error(data.message || '测试 FTP 连接失败')
+    throw new Error(
+      englishErrorMessage(
+        data.message,
+        'Unable to connect to FTP. Check the address and credentials.'
+      )
+    )
   }
   return {
     success: true,
@@ -113,7 +127,9 @@ export async function browseFTPMount(
     message?: string
   }
   if (!res.ok || !data.success) {
-    throw new Error(data.message || '浏览 FTP 挂载失败')
+    throw new Error(
+      englishErrorMessage(data.message, 'Unable to browse this FTP library.')
+    )
   }
   return data.entries || []
 }
@@ -137,7 +153,9 @@ export async function resolveFTP(
     size?: number
   }
   if (!res.ok || !data.success || !data.videoUrl) {
-    throw new Error(data.message || '解析 FTP 文件失败')
+    throw new Error(
+      englishErrorMessage(data.message, 'Unable to open this FTP file.')
+    )
   }
   return {
     title: data.title || '',

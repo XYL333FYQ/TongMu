@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import { useState, useEffect, useRef } from 'react'
 import { Image, Link2, Upload, Trash2, Check } from 'lucide-react'
 import { Slider } from '@/components/ui/Slider'
@@ -41,6 +42,8 @@ export function BackgroundSettingsPanel({
   open,
   onClose,
 }: BackgroundSettingsPanelProps) {
+  useTranslation()
+
   const store = useThemeStore()
   const isSavedUpload = store.backgroundImage?.startsWith('data:') ?? false
   const [activeTab, setActiveTab] = useState<TabKey>(
@@ -121,19 +124,19 @@ export function BackgroundSettingsPanel({
 
   const handleFile = (file: File) => {
     if (!file.type.startsWith('image/')) {
-      message.error('请选择图片文件')
+      message.error(t('Choose an image file.'))
       return
     }
     // 限制图片大小（5MB），避免 base64 数据过大导致内存问题
     if (file.size > 5 * 1024 * 1024) {
-      message.error('图片不能超过 5MB')
+      message.error(t('Choose an image smaller than 5 MB.'))
       return
     }
     const reader = new FileReader()
     reader.onload = () => {
       const result = reader.result as string
       if (!result) {
-        message.error('图片读取失败')
+        message.error(t('Could not read the image.'))
         return
       }
       setUploadImage(result)
@@ -144,11 +147,15 @@ export function BackgroundSettingsPanel({
           '[BackgroundSettingsPanel] setBackgroundImage failed:',
           err
         )
-        message.error('应用背景失败，请尝试使用较小的图片或网络链接')
+        message.error(
+          t(
+            'Could not apply the background. Try a smaller image or an image URL.'
+          )
+        )
       }
     }
     reader.onerror = () => {
-      message.error('图片读取失败')
+      message.error(t('Could not read the image.'))
     }
     reader.readAsDataURL(file)
   }
@@ -165,15 +172,15 @@ export function BackgroundSettingsPanel({
     setActiveTab('url')
     setUrlInput('')
     setUploadImage(null)
-    message.success('已清除自定义背景')
+    message.success(t('Custom background cleared.'))
     onClose()
   }
 
   const tabs: { key: TabKey; label: string; icon: React.ReactNode }[] = [
-    { key: 'url', label: '网络链接', icon: <Link2 className="w-3.5 h-3.5" /> },
+    { key: 'url', label: 'Image URL', icon: <Link2 className="w-3.5 h-3.5" /> },
     {
       key: 'upload',
-      label: '本地上传',
+      label: 'Upload image',
       icon: <Upload className="w-3.5 h-3.5" />,
     },
   ]
@@ -195,7 +202,7 @@ export function BackgroundSettingsPanel({
           <div className="flex items-center gap-2">
             <Image className="h-4 w-4 text-[var(--md-sys-color-primary)]" />
             <span className="text-sm font-medium text-[var(--md-sys-color-on-surface)]">
-              自定义背景
+              {t('Custom background')}
             </span>
           </div>
           <button
@@ -206,7 +213,7 @@ export function BackgroundSettingsPanel({
           </button>
         </div>
 
-        {/* 可滚动内容区 */}
+        {/* 可Scrolling内容区 */}
         <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden pr-1">
           {/* 标签页 */}
           <div className="flex rounded-[var(--md-sys-shape-corner)] bg-[var(--glass-bg)] p-1">
@@ -222,7 +229,7 @@ export function BackgroundSettingsPanel({
                 )}
               >
                 {tab.icon}
-                {tab.label}
+                {t(tab.label)}
               </button>
             ))}
           </div>
@@ -239,7 +246,7 @@ export function BackgroundSettingsPanel({
             </div>
           )}
 
-          {/* 本地上传 */}
+          {/* Upload image */}
           {activeTab === 'upload' && (
             <div className="mt-3">
               <label
@@ -266,10 +273,12 @@ export function BackgroundSettingsPanel({
                   )}
                 />
                 <span className="text-xs font-medium">
-                  {isDragOver ? '释放以上传图片' : '拖拽图片到此处或点击选择'}
+                  {isDragOver
+                    ? t('Drop to upload')
+                    : t('Drag an image here or choose a file')}
                 </span>
                 <span className="text-[10px] opacity-70">
-                  支持 JPG / PNG / WebP，最大 5MB
+                  {t('JPG, PNG or WebP · up to 5 MB')}
                 </span>
                 <input
                   type="file"
@@ -298,7 +307,7 @@ export function BackgroundSettingsPanel({
           {/* 参数滑块 */}
           <div className="mt-3 space-y-2 px-2">
             <Slider
-              label="背景模糊度"
+              label={t('Background blur')}
               value={store.backgroundBlur}
               min={0}
               max={20}
@@ -309,11 +318,11 @@ export function BackgroundSettingsPanel({
             />
             {store.reducedMotion && (
               <p className="text-[10px] text-[var(--md-sys-color-on-surface-variant)]">
-                精简动画已关闭背景模糊
+                {t('Background blur is off while reduced motion is enabled.')}
               </p>
             )}
             <Slider
-              label="透明度"
+              label={t('Opacity')}
               value={Math.round(store.backgroundOpacity * 100)}
               min={0}
               max={100}
@@ -322,7 +331,7 @@ export function BackgroundSettingsPanel({
               onChange={(v) => store.setBackgroundOpacity(v / 100)}
             />
             <Slider
-              label="水平位置"
+              label={t('Horizontal position')}
               value={store.backgroundPositionX}
               min={-100}
               max={100}
@@ -331,7 +340,7 @@ export function BackgroundSettingsPanel({
               onChange={store.setBackgroundPositionX}
             />
             <Slider
-              label="垂直位置"
+              label={t('Vertical position')}
               value={store.backgroundPositionY}
               min={-100}
               max={100}
@@ -340,7 +349,7 @@ export function BackgroundSettingsPanel({
               onChange={store.setBackgroundPositionY}
             />
             <Slider
-              label="缩放比例"
+              label={t('Scale')}
               value={Math.round(store.backgroundScale * 100)}
               min={50}
               max={200}
@@ -349,7 +358,7 @@ export function BackgroundSettingsPanel({
               onChange={(v) => store.setBackgroundScale(v / 100)}
             />
             <Slider
-              label="旋转角度"
+              label={t('Rotation')}
               value={store.backgroundRotate}
               min={0}
               max={360}
@@ -360,7 +369,7 @@ export function BackgroundSettingsPanel({
           </div>
         </div>
 
-        {/* 清除背景 */}
+        {/* Clear background */}
         <Button
           variant="danger"
           size="sm"
@@ -369,7 +378,7 @@ export function BackgroundSettingsPanel({
           icon={<Trash2 className="h-3.5 w-3.5" />}
           onClick={handleClear}
         >
-          清除背景
+          {t('Clear background')}
         </Button>
       </div>
     </div>

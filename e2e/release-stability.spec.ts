@@ -3,12 +3,11 @@ import { expect, test, type Page } from '@playwright/test'
 async function waitForSocket(page: Page): Promise<void> {
   await expect
     .poll(() =>
-      page.evaluate(
-        () =>
-          Boolean(
-            (window as unknown as { __debugSocket?: { connected?: boolean } })
-              .__debugSocket?.connected
-          )
+      page.evaluate(() =>
+        Boolean(
+          (window as unknown as { __debugSocket?: { connected?: boolean } })
+            .__debugSocket?.connected
+        )
       )
     )
     .toBe(true)
@@ -16,9 +15,9 @@ async function waitForSocket(page: Page): Promise<void> {
 
 async function loginAndCreateWatchRoom(page: Page): Promise<string> {
   await page.goto('/login')
-  await page.getByPlaceholder('请输入用户名').fill('root')
-  await page.getByPlaceholder('请输入密码').fill('root')
-  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await page.getByPlaceholder('Your username').fill('root')
+  await page.getByPlaceholder('Your password').fill('root')
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
   await expect(page).toHaveURL(/\/$/)
   await waitForSocket(page)
   const result = await page.evaluate(
@@ -30,7 +29,11 @@ async function loginAndCreateWatchRoom(page: Page): Promise<string> {
           ).__debugSocket
           socket.emit(
             'create-room',
-            { mode: 'watch-together', requireApproval: false },
+            {
+              name: 'Release regression room',
+              mode: 'watch-together',
+              requireApproval: false,
+            },
             resolve
           )
         }
@@ -81,21 +84,24 @@ test('explicitly reselecting a failed movie retries once while state refreshes s
   await waitForSocket(page)
 
   const fixtureOrigin = 'http://127.0.0.1:3456'
-  await page.evaluate(async ({ targetRoomId, fixtureOrigin }) => {
-    const { useRoomStore } = await import('/src/store/roomStore.ts')
-    const store = useRoomStore.getState()
-    await store.addMovie(targetRoomId, {
-      title: 'Failed fixture A',
-      source: 'bilibili',
-      url: 'https://www.bilibili.com/video/BV1xx411c7mD',
-    })
-    await store.addMovie(targetRoomId, {
-      title: 'Playable fixture B',
-      source: 'mp4',
-      url: `${fixtureOrigin}/normal.mp4`,
-      format: 'mp4',
-    })
-  }, { targetRoomId: roomId, fixtureOrigin })
+  await page.evaluate(
+    async ({ targetRoomId, fixtureOrigin }) => {
+      const { useRoomStore } = await import('/src/store/roomStore.ts')
+      const store = useRoomStore.getState()
+      await store.addMovie(targetRoomId, {
+        title: 'Failed fixture A',
+        source: 'bilibili',
+        url: 'https://www.bilibili.com/video/BV1xx411c7mD',
+      })
+      await store.addMovie(targetRoomId, {
+        title: 'Playable fixture B',
+        source: 'mp4',
+        url: `${fixtureOrigin}/normal.mp4`,
+        format: 'mp4',
+      })
+    },
+    { targetRoomId: roomId, fixtureOrigin }
+  )
 
   let attempts = 0
   await page.route('**/api/stream/media/resolve', async (route) => {
@@ -105,20 +111,29 @@ test('explicitly reselecting a failed movie retries once while state refreshes s
     await route.fulfill({
       status: 500,
       contentType: 'application/json',
-      body: JSON.stringify({ success: false, message: 'fixture resolve failure' }),
+      body: JSON.stringify({
+        success: false,
+        message: 'fixture resolve failure',
+      }),
     })
   })
 
-  await page.getByRole('tab', { name: '影片列表', exact: true }).click()
-  await expect(page.getByText('Failed fixture A', { exact: true }).last()).toBeVisible()
-  await expect(page.getByText('Playable fixture B', { exact: true }).last()).toBeVisible()
+  await page.getByRole('tab', { name: 'Queue', exact: true }).click()
+  await expect(
+    page.getByText('Failed fixture A', { exact: true }).last()
+  ).toBeVisible()
+  await expect(
+    page.getByText('Playable fixture B', { exact: true }).last()
+  ).toBeVisible()
   const movieRow = (title: string) =>
     page
       .locator('.movie-list-scroll:visible .zen-item-enter:visible')
       .filter({ hasText: title })
 
-  await movieRow('Failed fixture A').getByTitle('播放').click()
-  await expect(page.getByRole('button', { name: '重试' })).toBeVisible()
+  await movieRow('Failed fixture A')
+    .getByRole('button', { name: 'Play', exact: true })
+    .click()
+  await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible()
   await expect.poll(() => attempts).toBe(1)
 
   // Ordinary list and playback-state refreshes must not clear the failed-ID fence.
@@ -130,17 +145,23 @@ test('explicitly reselecting a failed movie retries once while state refreshes s
   })
   await expect.poll(() => attempts).toBe(1)
 
-  await movieRow('Playable fixture B').getByTitle('播放').click()
+  await movieRow('Playable fixture B')
+    .getByRole('button', { name: 'Play', exact: true })
+    .click()
   await expect
-    .poll(() => page.evaluate(async () => {
-      const { useRoomStore } = await import('/src/store/roomStore.ts')
-      return useRoomStore.getState().watchTogether.sourceUrl
-    }))
+    .poll(() =>
+      page.evaluate(async () => {
+        const { useRoomStore } = await import('/src/store/roomStore.ts')
+        return useRoomStore.getState().watchTogether.sourceUrl
+      })
+    )
     .toBe(`${fixtureOrigin}/normal.mp4`)
   await expect.poll(() => attempts).toBe(1)
 
-  await movieRow('Failed fixture A').getByTitle('播放').click()
-  await expect(page.getByRole('button', { name: '重试' })).toBeVisible()
+  await movieRow('Failed fixture A')
+    .getByRole('button', { name: 'Play', exact: true })
+    .click()
+  await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible()
   await expect.poll(() => attempts).toBe(2)
 
   // The second failure re-enters the same fence, and the existing retry button
@@ -153,9 +174,9 @@ test('explicitly reselecting a failed movie retries once while state refreshes s
   })
   await expect.poll(() => attempts).toBe(2)
 
-  await page.getByRole('button', { name: '重试' }).click({ force: true })
+  await page.getByRole('button', { name: 'Try again' }).click({ force: true })
   await expect.poll(() => attempts).toBe(3)
-  await expect(page.getByRole('button', { name: '重试' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible()
   await page.evaluate(async () => {
     const { useRoomStore } = await import('/src/store/roomStore.ts')
     const store = useRoomStore.getState()
@@ -187,8 +208,7 @@ test('viewer ALREADY_IN_ROOM retries are bounded and can recover', async ({
     const originalEmit = socket.emit.bind(socket)
     socket.emit = (event: string, ...args: unknown[]) => {
       if (event === 'request-join') {
-        socket.__releaseRetryAttempts =
-          (socket.__releaseRetryAttempts ?? 0) + 1
+        socket.__releaseRetryAttempts = (socket.__releaseRetryAttempts ?? 0) + 1
         if (socket.__releaseRetryAttempts <= 2) {
           const callback = args.at(-1)
           if (typeof callback === 'function') {
@@ -214,20 +234,22 @@ test('viewer ALREADY_IN_ROOM retries are bounded and can recover', async ({
     }
   })
   await viewer.evaluate((targetRoomId) => {
+    localStorage.setItem('tongmu-guest-nickname', 'Retry guest')
     history.pushState({}, '', `/room/${targetRoomId}`)
     window.dispatchEvent(new PopStateEvent('popstate'))
   }, roomId)
 
   await expect
-    .poll(() =>
-      viewer.evaluate(
-        () =>
-          (
-            window as unknown as {
-              __debugSocket: { __releaseRetryAttempts?: number }
-            }
-          ).__debugSocket.__releaseRetryAttempts ?? 0
-      ),
+    .poll(
+      () =>
+        viewer.evaluate(
+          () =>
+            (
+              window as unknown as {
+                __debugSocket: { __releaseRetryAttempts?: number }
+              }
+            ).__debugSocket.__releaseRetryAttempts ?? 0
+        ),
       { timeout: 10_000 }
     )
     .toBe(3)
@@ -296,15 +318,16 @@ test('host register ALREADY_IN_ROOM retries are bounded and can recover', async 
   }, roomId)
 
   await expect
-    .poll(() =>
-      page.evaluate(
-        () =>
-          (
-            window as unknown as {
-              __debugSocket: { __releaseHostRetryAttempts?: number }
-            }
-          ).__debugSocket.__releaseHostRetryAttempts ?? 0
-      ),
+    .poll(
+      () =>
+        page.evaluate(
+          () =>
+            (
+              window as unknown as {
+                __debugSocket: { __releaseHostRetryAttempts?: number }
+              }
+            ).__debugSocket.__releaseHostRetryAttempts ?? 0
+        ),
       { timeout: 10_000 }
     )
     .toBe(3)

@@ -106,7 +106,9 @@ export function requestFullscreen(el: HTMLElement): Promise<void> {
     webkitEl.webkitRequestFullScreen()
     return Promise.resolve()
   }
-  return Promise.reject(new Error('Fullscreen API not supported'))
+  return Promise.reject(
+    new Error(t('Fullscreen is not supported in this browser.'))
+  )
 }
 
 /** 全屏状态变化事件名称（跨平台） */
@@ -138,3 +140,4 @@ export function onFullscreenChange(callback: () => void): () => void {
     document.removeEventListener('webkitfullscreenchange', callback)
   }
 }
+import { t } from '@/i18n'

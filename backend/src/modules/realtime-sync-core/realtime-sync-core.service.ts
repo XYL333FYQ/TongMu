@@ -246,9 +246,14 @@ export class RealtimeSyncCore {
   }
 
   clearRoom(roomId: string): void {
+    this.clearRuntime(roomId);
+    this.roomLocks.delete(roomId);
+  }
+
+  /** Evict clocks without dropping queued room mutation locks. */
+  clearRuntime(roomId: string): void {
     this.rooms.delete(roomId);
     this.musicRooms.delete(roomId);
-    this.roomLocks.delete(roomId);
   }
 
   /** Serialize single-node room mutations without introducing Redis/cluster semantics. */

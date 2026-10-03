@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import { useEffect, useRef, useState } from 'react'
 import {
   ChevronDown,
@@ -17,6 +18,7 @@ import { Card } from '@/components/ui/Card'
 import { Input } from '@/components/ui/Input'
 import { cn } from '@/lib/utils'
 import { apiGet, apiPost } from '@/lib/api'
+import { useRoomExperienceStore } from '@/store/roomExperienceStore'
 import { formatMusicTime, modeLabel } from './domain'
 import { formatQualityFacts } from './catalog-domain'
 import { NcmCatalogPanel } from './NcmCatalogPanel'
@@ -54,10 +56,10 @@ interface NcmQrResponse {
 }
 
 const modeOptions: Array<{ value: MusicPlayMode; label: string }> = [
-  { value: 'sequential', label: '顺序播放' },
-  { value: 'repeat-one', label: '单曲循环' },
-  { value: 'repeat-all', label: '列表循环' },
-  { value: 'shuffle', label: '随机播放' },
+  { value: 'sequential', label: 'In order' },
+  { value: 'repeat-one', label: 'Repeat one' },
+  { value: 'repeat-all', label: 'Repeat all' },
+  { value: 'shuffle', label: 'Shuffle' },
 ]
 
 function clampProgress(value: number, duration: number): number {
@@ -69,14 +71,19 @@ export function TogetherListenPanel({
   roomId,
   isHost,
 }: TogetherListenPanelProps) {
+  useTranslation()
+
   const audioRef = useRef<HTMLAudioElement>(null)
   const [sourceRef, setSourceRef] = useState('music://fixture/blue-hour')
   const [title, setTitle] = useState('Blue Hour')
-  const [artist, setArtist] = useState('本地夹具')
+  const [artist, setArtist] = useState('Test audio')
   const [ncmStatus, setNcmStatus] = useState<NcmStatusResponse | null>(null)
   const [ncmQr, setNcmQr] = useState<NcmQrResponse | null>(null)
   const [ncmBusy, setNcmBusy] = useState(false)
   const sync = useMusicSync({ roomId, isHost, audioRef })
+  const permissions = useRoomExperienceStore((s) => s.snapshot?.permissions)
+  const canSelect = permissions?.selectContent ?? isHost
+  const canControl = permissions?.playback ?? isHost
   const { state } = sync
   const duration = state.currentItem ? state.currentItem.durationMs / 1000 : 0
 
@@ -147,7 +154,7 @@ export function TogetherListenPanel({
   }
 
   const moveQueueItem = (index: number, direction: -1 | 1) => {
-    if (!isHost) return
+    if (!canSelect) return
     const nextIndex = index + direction
     if (nextIndex < 0 || nextIndex >= state.queue.length) return
     const ids = state.queue.map((item) => item.queueItemId)
@@ -176,14 +183,14 @@ export function TogetherListenPanel({
           </span>
           <div className="min-w-0">
             <h3 className="truncate text-sm font-semibold text-[var(--md-sys-color-on-surface)]">
-              一起听
+              {t('Music')}
             </h3>
             <p className="truncate text-[11px] text-[var(--md-sys-color-on-surface-variant)]">
               {state.status === 'reconnecting'
-                ? '正在重连…'
+                ? t('Reconnecting…')
                 : state.hostOffline
-                  ? '房主离线'
-                  : '房间音乐同步'}
+                  ? t('Host is offline')
+                  : t('Listen together')}
             </p>
           </div>
         </div>
@@ -196,10 +203,10 @@ export function TogetherListenPanel({
           )}
         >
           {state.status === 'loading'
-            ? '加载中'
+            ? t('Loading…')
             : state.connected
-              ? '已连接'
-              : '未连接'}
+              ? t('Connected')
+              : t('Disconnected')}
         </span>
       </div>
 
@@ -208,45 +215,49 @@ export function TogetherListenPanel({
         className="mt-2 flex min-w-0 items-center justify-between gap-2 rounded-lg bg-[var(--md-sys-color-surface-container-low)] px-2 py-1.5 text-[11px] text-[var(--md-sys-color-on-surface-variant)]"
       >
         <span className="truncate">
-          网易云：
+          {t('NetEase Music: ')}
           {!ncmStatus
-            ? '检测中…'
+            ? t('Checking…')
             : ncmStatus.loggedIn
-              ? `已登录${ncmStatus.displayName ? ` · ${ncmStatus.displayName}` : ''}`
-              : '未登录'}
+              ? t('Connected{value1}', {
+                  value1: ncmStatus.displayName
+                    ? ` · ${ncmStatus.displayName}`
+                    : '',
+                })
+              : t('Not connected')}
         </span>
-        {isHost && ncmStatus && (
+        {canSelect && ncmStatus && (
           <Button
             type="button"
             size="sm"
-            variant="ghost"
+            variant="secondary"
             disableAnimation
             disabled={ncmBusy}
             onClick={() =>
               void (ncmStatus?.loggedIn ? logoutNcm() : startNcmLogin())
             }
           >
-            {ncmStatus?.loggedIn ? '退出' : '扫码登录'}
+            {ncmStatus?.loggedIn ? t('Disconnect') : t('Connect with QR')}
           </Button>
         )}
       </div>
-      {isHost && ncmQr?.qrImageDataUrl && ncmQr.status !== 'logged-in' && (
+      {canSelect && ncmQr?.qrImageDataUrl && ncmQr.status !== 'logged-in' && (
         <div className="mt-2 flex items-center gap-2 rounded-lg border border-[var(--md-sys-color-outline-variant)] p-2">
           <img
             src={ncmQr.qrImageDataUrl}
-            alt="网易云登录二维码"
+            alt={t('NetEase Music sign-in code')}
             className="h-20 w-20 rounded bg-white p-1"
           />
           <span className="text-[11px] text-[var(--md-sys-color-on-surface-variant)]">
             {ncmQr.status === 'scanned'
-              ? '已扫码，请确认登录'
-              : '请使用网易云手机客户端扫码'}
+              ? t('Scanned. Confirm in the app.')
+              : t('Scan with the NetEase Music app.')}
           </span>
         </div>
       )}
 
       <NcmCatalogPanel
-        isHost={isHost}
+        isHost={canSelect}
         loggedIn={Boolean(ncmStatus?.loggedIn)}
         onAddTrack={sync.addMusic}
       />
@@ -254,10 +265,11 @@ export function TogetherListenPanel({
       <div className="mt-3 min-w-0 rounded-xl bg-[var(--md-sys-color-surface-container)] p-3">
         <div className="min-w-0">
           <p className="truncate text-sm font-medium text-[var(--md-sys-color-on-surface)]">
-            {state.currentItem?.title || '尚未选择歌曲'}
+            {state.currentItem?.title || t('Your next song starts here')}
           </p>
           <p className="truncate text-xs text-[var(--md-sys-color-on-surface-variant)]">
-            {state.currentItem?.artist || '添加本地夹具开始一起听'}
+            {state.currentItem?.artist ||
+              t('Choose a song from NetEase Music to listen together.')}
           </p>
           {sync.qualityFacts &&
             state.currentSourceRef?.startsWith('music://ncm/') && (
@@ -271,7 +283,7 @@ export function TogetherListenPanel({
             )}
         </div>
         <input
-          aria-label="音乐播放进度"
+          aria-label={t('Music position')}
           type="range"
           min={0}
           max={Math.max(1, duration)}
@@ -287,8 +299,8 @@ export function TogetherListenPanel({
         </div>
         <div className="mt-2 flex items-center justify-center gap-1.5">
           <Button
-            aria-label="上一首"
-            title="上一首"
+            aria-label={t('Previous track')}
+            title={t('Previous track')}
             size="sm"
             variant="ghost"
             disableAnimation
@@ -296,8 +308,8 @@ export function TogetherListenPanel({
             onClick={() => sync.previous()}
           />
           <Button
-            aria-label={state.isPlaying ? '暂停' : '播放'}
-            title={state.isPlaying ? '暂停' : '播放'}
+            aria-label={state.isPlaying ? t('Pause') : t('Play')}
+            title={state.isPlaying ? t('Pause') : t('Play')}
             size="sm"
             variant="primary"
             disableAnimation
@@ -312,8 +324,8 @@ export function TogetherListenPanel({
             disabled={!state.currentItem || !state.connected}
           />
           <Button
-            aria-label="下一首"
-            title="下一首"
+            aria-label={t('Next track')}
+            title={t('Next track')}
             size="sm"
             variant="ghost"
             disableAnimation
@@ -321,17 +333,17 @@ export function TogetherListenPanel({
             onClick={() => sync.next()}
           />
           <select
-            aria-label="播放模式"
+            aria-label={t('Playback mode')}
             value={state.playMode}
             onChange={(event) =>
               sync.setMode(event.target.value as MusicPlayMode)
             }
-            disabled={!isHost || !state.connected}
+            disabled={!canControl || !state.connected}
             className="ml-1 max-w-[7rem] rounded-lg border border-[var(--md-sys-color-outline)] bg-[var(--md-sys-color-surface-container-high)] px-2 py-1.5 text-xs text-[var(--md-sys-color-on-surface)]"
           >
             {modeOptions.map((option) => (
               <option key={option.value} value={option.value}>
-                {option.label}
+                {t(option.label)}
               </option>
             ))}
           </select>
@@ -340,7 +352,7 @@ export function TogetherListenPanel({
 
       {isHost && state.pendingHostRequests.length > 0 && (
         <div className="mt-2 rounded-lg border border-[var(--md-sys-color-outline-variant)] bg-[var(--md-sys-color-secondary-container)] p-2 text-xs text-[var(--md-sys-color-on-secondary-container)]">
-          <div className="mb-1 font-medium">待处理的观众控制申请</div>
+          <div className="mb-1 font-medium">{t('Playback requests')}</div>
           {state.pendingHostRequests.map((request) => (
             <div
               key={request.requestId}
@@ -348,16 +360,16 @@ export function TogetherListenPanel({
             >
               <span className="truncate">
                 {request.action === 'seek'
-                  ? '拖动进度'
+                  ? t('Seek')
                   : request.action === 'select'
-                    ? '选择歌曲'
+                    ? t('Choose track')
                     : request.action === 'previous'
-                      ? '上一首'
+                      ? t('Previous track')
                       : request.action === 'next'
-                        ? '下一首'
+                        ? t('Next track')
                         : request.action === 'play'
-                          ? '播放'
-                          : '暂停'}
+                          ? t('Play')
+                          : t('Pause')}
               </span>
               <span className="flex shrink-0 gap-1">
                 <Button
@@ -367,7 +379,7 @@ export function TogetherListenPanel({
                   disableAnimation
                   onClick={() => sync.respondControl(request.requestId, true)}
                 >
-                  同意
+                  {t('Accept')}
                 </Button>
                 <Button
                   type="button"
@@ -376,7 +388,7 @@ export function TogetherListenPanel({
                   disableAnimation
                   onClick={() => sync.respondControl(request.requestId, false)}
                 >
-                  拒绝
+                  {t('Decline')}
                 </Button>
               </span>
             </div>
@@ -388,7 +400,8 @@ export function TogetherListenPanel({
         <div className="mb-1 flex items-center justify-between gap-2">
           <div className="flex items-center gap-1 text-xs font-medium text-[var(--md-sys-color-on-surface)]">
             <ListMusic className="h-3.5 w-3.5" />
-            队列 ({state.queue.length})
+            {t('Queue (')}
+            {state.queue.length})
           </div>
           <span className="text-[10px] text-[var(--md-sys-color-on-surface-variant)]">
             {modeLabel(state.playMode)}
@@ -397,7 +410,7 @@ export function TogetherListenPanel({
         <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-0.5">
           {state.queue.length === 0 ? (
             <p className="py-2 text-xs text-[var(--md-sys-color-on-surface-variant)]">
-              队列为空，可添加本地夹具或 NCM stable ref。
+              {t('Your queue is empty. Choose a song above to get started.')}
             </p>
           ) : (
             state.queue.map((item, index) => (
@@ -419,12 +432,12 @@ export function TogetherListenPanel({
                   {item.title}
                   {item.artist ? ` · ${item.artist}` : ''}
                 </button>
-                {isHost && (
+                {canSelect && (
                   <>
                     <button
                       type="button"
-                      aria-label="上移歌曲"
-                      title="上移"
+                      aria-label={t('Move track up')}
+                      title={t('Move up')}
                       onClick={() => moveQueueItem(index, -1)}
                       disabled={index === 0}
                       className="rounded p-1 disabled:opacity-40"
@@ -433,8 +446,8 @@ export function TogetherListenPanel({
                     </button>
                     <button
                       type="button"
-                      aria-label="下移歌曲"
-                      title="下移"
+                      aria-label={t('Move track down')}
+                      title={t('Move down')}
                       onClick={() => moveQueueItem(index, 1)}
                       disabled={index === state.queue.length - 1}
                       className="rounded p-1 disabled:opacity-40"
@@ -443,8 +456,8 @@ export function TogetherListenPanel({
                     </button>
                     <button
                       type="button"
-                      aria-label="移除歌曲"
-                      title="移除"
+                      aria-label={t('Remove track')}
+                      title={t('Remove')}
                       onClick={() => sync.remove(item.queueItemId)}
                       className="rounded p-1 text-[var(--md-sys-color-error)]"
                     >
@@ -458,14 +471,16 @@ export function TogetherListenPanel({
         </div>
       </div>
 
-      {isHost ? (
+      {canSelect &&
+      import.meta.env.DEV &&
+      import.meta.env.VITE_MUSIC_FIXTURES === 'true' ? (
         <form
           className="mt-2 grid grid-cols-[1fr_auto] gap-1.5"
           onSubmit={handleAdd}
         >
           <div className="min-w-0 space-y-1.5">
             <Input
-              aria-label="音乐 sourceRef"
+              aria-label={t('Test music reference')}
               value={sourceRef}
               onChange={(event) => setSourceRef(event.target.value)}
               size="sm"
@@ -473,18 +488,18 @@ export function TogetherListenPanel({
             />
             <div className="grid grid-cols-2 gap-1.5">
               <Input
-                aria-label="歌曲名称"
+                aria-label={t('Track title')}
                 value={title}
                 onChange={(event) => setTitle(event.target.value)}
                 size="sm"
-                placeholder="歌曲名称"
+                placeholder={t('Track title')}
               />
               <Input
-                aria-label="歌手"
+                aria-label={t('Artist')}
                 value={artist}
                 onChange={(event) => setArtist(event.target.value)}
                 size="sm"
-                placeholder="歌手"
+                placeholder={t('Artist')}
               />
             </div>
           </div>
@@ -494,27 +509,29 @@ export function TogetherListenPanel({
             variant="secondary"
             disableAnimation
             icon={<Plus className="h-4 w-4" />}
-            aria-label="添加歌曲"
-            title="添加歌曲"
+            aria-label={t('Add track')}
+            title={t('Add track')}
           >
-            添加
+            {t('Add')}
           </Button>
         </form>
-      ) : (
+      ) : !canControl ? (
         <div className="mt-2 flex items-center gap-2 text-[11px] text-[var(--md-sys-color-on-surface-variant)]">
           <RotateCcw className="h-3.5 w-3.5 shrink-0" />
-          播放、切歌和拖动进度会向房主申请控制权限。
+          {t('Playback changes are sent to the host for approval.')}
           {state.pendingControlRequests.length > 0 &&
-            `（待处理 ${state.pendingControlRequests.length}）`}
+            t('(Waiting: {value1}）', {
+              value1: state.pendingControlRequests.length,
+            })}
         </div>
-      )}
+      ) : null}
 
       {state.error && (
         <p
           role="alert"
           className="mt-1 truncate text-[11px] text-[var(--md-sys-color-error)]"
         >
-          {state.error}
+          {t(state.error)}
         </p>
       )}
     </Card>

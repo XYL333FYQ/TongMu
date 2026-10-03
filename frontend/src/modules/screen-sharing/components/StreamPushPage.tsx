@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import { useCallback, useState } from 'react'
 import { Download, Copy, Radio, ExternalLink } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
@@ -30,6 +31,8 @@ export function StreamPushPage({
   className,
   style,
 }: StreamPushPageProps) {
+  useTranslation()
+
   const streamKey = useRoomStore((state) => state.streamKey)
   const [downloading, setDownloading] = useState(false)
   const [previewMode, setPreviewMode] = useState(false)
@@ -42,10 +45,10 @@ export function StreamPushPage({
     setDownloading(true)
     try {
       await downloadObsConfig(roomId)
-      message.success('OBS 配置文件已下载')
+      message.success(t('OBS configuration downloaded.'))
     } catch (err) {
       console.error(err)
-      const msg = err instanceof Error ? err.message : '下载失败'
+      const msg = err instanceof Error ? err.message : 'Download failed.'
       message.error(msg)
     } finally {
       setDownloading(false)
@@ -56,13 +59,13 @@ export function StreamPushPage({
     const fullText = `${rtmpUrl}/${effectiveStreamKey}`
     navigator.clipboard
       .writeText(fullText)
-      .then(() => message.success('推流地址已复制'))
+      .then(() => message.success(t('Stream URL copied.')))
   }, [rtmpUrl, effectiveStreamKey])
 
   const handleCopyStreamKey = useCallback(() => {
     navigator.clipboard
       .writeText(effectiveStreamKey)
-      .then(() => message.success('流密钥已复制'))
+      .then(() => message.success(t('Stream key copied.')))
   }, [effectiveStreamKey])
 
   return (
@@ -74,7 +77,7 @@ export function StreamPushPage({
         <div className="flex items-center gap-2">
           <Radio className="h-5 w-5 text-[var(--md-sys-color-primary)]" />
           <Text className="!text-white text-lg font-semibold">
-            OBS 推流模式
+            {t('OBS streaming')}
           </Text>
         </div>
       </div>
@@ -82,7 +85,7 @@ export function StreamPushPage({
       <Card className="flex flex-col gap-3 p-4">
         <div className="flex flex-col gap-1">
           <Paragraph type="secondary" className="m-0 text-xs">
-            RTMP 推流地址
+            {t('RTMP stream URL')}
           </Paragraph>
           <div className="flex items-center gap-2">
             <Text className="flex-1 truncate rounded px-3 py-1.5 font-mono text-sm">
@@ -94,14 +97,14 @@ export function StreamPushPage({
               icon={<Copy className="h-4 w-4" />}
               onClick={handleCopyRtmp}
             >
-              复制地址
+              {t('Copy URL')}
             </Button>
           </div>
         </div>
 
         <div className="flex flex-col gap-1">
           <Paragraph type="secondary" className="m-0 text-xs">
-            流密钥（Stream Key）
+            {t('Stream key')}
           </Paragraph>
           <div className="flex items-center gap-2">
             <Text className="flex-1 truncate rounded px-3 py-1.5 font-mono text-sm">
@@ -113,13 +116,14 @@ export function StreamPushPage({
               icon={<Copy className="h-4 w-4" />}
               onClick={handleCopyStreamKey}
             >
-              复制密钥
+              {t('Copy key')}
             </Button>
           </div>
           {!streamKey && (
             <Paragraph type="danger" className="m-0 text-xs">
-              未获取到独立推流密钥，当前显示的是房间号。请先点击「下载 OBS
-              配置文件」重新导入，或刷新页面后再试。
+              {t(
+                'A dedicated stream key is unavailable. Download the OBS configuration again or refresh this page.'
+              )}
             </Paragraph>
           )}
         </div>
@@ -131,14 +135,14 @@ export function StreamPushPage({
             loading={downloading}
             onClick={handleDownloadConfig}
           >
-            下载 OBS 配置文件
+            {t('Download OBS configuration')}
           </Button>
           <Button
             variant="ghost"
             icon={<ExternalLink className="h-4 w-4" />}
             onClick={() => setPreviewMode((prev) => !prev)}
           >
-            {previewMode ? '隐藏预览' : '显示拉流预览'}
+            {previewMode ? t('Hide preview') : t('Show stream preview')}
           </Button>
         </div>
       </Card>
@@ -150,24 +154,29 @@ export function StreamPushPage({
       )}
 
       <Card className="flex flex-col gap-2 p-4 text-sm">
-        <Text className="font-semibold">OBS 推流步骤</Text>
+        <Text className="font-semibold">{t('Start streaming with OBS')}</Text>
         <ol className="flex flex-col gap-1.5 pl-5 text-[var(--md-sys-color-on-surface-variant)]">
           <li>
-            点击「下载 OBS 配置文件」获取{' '}
+            {t('Download the OBS configuration.')}{' '}
             <code className="font-mono">tongmu-obs-config.json</code>
           </li>
           <li>
-            打开 OBS → 顶部菜单「场景集合」→「导入」→ 选择下载的 JSON 文件
+            {t(
+              'In OBS, choose Scene Collection → Import and select the downloaded JSON file.'
+            )}
           </li>
           <li>
-            切换到导入的「TongMu 推流」场景集合，确认推流服务地址与流密钥正确
+            {t(
+              'Select the imported TongMu scene collection and check the stream URL and key.'
+            )}
           </li>
-          <li>点击 OBS 右下角「开始推流」</li>
-          <li>观众通过观看链接进入房间后会自动拉流播放</li>
+          <li>{t('Choose Start Streaming in OBS.')}</li>
+          <li>{t('Members can watch the stream in this room.')}</li>
         </ol>
         <Paragraph type="secondary" className="m-0 mt-2 text-xs">
-          提示：结束推流请在 OBS 中点击「停止推流」。切换回 WebRTC
-          共享前请先停止 OBS 推流。
+          {t(
+            'Choose Stop Streaming in OBS when finished. Stop OBS before switching back to browser sharing.'
+          )}
         </Paragraph>
       </Card>
     </div>

@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 /**
  * 弹幕输入框（桌面控制行与移动端溢出菜单复用）。
  *
@@ -16,8 +17,10 @@ export interface DanmakuInputProps {
 
 export function DanmakuInput({
   onSend,
-  placeholder = '发个友善的弹幕见证当下',
+  placeholder = 'Send a friendly on-screen comment',
 }: DanmakuInputProps) {
+  useTranslation()
+
   const [text, setText] = useState('')
   const [focused, setFocused] = useState(false)
 
@@ -59,7 +62,7 @@ export function DanmakuInput({
         variant={text.trim() ? 'primary' : 'ghost'}
         size="sm"
         icon={<Send />}
-        label="发送弹幕"
+        label={t('SendOn-screen comments')}
         disabled={!text.trim()}
         onClick={send}
       />

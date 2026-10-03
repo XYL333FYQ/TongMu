@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 /**
  * Emby 浏览器（双列布局，与 WebDAV/OpenList 浏览框交互一致）
  *
@@ -31,9 +32,9 @@ export interface MediaLibraryBrowserProps {
   onClose: () => void
   onSelectFiles?: (paths: string[]) => void
   selectable?: boolean
-  /** 浏览函数（Emby/Jellyfin 传入各自实现），默认 Emby */
+  /** Browse函数（Emby/Jellyfin 传入各自实现），Default Emby */
   browse?: (mountId: number, path?: string) => Promise<EmbyDirectoryEntry[]>
-  /** 弹窗标题，默认「浏览 Emby 媒体库」 */
+  /** 弹窗标题，Default「Browse Emby」 */
   title?: string
 }
 
@@ -43,6 +44,8 @@ interface Crumb {
 }
 
 function EntrySkeleton() {
+  useTranslation()
+
   return (
     <div className="flex animate-pulse items-center gap-3 rounded-lg p-2.5">
       <div className="h-5 w-5 rounded bg-[var(--md-sys-color-surface-container-high)]" />
@@ -70,13 +73,15 @@ export default function EmbyBrowser({
   onClose,
   onSelectFiles,
   browse = browseEmbyMount,
-  title = '浏览 Emby 媒体库',
+  title = 'Browse Emby',
 }: MediaLibraryBrowserProps) {
-  /** 面包屑历史栈：不含根（根 = 媒体库） */
+  useTranslation()
+
+  /** 面包屑历史栈：不含根（根 = Libraries） */
   const [crumbs, setCrumbs] = useState<Crumb[]>([])
-  /** 右列：当前目录条目 */
+  /** 右列：Current folder items */
   const [entries, setEntries] = useState<EmbyDirectoryEntry[]>([])
-  /** 左列：上级目录条目（父级文件夹） */
+  /** 左列：Parent folder items（父级文件夹） */
   const [parentEntries, setParentEntries] = useState<EmbyDirectoryEntry[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -116,7 +121,8 @@ export default function EmbyBrowser({
           setParentEntries([])
         }
       } catch (err) {
-        const msg = err instanceof Error ? err.message : '加载失败'
+        const msg =
+          err instanceof Error ? err.message : 'Could not load this content.'
         setError(msg)
       } finally {
         setLoading(false)
@@ -229,7 +235,7 @@ export default function EmbyBrowser({
 
         {entry.childCount !== undefined && entry.childCount > 0 && (
           <span className="shrink-0 text-[13px] text-[var(--md-sys-color-on-surface-variant)]">
-            {entry.childCount} 项
+            {entry.childCount} {t('items')}
           </span>
         )}
 
@@ -260,7 +266,7 @@ export default function EmbyBrowser({
 
   const breadcrumb = useMemo(
     () => [
-      { name: '媒体库', path: undefined as string | undefined },
+      { name: 'Libraries', path: undefined as string | undefined },
       ...crumbs,
     ],
     [crumbs]
@@ -307,12 +313,12 @@ export default function EmbyBrowser({
             )}
           >
             {multiSelectMode
-              ? `已选择 ${selectedFiles.length} 个条目`
-              : '多选模式可批量添加'}
+              ? t('Selected  {value1}  items', { value1: selectedFiles.length })
+              : t('Select multiple items to add them together.')}
           </Text>
           <div className="flex items-center gap-3">
             <Button variant="secondary" size="md" onClick={onClose}>
-              取消
+              {t('Cancel')}
             </Button>
             <Button
               variant="primary"
@@ -322,8 +328,8 @@ export default function EmbyBrowser({
               disabled={selectedFiles.length === 0}
             >
               {multiSelectMode
-                ? `添加 (${selectedFiles.length})`
-                : '添加当前条目'}
+                ? t('Add ({value1})', { value1: selectedFiles.length })
+                : t('Add this item')}
             </Button>
           </div>
         </div>
@@ -333,14 +339,14 @@ export default function EmbyBrowser({
         {error ? (
           <div className="flex flex-col items-center gap-3 py-8">
             <Text className="text-base text-[var(--md-sys-color-error)]">
-              {error}
+              {t(error)}
             </Text>
             <Button
               variant="secondary"
               size="md"
               onClick={() => void load(crumbs)}
             >
-              重试
+              {t('Try again')}
             </Button>
           </div>
         ) : loading && entries.length === 0 ? (
@@ -379,15 +385,15 @@ export default function EmbyBrowser({
                   })
                 }}
               >
-                {multiSelectMode ? '退出多选' : '多选'}
+                {multiSelectMode ? t('Stop selection') : t('Select multiple')}
               </Button>
             </div>
 
             <div className="grid h-[420px] grid-cols-1 gap-4 overflow-hidden rounded-2xl border border-[var(--md-sys-color-outline-variant)] backdrop-blur-sm md:grid-cols-2">
-              {/* 左侧：上级目录（小屏单栏时隐藏，导航由面包屑承担） */}
+              {/* 左侧：Parent folder（小屏单栏时隐藏，导航由面包屑承担） */}
               <div className="hidden min-h-0 flex-col border-r border-[var(--md-sys-color-outline-variant)] bg-[var(--md-sys-color-surface-container-low)]/60 md:flex">
                 <div className="shrink-0 border-b border-[var(--md-sys-color-outline-variant)] px-4 py-3 text-sm font-semibold uppercase tracking-wide text-[var(--md-sys-color-on-surface-variant)]">
-                  上级目录
+                  {t('Parent folder')}
                 </div>
                 <div className="zen-scroll min-h-0 flex-1 overflow-y-auto p-3">
                   {currentPath ? (
@@ -399,33 +405,33 @@ export default function EmbyBrowser({
                       )
                     ) : (
                       <Text className="py-8 text-center text-sm text-[var(--md-sys-color-on-surface-variant)]">
-                        上级目录为空
+                        {t('The parent folder is empty.')}
                       </Text>
                     )
                   ) : (
                     <div className="flex flex-col items-center gap-3 py-10 text-center">
                       <Folder className="h-8 w-8 text-[var(--md-sys-color-outline)]" />
                       <Text className="text-sm text-[var(--md-sys-color-on-surface-variant)]">
-                        当前位于媒体库根目录
+                        {t('You are at the library root.')}
                         <br />
-                        在右侧进入媒体库后即可查看上级
+                        {t('Open a library to browse its folders.')}
                       </Text>
                     </div>
                   )}
                 </div>
               </div>
 
-              {/* 右侧：当前目录 */}
+              {/* 右侧：Current folder */}
               <div className="flex min-h-0 flex-col bg-[var(--md-sys-color-surface)]/80">
                 <div className="shrink-0 border-b border-[var(--md-sys-color-outline-variant)] px-4 py-3 text-sm font-semibold uppercase tracking-wide text-[var(--md-sys-color-on-surface-variant)]">
-                  当前目录
+                  {t('Current folder')}
                 </div>
                 <div className="zen-scroll min-h-0 flex-1 overflow-y-auto p-3">
                   {entries.length > 0 ? (
                     entries.map((entry) => renderEntry(entry, 'right'))
                   ) : (
                     <Text className="py-8 text-center text-sm text-[var(--md-sys-color-on-surface-variant)]">
-                      当前目录为空
+                      {t('This folder is empty.')}
                     </Text>
                   )}
                 </div>
@@ -434,7 +440,7 @@ export default function EmbyBrowser({
 
             {loading && entries.length > 0 && (
               <div className="absolute inset-0 flex items-center justify-center rounded-2xl bg-[var(--md-sys-color-surface)]/40 backdrop-blur-md">
-                <Spinner tip="加载中..." size={28} />
+                <Spinner tip={t('Loading…')} size={28} />
               </div>
             )}
           </>

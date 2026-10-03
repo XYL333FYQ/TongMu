@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import { useState } from 'react'
 import { ShieldAlert, X } from 'lucide-react'
 
@@ -15,6 +16,8 @@ import { ShieldAlert, X } from 'lucide-react'
  * 仅在非安全上下文且非 localhost 下显示，localhost 被浏览器视为安全上下文无需提示。
  */
 export function InsecureContextBanner() {
+  useTranslation()
+
   // 初始可见性在挂载时一次性计算（lazy initializer），避免 effect 内 setState 触发额外渲染
   const [dismissed, setDismissed] = useState(false)
   const [visible] = useState(() => {
@@ -46,20 +49,25 @@ export function InsecureContextBanner() {
         style={{ color: 'var(--md-sys-color-error)' }}
       />
       <div className="flex-1 text-sm leading-relaxed">
-        <div className="font-semibold">当前为 HTTP 连接，部分功能不可用</div>
+        <div className="font-semibold">
+          {t(
+            'A secure connection is needed for screen sharing and voice chat.'
+          )}
+        </div>
         <div
           className="mt-1 text-xs"
           style={{ color: 'var(--md-sys-color-on-surface-variant)' }}
         >
-          屏幕共享、语音聊天等需要安全上下文的功能已被浏览器禁用。其他功能（房间管理、视频播放、弹幕、OBS
-          推流）可正常使用。配置 HTTPS 后可解锁全部功能。
+          {t(
+            'Your browser blocks screen capture and microphone access over HTTP. You can still join rooms, watch videos, chat and use OBS streaming. Open TongMu over HTTPS to share your screen or join voice chat.'
+          )}
         </div>
       </div>
       <button
         type="button"
         onClick={() => setDismissed(true)}
         className="rounded p-1 transition-colors hover:bg-[var(--md-sys-color-surface-container-highest)]"
-        aria-label="关闭提示"
+        aria-label={t('Dismiss secure connection notice')}
       >
         <X className="h-4 w-4" />
       </button>

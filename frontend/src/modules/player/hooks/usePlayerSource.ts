@@ -138,7 +138,7 @@ export function usePlayerSource(
     return () => video.removeEventListener('media-transport-error', report)
   }, [options.videoRef])
 
-  const enqueue = useCallback(<T,>(task: () => Promise<T>): Promise<T> => {
+  const enqueue = useCallback(<T>(task: () => Promise<T>): Promise<T> => {
     const run = queueRef.current.then(task, task)
     queueRef.current = run.then(
       () => undefined,
@@ -244,11 +244,13 @@ export function usePlayerSource(
     [cleanupAttempt]
   )
 
-  const replaceWithPlaysVideoRef = useRef<(
-    active: ActivePlayerGeneration,
-    atTime: number,
-    wasPlaying: boolean
-  ) => Promise<void>>(async () => {})
+  const replaceWithPlaysVideoRef = useRef<
+    (
+      active: ActivePlayerGeneration,
+      atTime: number,
+      wasPlaying: boolean
+    ) => Promise<void>
+  >(async () => {})
 
   const bindMediaListeners = useCallback(
     (active: ActivePlayerGeneration, engineType: string): void => {
@@ -472,25 +474,22 @@ export function usePlayerSource(
           const pipelineEngine = selectEngine(pipelineSource)
           if (pipelineEngine.type === 'direct') {
             throw new Error(
-              `原生播放失败：${formatVideoLoadError(active.video.error?.code)}。` +
-                '可在「系统设置」或该影片的解析设置中开启「浏览器转码引擎」后重试',
+              `Native playback failed: ${formatVideoLoadError(active.video.error?.code)}。` +
+                'Enable the browser compatibility engine in your playback settings or this content source settings, then try again.',
               { cause: err }
             )
           }
           resetVideoElement(active.video)
-          const fallbackAttempt = await attachWithEngine(
-            active,
-            pipelineSource
-          )
+          const fallbackAttempt = await attachWithEngine(active, pipelineSource)
           if (!fallbackAttempt || !isCurrent(active)) return
           commitAttempt(active, fallbackAttempt, pipelineEngine.type)
           return
         }
         if (engine.type === 'playsvideo') {
           throw new Error(
-            `浏览器转码引擎（playsvideo）播放失败：${
+            `The browser compatibility engine could not play this media: ${
               err instanceof Error ? err.message : String(err)
-            }，可尝试重载影片`,
+            }. Reload the content to try again.`,
             { cause: err }
           )
         }

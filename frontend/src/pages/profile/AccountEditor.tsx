@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import { useCallback, useRef, useState } from 'react'
 import { AtSign, Camera, KeyRound, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
@@ -7,6 +8,7 @@ import { Modal, ConfirmModal } from '@/components/ui/Modal'
 import { Spinner } from '@/components/ui/Spinner'
 import { Text } from '@/components/ui/Typography'
 import { message } from '@/components/ui/message'
+import { englishErrorMessage } from '@/lib/errorMessage'
 import { useAuthStore, type User as AuthUser } from '@/store/authStore'
 import { apiFetch } from '@/lib/api'
 import { buildAvatarUrl } from './avatarUrl'
@@ -18,6 +20,7 @@ export function AccountEditor({
   user: AuthUser
   onClose: () => void
 }) {
+  useTranslation()
   const setUser = useAuthStore((state) => state.setUser)
   const [oldPassword, setOldPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
@@ -34,15 +37,15 @@ export function AccountEditor({
 
   const handleChangePassword = useCallback(async () => {
     if (!oldPassword || !newPassword) {
-      message.warning('请填写原密码和新密码')
+      message.warning(t('Enter your current and new passwords.'))
       return
     }
     if (newPassword !== confirmPassword) {
-      message.error('两次输入的新密码不一致')
+      message.error(t('The new passwords do not match.'))
       return
     }
     if (newPassword.length < 4) {
-      message.error('新密码至少 4 位')
+      message.error(t('Use at least 4 characters for the new password.'))
       return
     }
     setPasswordLoading(true)
@@ -59,15 +62,17 @@ export function AccountEditor({
         message?: string
       }
       if (data.success) {
-        message.success('密码修改成功')
+        message.success(t('Password updated.'))
         setOldPassword('')
         setNewPassword('')
         setConfirmPassword('')
       } else {
-        message.error(data.message ?? '修改失败')
+        message.error(
+          englishErrorMessage(data.message, 'Could not save the change.')
+        )
       }
     } catch {
-      message.error('修改密码失败')
+      message.error(t('Could not change the password.'))
     } finally {
       setPasswordLoading(false)
     }
@@ -76,7 +81,7 @@ export function AccountEditor({
   const handleChangeUsername = useCallback(async () => {
     const trimmed = newUsername.trim()
     if (!trimmed) {
-      message.warning('请输入新用户名')
+      message.warning(t('Enter a new username.'))
       return
     }
     setUsernameLoading(true)
@@ -94,14 +99,16 @@ export function AccountEditor({
         user?: AuthUser
       }
       if (data.success && data.user) {
-        message.success('用户名修改成功')
+        message.success(t('Username updated.'))
         setUser(data.user)
         setNewUsername('')
       } else {
-        message.error(data.message ?? '修改失败')
+        message.error(
+          englishErrorMessage(data.message, 'Could not save the change.')
+        )
       }
     } catch {
-      message.error('修改用户名失败')
+      message.error(t('Could not change the username.'))
     } finally {
       setUsernameLoading(false)
     }
@@ -111,7 +118,7 @@ export function AccountEditor({
   const handleAvatarUpload = useCallback(
     async (file: File) => {
       if (user?.role === 'guest') {
-        message.warning('游客无法设置头像')
+        message.warning(t('Sign in to set an avatar.'))
         return
       }
       const allowedTypes = [
@@ -121,11 +128,11 @@ export function AccountEditor({
         'image/webp',
       ]
       if (!allowedTypes.includes(file.type)) {
-        message.error('仅支持 JPG / PNG / GIF / WEBP 格式')
+        message.error(t('Use a JPG, PNG, GIF or WebP image.'))
         return
       }
       if (file.size > 5 * 1024 * 1024) {
-        message.error('头像文件不能超过 5MB')
+        message.error(t('Choose an image smaller than 5 MB.'))
         return
       }
       setAvatarLoading(true)
@@ -142,13 +149,15 @@ export function AccountEditor({
           user?: AuthUser
         }
         if (data.success && data.user) {
-          message.success('头像更新成功')
+          message.success(t('Avatar updated.'))
           setUser(data.user)
         } else {
-          message.error(data.message ?? '头像上传失败')
+          message.error(
+            englishErrorMessage(data.message, 'Could not upload the avatar.')
+          )
         }
       } catch {
-        message.error('头像上传失败')
+        message.error(t('Could not upload the avatar.'))
       } finally {
         setAvatarLoading(false)
       }
@@ -170,13 +179,15 @@ export function AccountEditor({
         user?: AuthUser
       }
       if (data.success && data.user) {
-        message.success('头像已删除')
+        message.success(t('Avatar removed.'))
         setUser(data.user)
       } else {
-        message.error(data.message ?? '删除头像失败')
+        message.error(
+          englishErrorMessage(data.message, 'Could not remove the avatar.')
+        )
       }
     } catch {
-      message.error('删除头像失败')
+      message.error(t('Could not remove the avatar.'))
     } finally {
       setAvatarLoading(false)
     }
@@ -187,18 +198,18 @@ export function AccountEditor({
       <Modal
         open
         onClose={onClose}
-        title="编辑账号信息"
+        title={t('Profile & security')}
         className="max-w-2xl"
         footer={
           <Button variant="secondary" size="sm" onClick={onClose}>
-            关闭
+            {t('Close')}
           </Button>
         }
       >
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {/* 左侧列：头像 + 用户名 */}
+          {/* 左侧列：头像 + Username */}
           <div className="flex flex-col gap-3">
-            {/* 修改头像区块 */}
+            {/* Your avatar区块 */}
             <div className="glass-card overflow-hidden rounded-[var(--md-sys-shape-corner)]">
               <div className="flex items-center gap-2.5 border-b border-[var(--glass-border)] px-4 py-3">
                 <span
@@ -215,13 +226,13 @@ export function AccountEditor({
                 </span>
                 <div className="flex min-w-0 flex-col">
                   <Text className="text-sm font-semibold leading-tight">
-                    修改头像
+                    {t('Your avatar')}
                   </Text>
                   <Text
                     type="secondary"
                     className="text-[10px] uppercase tracking-wide"
                   >
-                    上传自定义头像图片
+                    {t('Choose a profile image.')}
                   </Text>
                 </div>
               </div>
@@ -231,7 +242,7 @@ export function AccountEditor({
                     <Avatar
                       size="lg"
                       alt={user.username}
-                      src={buildAvatarUrl(user.avatar, user.role)}
+                      src={buildAvatarUrl(user.avatar)}
                     />
                     {avatarLoading && (
                       <div
@@ -267,7 +278,7 @@ export function AccountEditor({
                       loading={avatarLoading}
                       onClick={() => avatarInputRef.current?.click()}
                     >
-                      {user.avatar ? '更换头像' : '上传头像'}
+                      {user.avatar ? t('Change avatar') : t('Upload avatar')}
                     </Button>
                     {user.avatar && (
                       <Button
@@ -277,18 +288,18 @@ export function AccountEditor({
                         disabled={avatarLoading}
                         onClick={() => setAvatarDeleteTarget(true)}
                       >
-                        删除头像
+                        {t('Remove avatar')}
                       </Button>
                     )}
                   </div>
                 </div>
                 <Text type="secondary" className="text-[10px] leading-relaxed">
-                  支持 JPG / PNG / GIF / WEBP，最大 5MB
+                  {t('JPG, PNG, GIF or WebP · up to 5 MB')}
                 </Text>
               </div>
             </div>
 
-            {/* 修改用户名区块 */}
+            {/* Change username区块 */}
             {user.role === 'root' && (
               <div className="glass-card overflow-hidden rounded-[var(--md-sys-shape-corner)]">
                 <div className="flex items-center gap-2.5 border-b border-[var(--glass-border)] px-4 py-3">
@@ -306,24 +317,24 @@ export function AccountEditor({
                   </span>
                   <div className="flex min-w-0 flex-col">
                     <Text className="text-sm font-semibold leading-tight">
-                      修改用户名
+                      {t('Change username')}
                     </Text>
                     <Text
                       type="secondary"
                       className="text-[10px] uppercase tracking-wide"
                     >
-                      更改登录账户名称
+                      {t('Update your account name.')}
                     </Text>
                   </div>
                 </div>
                 <div className="flex flex-col gap-2.5 px-4 py-3">
                   <div className="flex flex-col gap-1">
                     <label className="text-[10px] uppercase tracking-wide text-[var(--md-sys-color-on-surface-variant)]">
-                      新用户名
+                      {t('New username')}
                     </label>
                     <Input
                       size="sm"
-                      placeholder="请输入新用户名"
+                      placeholder={t('Enter a new username.')}
                       value={newUsername}
                       onChange={(e) => setNewUsername(e.target.value)}
                       onKeyDown={(e) => {
@@ -342,14 +353,14 @@ export function AccountEditor({
                     onClick={() => void handleChangeUsername()}
                     className="mt-1"
                   >
-                    确认修改
+                    {t('Save changes')}
                   </Button>
                 </div>
               </div>
             )}
           </div>
 
-          {/* 右侧列：修改密码 */}
+          {/* 右侧列：Change password */}
           <div className="glass-card overflow-hidden rounded-[var(--md-sys-shape-corner)]">
             <div className="flex items-center gap-2.5 border-b border-[var(--glass-border)] px-4 py-3">
               <span
@@ -366,49 +377,49 @@ export function AccountEditor({
               </span>
               <div className="flex min-w-0 flex-col">
                 <Text className="text-sm font-semibold leading-tight">
-                  修改密码
+                  {t('Change password')}
                 </Text>
                 <Text
                   type="secondary"
                   className="text-[10px] uppercase tracking-wide"
                 >
-                  更新账户登录密码
+                  {t('Update your sign-in password.')}
                 </Text>
               </div>
             </div>
             <div className="flex flex-col gap-2.5 px-4 py-3">
               <div className="flex flex-col gap-1">
                 <label className="text-[10px] uppercase tracking-wide text-[var(--md-sys-color-on-surface-variant)]">
-                  原密码
+                  {t('Current password')}
                 </label>
                 <Input
                   type="password"
                   size="sm"
-                  placeholder="请输入原密码"
+                  placeholder={t('Current password')}
                   value={oldPassword}
                   onChange={(e) => setOldPassword(e.target.value)}
                 />
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-[10px] uppercase tracking-wide text-[var(--md-sys-color-on-surface-variant)]">
-                  新密码
+                  {t('New password')}
                 </label>
                 <Input
                   type="password"
                   size="sm"
-                  placeholder="至少 4 位"
+                  placeholder={t('At least 4 characters')}
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                 />
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-[10px] uppercase tracking-wide text-[var(--md-sys-color-on-surface-variant)]">
-                  确认新密码
+                  {t('Confirm new password')}
                 </label>
                 <Input
                   type="password"
                   size="sm"
-                  placeholder="再次输入新密码"
+                  placeholder={t('Repeat the new password')}
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   onKeyDown={(e) => {
@@ -427,7 +438,7 @@ export function AccountEditor({
                 onClick={() => void handleChangePassword()}
                 className="mt-1"
               >
-                确认修改
+                {t('Save changes')}
               </Button>
             </div>
           </div>
@@ -437,12 +448,14 @@ export function AccountEditor({
       <ConfirmModal
         open={avatarDeleteTarget}
         onClose={() => setAvatarDeleteTarget(false)}
-        title="删除头像"
-        okText="删除"
+        title={t('Remove avatar')}
+        okText={t('Remove')}
         onOk={() => void handleAvatarDelete()}
         onCancel={() => setAvatarDeleteTarget(false)}
       >
-        <Text className="text-sm">确定要删除当前头像并恢复默认头像吗？</Text>
+        <Text className="text-sm">
+          {t('Remove your avatar and use the default profile image?')}
+        </Text>
       </ConfirmModal>
     </>
   )

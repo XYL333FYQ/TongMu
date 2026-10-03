@@ -13,12 +13,17 @@ import { IsNull } from 'typeorm';
 import { AppDataSource } from '../../data-source';
 import { Room } from '../../entities/Room';
 import { Session } from '../../entities/Session';
-import { Movie } from '../../entities/Movie';
+import { movieService } from '../movie/movie.service';
 import { PlaybackState } from '../../entities/PlaybackState';
 import type { MovieDto, PlaybackStateDto } from '../shared';
 import { playbackMemoryService } from '../playback-memory';
 import { roomPermissionService } from './room-permission.service';
 import type { StorageAdapter } from '../../services/storage';
+import { roomExperienceService } from './room-experience.service';
+import { parseRoomPolicy } from './room-policy';
+import { musicSyncService } from '../music/music-sync.service';
+import { viewerService } from '../viewer/viewer.service';
+import { realtimeSyncCore } from '../realtime-sync-core';
 
 /** 房间运行时状态 */
 export interface RoomRuntimeState {
@@ -89,7 +94,9 @@ export class RoomStateService {
       }
       const restored = Array.from(this.storageAdapter.entries());
       for (const [roomId, state] of restored) {
-        this.states.set(roomId, state);
+        // Older adapters may contain raw Movie entities. Rebuild the public
+        // queue from authoritative storage while retaining other cached state.
+        this.states.set(roomId, { ...state, movies: await movieService.listMovies(roomId) });
       }
       if (restored.length > 0) {
         console.log(`[RoomStateService] 已从存储适配器恢复 ${restored.length} 个房间的运行时状态`);
@@ -98,18 +105,14 @@ export class RoomStateService {
     }
 
     const roomRepo = AppDataSource.getRepository(Room);
-    const movieRepo = AppDataSource.getRepository(Movie);
     const playbackRepo = AppDataSource.getRepository(PlaybackState);
 
     const activeRooms = await roomRepo.find({ where: { status: 'active' } });
     for (const room of activeRooms) {
       try {
-        const movies = await movieRepo.find({
-          where: { roomId: room.roomId },
-          order: { createdAt: 'ASC' } as never,
-        });
+        const movies = await movieService.listMovies(room.roomId);
         const state = this.get(room.roomId);
-        state.movies = movies as unknown as MovieDto[];
+        state.movies = movies;
         state.currentMovieId = null;
 
         // 从 PlaybackState 恢复 currentMovieId 与播放记忆
@@ -221,13 +224,33 @@ export class RoomStateService {
     io: SocketIOServer,
     roomId: string,
     sharerSocketId: string,
-  ): Promise<void> {
+    forceClose?: { adminSocketId: string },
+  ): Promise<boolean> {
+    return realtimeSyncCore.withRoomLock(roomId, async () => {
     const roomRepo = AppDataSource.getRepository(Room);
     const sessionRepo = AppDataSource.getRepository(Session);
 
-    await roomRepo.update({ roomId }, { status: 'closed' });
+    const room = await roomRepo.findOneBy({ roomId });
+    if (!room || room.status !== 'active') return false;
+    let preservedSocketId = sharerSocketId;
+    if (forceClose) {
+      // Platform administration is an explicit path, never inherited by an
+      // old owner or temporary delegate. Recheck the live actor after queuing.
+      const administrator = io.sockets.sockets.get(forceClose.adminSocketId);
+      if (!administrator?.connected || !['admin', 'root'].includes(administrator.data.role)) return false;
+      const currentSharer = await sessionRepo.findOneBy({ roomId, role: 'sharer', endedAt: IsNull() });
+      preservedSocketId = currentSharer?.socketId ?? '';
+    } else {
+      const actor = io.sockets.sockets.get(sharerSocketId);
+      const currentSharer = await sessionRepo.findOneBy({ roomId, socketId: sharerSocketId, role: 'sharer', endedAt: IsNull() });
+      if (!actor?.connected || !actor.rooms.has(roomId) || !currentSharer ||
+        (room.ownerUserId !== null && currentSharer.userId !== room.ownerUserId)) return false;
+    }
+    const persistent = parseRoomPolicy(room?.policyJson).lifetime === 'persistent';
+    await roomExperienceService.suspendLocked(io, roomId);
+    await roomRepo.update({ roomId }, { status: persistent ? 'active' : 'closed', emptySince: new Date() });
     await sessionRepo.update(
-      { roomId, role: 'sharer', endedAt: IsNull() },
+      { roomId, endedAt: IsNull() },
       { endedAt: new Date() },
     );
     // 失效权限缓存：房间关闭后所有 sharer session 已结束
@@ -236,17 +259,23 @@ export class RoomStateService {
     io.to(roomId).emit('room-closed', { roomId });
     this.delete(roomId);
     this.cancelReconnectTimer(roomId);
+    roomExperienceService.clear(roomId);
+    viewerService.clearPendingRoom(roomId);
+    musicSyncService.clearRuntime(roomId);
 
     // 清理播放记忆持久化状态
-    await playbackMemoryService.clearPlayback(roomId);
+    if (!persistent) await playbackMemoryService.clearPlayback(roomId);
+    else await playbackMemoryService.updateHostSocket(roomId, null);
 
     const sockets = await io.in(roomId).fetchSockets();
     for (const sock of sockets) {
-      if (sock.id !== sharerSocketId) {
+      if (sock.id !== preservedSocketId) {
         sock.leave(roomId);
         sock.disconnect(true);
       }
     }
+    return true;
+    });
   }
 
   /** 获取所有有运行时状态的房间 ID（用于定时清理遍历） */
@@ -255,14 +284,16 @@ export class RoomStateService {
   }
 
   /**
-   * 清理陈旧运行时状态：移除已无播放记忆缓存且无活跃观众的房间状态。
+   * 清理陈旧运行时状态：移除已无播放记忆缓存且无在线成员的房间状态。
+   * 首次播放前没有 PlaybackState，不能用播放缓存判断房间是否有人。
    * 由 PlaybackBroadcasterService 的定时清理任务驱动。
    */
-  cleanupStaleStates(): void {
+  cleanupStaleStates(io: SocketIOServer): void {
     for (const [roomId] of this.states.entries()) {
       if (
         !playbackMemoryService.isHostOnline(roomId) &&
-        !playbackMemoryService.hasCache(roomId)
+        !playbackMemoryService.hasCache(roomId) &&
+        !io.sockets.adapter.rooms.get(roomId)?.size
       ) {
         this.states.delete(roomId);
         this.cancelReconnectTimer(roomId);

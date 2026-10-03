@@ -1,23 +1,55 @@
 import { expect, test, type BrowserContext, type Page } from '@playwright/test'
 
-async function login(page: Page, username: string, password: string): Promise<void> {
+async function login(
+  page: Page,
+  username: string,
+  password: string
+): Promise<void> {
   await page.goto('/login')
-  await page.getByPlaceholder('请输入用户名').fill(username)
-  await page.getByPlaceholder('请输入密码').fill(password)
-  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await page.getByPlaceholder('Your username').fill(username)
+  await page.getByPlaceholder('Your password').fill(password)
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
   await expect(page).toHaveURL(/\/$/)
-  await expect(page.getByText('已连接', { exact: true })).toBeVisible()
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        Boolean(
+          (window as unknown as { __debugSocket?: { connected?: boolean } })
+            .__debugSocket?.connected
+        )
+      )
+    )
+    .toBe(true)
 }
 
 async function createRoom(host: Page): Promise<string> {
-  const result = await host.evaluate(() => new Promise<{ success?: boolean; data?: { roomId?: string } }>((resolve) => {
-    const socket = (window as unknown as { __debugSocket: { emit: Function } }).__debugSocket
-    socket.emit('create-room', { mode: 'watch-together', requireApproval: false }, resolve)
-  }))
-  if (!result.success || !result.data?.roomId) throw new Error('create-room failed')
-  await host.evaluate((roomId) => sessionStorage.setItem('zcontrol-host-room', roomId), result.data.roomId)
+  const result = await host.evaluate(
+    () =>
+      new Promise<{ success?: boolean; data?: { roomId?: string } }>(
+        (resolve) => {
+          const socket = (
+            window as unknown as { __debugSocket: { emit: Function } }
+          ).__debugSocket
+          socket.emit(
+            'create-room',
+            {
+              name: 'NCM gateway regression room',
+              mode: 'watch-together',
+              requireApproval: false,
+            },
+            resolve
+          )
+        }
+      )
+  )
+  if (!result.success || !result.data?.roomId)
+    throw new Error('create-room failed')
+  await host.evaluate(
+    (roomId) => sessionStorage.setItem('zcontrol-host-room', roomId),
+    result.data.roomId
+  )
   await host.goto(`/room/${result.data.roomId}`)
-  await host.getByRole("tab", { name: "一起听", exact: true }).click();
+  await host.getByRole('button', { name: 'Listen', exact: true }).click()
   return result.data.roomId
 }
 
@@ -39,7 +71,9 @@ async function musicState(page: Page): Promise<{
   })
 }
 
-test('Phase 5B-2A NCM login, explicit quality resolve, and room gateway work in Chromium', async ({ browser }) => {
+test('Phase 5B-2A NCM login, explicit quality resolve, and room gateway work in Chromium', async ({
+  browser,
+}) => {
   const host = await browser.newPage()
   let viewerContext: BrowserContext | null = null
   let viewer: Page | null = null
@@ -67,59 +101,109 @@ test('Phase 5B-2A NCM login, explicit quality resolve, and room gateway work in 
     expect(registration.ok()).toBe(true)
 
     const roomId = await createRoom(host)
-    const hostPanel = host.locator('.glass-card').filter({ has: host.getByRole('heading', { name: '一起听' }) })
-    await expect(hostPanel.getByTestId('ncm-status')).toContainText('网易云：未登录')
-    await hostPanel.getByRole('button', { name: '扫码登录', exact: true }).click()
-    await expect(hostPanel.getByAltText('网易云登录二维码')).toBeVisible()
-    await expect(hostPanel.getByTestId('ncm-status')).toContainText('网易云：已登录', { timeout: 15_000 })
+    const hostPanel = host
+      .locator('.glass-card')
+      .filter({ has: host.getByRole('heading', { name: 'Music' }) })
+    await expect(hostPanel.getByTestId('ncm-status')).toContainText(
+      'NetEase Music: Not connected'
+    )
+    await hostPanel
+      .getByRole('button', { name: 'Connect with QR', exact: true })
+      .click()
+    await expect(
+      hostPanel.getByAltText('NetEase Music sign-in code')
+    ).toBeVisible()
+    await expect(hostPanel.getByTestId('ncm-status')).toContainText(
+      'NetEase Music: Connected',
+      { timeout: 15_000 }
+    )
 
-    await hostPanel.getByRole('textbox', { name: '音乐 sourceRef' }).fill('music://ncm/track/9001')
-    await hostPanel.getByRole('textbox', { name: '歌曲名称' }).fill('NCM Gateway Fixture')
-    await hostPanel.getByRole('button', { name: '添加歌曲', exact: true }).click()
-    await expect.poll(async () => (await musicState(host)).sourceRef).toBe('music://ncm/track/9001')
-    await expect.poll(async () => hostPanel.locator('audio').getAttribute('src')).toContain('/api/music/playback/')
-    await expect.poll(async () => hostPanel.locator('audio').evaluate((audio) => audio.readyState)).toBeGreaterThan(0)
+    await hostPanel
+      .getByRole('textbox', { name: 'Test music reference' })
+      .fill('music://ncm/track/9001')
+    await hostPanel
+      .getByRole('textbox', { name: 'Track title' })
+      .fill('NCM Gateway Fixture')
+    await hostPanel
+      .getByRole('button', { name: 'Add track', exact: true })
+      .click()
+    await expect
+      .poll(async () => (await musicState(host)).sourceRef)
+      .toBe('music://ncm/track/9001')
+    await expect
+      .poll(async () => hostPanel.locator('audio').getAttribute('src'))
+      .toContain('/api/music/playback/')
+    await expect
+      .poll(async () =>
+        hostPanel.locator('audio').evaluate((audio) => audio.readyState)
+      )
+      .toBeGreaterThan(0)
 
-    const resolved = await host.evaluate(async ({ roomId }) => {
-      const { useMusicStore } = await import('/src/modules/music/store.ts')
-      const { apiPost } = await import('/src/lib/api.ts')
-      const state = useMusicStore.getState()
-      const raw = sessionStorage.getItem('zviewer-room-media-grant')
-      const grant = raw ? (JSON.parse(raw) as { roomId?: string; grant?: string }).grant : ''
-      const response = await apiPost('/api/music/resolve', {
-        roomId,
-        roomGrant: grant,
-        queueItemId: state.currentQueueItemId,
-        sourceRef: state.currentSourceRef,
-        musicGeneration: state.musicGeneration,
-        requestedQuality: 'exhigh',
-      })
-      return response.data
-    }, { roomId }) as {
-      descriptor?: { requestedQuality?: string; actualQuality?: string; availableQualities?: string[] }
+    const resolved = (await host.evaluate(
+      async ({ roomId }) => {
+        const { useMusicStore } = await import('/src/modules/music/store.ts')
+        const { apiPost } = await import('/src/lib/api.ts')
+        const state = useMusicStore.getState()
+        const raw = sessionStorage.getItem('zviewer-room-media-grant')
+        const grant = raw
+          ? (JSON.parse(raw) as { roomId?: string; grant?: string }).grant
+          : ''
+        const response = await apiPost('/api/music/resolve', {
+          roomId,
+          roomGrant: grant,
+          queueItemId: state.currentQueueItemId,
+          sourceRef: state.currentSourceRef,
+          musicGeneration: state.musicGeneration,
+          requestedQuality: 'exhigh',
+        })
+        return response.data
+      },
+      { roomId }
+    )) as {
+      descriptor?: {
+        requestedQuality?: string
+        actualQuality?: string
+        availableQualities?: string[]
+      }
       playbackUrl?: string
     }
     expect(resolved.descriptor?.requestedQuality).toBe('exhigh')
     expect(resolved.descriptor?.actualQuality).toBe('exhigh')
     expect(resolved.descriptor?.availableQualities).toContain('exhigh')
-    expect(resolved.playbackUrl).toMatch(/^\/api\/music\/playback\/[A-Za-z0-9._-]+$/)
+    expect(resolved.playbackUrl).toMatch(
+      /^\/api\/music\/playback\/[A-Za-z0-9._-]+$/
+    )
     expect(JSON.stringify(resolved)).not.toContain('MUSIC_U')
     expect(JSON.stringify(resolved)).not.toContain('127.0.0.1:3456')
 
-    viewerContext = await browser.newContext({ baseURL: 'http://127.0.0.1:5173' })
+    viewerContext = await browser.newContext({
+      baseURL: 'http://127.0.0.1:5173',
+    })
     viewer = await viewerContext.newPage()
     await login(viewer, username, 'phase5b2a-pass')
     await viewer.goto(`/room/${roomId}`)
-  await viewer.getByRole("tab", { name: "一起听", exact: true }).click();
-    const viewerPanel = viewer.locator('.glass-card').filter({ has: viewer.getByRole('heading', { name: '一起听' }) })
-    await expect(viewerPanel).toBeVisible()
-    await expect.poll(async () => viewerPanel.locator('audio').getAttribute('src')).toContain('/api/music/playback/')
-    await expect.poll(async () => viewerPanel.locator('audio').evaluate((audio) => audio.readyState)).toBeGreaterThan(0)
 
-    const viewerPlaybackUrl = await viewerPanel.locator('audio').getAttribute('src')
+    const viewerPanel = viewer
+      .locator('.glass-card')
+      .filter({ has: viewer.getByRole('heading', { name: 'Music' }) })
+    await expect(viewerPanel).toBeVisible()
+    await expect
+      .poll(async () => viewerPanel.locator('audio').getAttribute('src'))
+      .toContain('/api/music/playback/')
+    await expect
+      .poll(async () =>
+        viewerPanel.locator('audio').evaluate((audio) => audio.readyState)
+      )
+      .toBeGreaterThan(0)
+
+    const viewerPlaybackUrl = await viewerPanel
+      .locator('audio')
+      .getAttribute('src')
     expect(viewerPlaybackUrl).toContain('/api/music/playback/')
     const gatewayUrl = new URL(viewerPlaybackUrl!, 'http://127.0.0.1:5173')
-    const gateway = await viewer.request.get(gatewayUrl.toString(), { headers: { Range: 'bytes=2-6' } })
+    const gateway = await viewer.request.get(gatewayUrl.toString(), {
+      headers: { Range: 'bytes=2-6' },
+    })
     expect(gateway.status()).toBe(206)
     expect(gateway.headers()['content-range']).toMatch(/^bytes 2-6\//)
   } finally {

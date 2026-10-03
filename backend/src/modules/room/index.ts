@@ -18,3 +18,4 @@ export { RoomLifecycleHandler } from './handlers/room-lifecycle.handler';
 export { RoomSettingsHandler } from './handlers/room-settings.handler';
 export { RoomDisconnectHandler } from './handlers/room-disconnect.handler';
 export { RegisterHostHandler } from './handlers/register-host.handler';
+export { RoomExperienceHandler } from './handlers/room-experience.handler';

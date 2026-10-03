@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 /**
  * 流量统计悬浮面板（房间页左下角）
  *
@@ -41,6 +42,8 @@ function formatSpeed(bytesPerSecond: number): string {
 }
 
 export function TrafficPanel() {
+  useTranslation()
+
   const [expanded, setExpanded] = useState(false)
   const [local, setLocal] = useState<LocalTraffic>({ downTotal: 0, upTotal: 0 })
   const [speeds, setSpeeds] = useState({ downSpeed: 0, upSpeed: 0 })
@@ -107,20 +110,21 @@ export function TrafficPanel() {
     }
   }, [isRoot, expanded])
 
-  const rows: { label: string; total: number; speed: number; down: boolean }[] = [
-    {
-      label: '下载',
-      total: local.downTotal,
-      speed: speeds.downSpeed,
-      down: true,
-    },
-    {
-      label: '上传',
-      total: local.upTotal,
-      speed: speeds.upSpeed,
-      down: false,
-    },
-  ]
+  const rows: { label: string; total: number; speed: number; down: boolean }[] =
+    [
+      {
+        label: t('Download'),
+        total: local.downTotal,
+        speed: speeds.downSpeed,
+        down: true,
+      },
+      {
+        label: t('Upload'),
+        total: local.upTotal,
+        speed: speeds.upSpeed,
+        down: false,
+      },
+    ]
 
   return createPortal(
     <div
@@ -150,10 +154,10 @@ export function TrafficPanel() {
             </div>
             <div className="flex flex-1 flex-col">
               <span className="text-sm font-medium text-[var(--md-sys-color-on-surface)]">
-                流量统计
+                {t('Traffic')}
               </span>
               <span className="text-[10px] uppercase tracking-wide text-[var(--md-sys-color-on-surface-variant)]">
-                本次会话 · HTTP
+                {t('Session · HTTP')}
               </span>
             </div>
             <button
@@ -198,19 +202,29 @@ export function TrafficPanel() {
             </div>
           ))}
 
-          {/* 服务端流量（仅 root） */}
+          {/* Server流量（仅 root） */}
           {isRoot && (
             <>
               <div className="my-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-[var(--md-sys-color-on-surface-variant)]">
                 <Server className="h-3 w-3" />
-                服务端网卡
+                {t('Server network')}
               </div>
               {serverAvailable && server ? (
                 <>
                   {(
                     [
-                      { label: '下载', bytes: server.rxBytes, speed: server.rxSpeed, down: true },
-                      { label: '上传', bytes: server.txBytes, speed: server.txSpeed, down: false },
+                      {
+                        label: t('Download'),
+                        bytes: server.rxBytes,
+                        speed: server.rxSpeed,
+                        down: true,
+                      },
+                      {
+                        label: t('Upload'),
+                        bytes: server.txBytes,
+                        speed: server.txSpeed,
+                        down: false,
+                      },
                     ] as const
                   ).map((row) => (
                     <div
@@ -233,7 +247,8 @@ export function TrafficPanel() {
                       </div>
                       <div className="flex flex-1 flex-col">
                         <span className="text-xs text-[var(--md-sys-color-on-surface-variant)]">
-                          服务端{row.label}
+                          {t('Server')}
+                          {row.label}
                         </span>
                         <span className="text-sm font-medium tabular-nums text-[var(--md-sys-color-on-surface)]">
                           {formatBytes(row.bytes)}
@@ -245,19 +260,19 @@ export function TrafficPanel() {
                     </div>
                   ))}
                   <div className="text-center text-[10px] text-[var(--md-sys-color-on-surface-variant)]">
-                    系统开机以来的全部网卡流量
+                    {t('Network traffic since server startup')}
                   </div>
                 </>
               ) : (
                 <div className="rounded-[var(--md-sys-radius-small)] bg-[var(--glass-bg)] px-2 py-1.5 text-center text-xs text-[var(--md-sys-color-on-surface-variant)]">
-                  当前平台不支持服务端流量统计
+                  {t('Server traffic is unavailable on this platform.')}
                 </div>
               )}
             </>
           )}
 
           <div className="mt-1 text-center text-[10px] text-[var(--md-sys-color-on-surface-variant)]">
-            统计本次会话的 HTTP 流量（不含 WebSocket）
+            {t('HTTP traffic in this session; excludes WebSocket traffic.')}
           </div>
         </div>
       )}
@@ -274,7 +289,7 @@ export function TrafficPanel() {
             backgroundColor: 'var(--glass-bg)',
             color: 'var(--md-sys-color-on-surface)',
           }}
-          title="流量统计"
+          title={t('Traffic')}
         >
           <Activity className="h-5 w-5" />
         </button>

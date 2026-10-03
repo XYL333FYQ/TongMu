@@ -1,4 +1,6 @@
+import { t } from '@/i18n'
 import type { MusicCatalogTrack } from './catalog-types'
+import { englishErrorMessage } from '@/lib/errorMessage'
 
 export const MUSIC_QUALITY_VALUES = [
   'standard',
@@ -15,18 +17,18 @@ export type MusicQuality = (typeof MUSIC_QUALITY_VALUES)[number]
 const TRACK_ID_RE = /^[1-9][0-9]{0,19}$/
 
 const QUALITY_LABELS: Record<MusicQuality, string> = {
-  standard: '标准',
-  higher: '较高',
-  exhigh: '极高',
-  lossless: '无损',
+  standard: 'Standard',
+  higher: 'High',
+  exhigh: 'Very high',
+  lossless: 'Lossless',
   hires: 'Hi-Res',
-  jyeffect: '高清环绕',
-  sky: '沉浸环绕',
-  dolby: '杜比全景声',
+  jyeffect: 'HD surround',
+  sky: 'Immersive surround',
+  dolby: 'Dolby Atmos',
 }
 
 export function qualityLabel(value: MusicQuality): string {
-  return QUALITY_LABELS[value]
+  return t(QUALITY_LABELS[value])
 }
 
 export function qualityOptions(track: MusicCatalogTrack): MusicQuality[] {
@@ -104,17 +106,30 @@ export function normalizeCatalogTrack(
 
 export function catalogErrorMessage(code?: string, message?: string): string {
   const messages: Record<string, string> = {
-    NCM_NOT_LOGGED_IN: '请先登录网易云音乐',
-    NCM_CREDENTIAL_INVALID: '网易云登录已失效，请重新登录',
-    NCM_RESOURCE_NOT_FOUND: '内容不存在或已被删除',
-    NCM_QUALITY_UNAVAILABLE: '请求的音质不可用，未自动切换到其他音质',
-    NCM_PRIVATE_ACCOUNT_DATA: '当前账号的私有音乐数据暂不可用',
-    NCM_RATE_LIMITED: '网易云请求过于频繁，请稍后再试',
-    NCM_PROVIDER_UNAVAILABLE: '网易云音乐服务暂不可用',
-    NCM_UPSTREAM_ERROR: '网易云音乐服务暂不可用',
-    NCM_INVALID_RESPONSE: '网易云返回的数据格式无效',
+    NCM_NOT_LOGGED_IN: 'Connect your NetEase Music account to continue.',
+    NCM_CREDENTIAL_INVALID:
+      'Your NetEase Music session expired. Connect your account again.',
+    NCM_RESOURCE_NOT_FOUND: 'This item is unavailable or has been removed.',
+    NCM_QUALITY_UNAVAILABLE:
+      'The requested quality is unavailable. Another quality has not been selected automatically.',
+    NCM_PRIVATE_ACCOUNT_DATA:
+      'Your private NetEase Music library is currently unavailable. Try again later.',
+    NCM_RATE_LIMITED:
+      'NetEase Music received too many requests. Wait a moment and try again.',
+    NCM_PROVIDER_UNAVAILABLE:
+      'NetEase Music is currently unavailable. Try again later.',
+    NCM_UPSTREAM_ERROR:
+      'NetEase Music is currently unavailable. Try again later.',
+    NCM_INVALID_RESPONSE:
+      'NetEase Music returned an invalid response. Try again later.',
   }
-  return (code && messages[code]) || message || '网易云音乐操作失败'
+  return (
+    (code && messages[code] && t(messages[code])) ||
+    englishErrorMessage(
+      message,
+      t('Unable to complete this NetEase Music action. Try again.')
+    )
+  )
 }
 
 export function formatQualityFacts(
@@ -125,8 +140,17 @@ export function formatQualityFacts(
 ): string {
   const availableText =
     available.length > 0
-      ? `可用：${available.map(qualityLabel).join('、')}`
-      : '可用音质：未知'
-  const maximumText = maximum ? ` · 上限：${qualityLabel(maximum)}` : ''
-  return `请求：${qualityLabel(requested)} · 实际：${actual ? qualityLabel(actual) : '未解析'}${maximumText} · ${availableText}`
+      ? t('Available: {qualities}', {
+          qualities: available.map(qualityLabel).join(', '),
+        })
+      : t('Available quality: unknown')
+  const maximumText = maximum
+    ? t(' · Maximum: {quality}', { quality: qualityLabel(maximum) })
+    : ''
+  return t('Requested: {requested} · Actual: {actual}{maximum} · {available}', {
+    requested: qualityLabel(requested),
+    actual: actual ? qualityLabel(actual) : t('unresolved'),
+    maximum: maximumText,
+    available: availableText,
+  })
 }

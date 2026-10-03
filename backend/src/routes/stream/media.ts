@@ -12,9 +12,10 @@ import { AppDataSource } from '../../data-source';
 import { Movie } from '../../entities/Movie';
 import { Room } from '../../entities/Room';
 import { UserMount } from '../../entities/UserMount';
-import { Session } from '../../entities/Session';
-import { IsNull } from 'typeorm';
 import { Router } from 'express';
+import type { Server as SocketIOServer } from 'socket.io';
+import { roomPermissionService } from '../../modules/room/room-permission.service';
+import { realtimeSyncCore } from '../../modules/realtime-sync-core';
 import { AuthenticatedRequest } from '../../middleware/auth';
 import { getUserCookie } from './helpers';
 import { resolveMediaProvider } from '../../services/media/resolvers';
@@ -35,7 +36,8 @@ import { authenticateToken, extractAccessToken, verifyAccessToken } from '../../
 import { authorizeRoomMediaGrant } from '../../services/media/room-access';
 import { pipeProviderMediaHandle } from '../../services/media/provider-gateway';
 import { mediaProviderRegistry, providerContextFromResolverContext } from '../../services/media/providers/registry';
-import { buildMediaServerReference } from '../../services/media/providers/media-server-reference';
+import { buildMediaServerReference, parseMediaServerReference } from '../../services/media/providers/media-server-reference';
+import { parseStorageReference } from '../../services/media/providers/storage-reference';
 import { providerPlaybackSessionCoordinator } from '../../services/media/provider-playback-session';
 import { legacyPlaybackClientProfile } from '../../services/media/playback-profile';
 import {
@@ -624,6 +626,19 @@ async function handlePlaybackSessionRequest(
   }
 }
 
+/** Select-content authorization binds a room capability to this HTTP actor. */
+async function authorizedRoomSelector(req: AuthenticatedRequest, roomId: string): Promise<Room | undefined> {
+  const room = await AppDataSource.getRepository(Room).findOneBy({ roomId, status: 'active' });
+  const grant = room && await authorizeRoomMediaGrant(roomGrantToken(req), roomId);
+  const io = req.app.get('io') as SocketIOServer | undefined;
+  const member = grant && io?.sockets.sockets.get(grant.socketId);
+  if (!room || !member?.connected || !member.rooms.has(roomId) || member.data.userId !== req.user?.userId) return undefined;
+  if (req.user?.role === 'guest') {
+    if (member.data.role !== 'guest' || !req.user.guestId || member.data.guestId !== req.user.guestId) return undefined;
+  } else if (!req.user?.userId || req.user.userId <= 0 || member.data.role === 'guest') return undefined;
+  return (await roomPermissionService.canPerform(member, roomId, 'movie.change')).allowed ? room : undefined;
+}
+
 router.post('/media/resolve', authenticateToken, mediaResolveLimiter, async (req: AuthenticatedRequest, res) => {
   let input = typeof req.body?.input === 'string' ? req.body.input.trim() : '';
   let mediaMovieId: number | undefined;
@@ -633,24 +648,31 @@ router.post('/media/resolve', authenticateToken, mediaResolveLimiter, async (req
     ? req.body.roomId.trim().slice(0, 128) : undefined;
   let credentialOwnerId = ownerId;
   let mediaMovie: Movie | undefined;
+  let authorizedRoom: Room | undefined;
   if (roomId) {
-    const room = await AppDataSource.getRepository(Room).findOneBy({ roomId });
-    if (room?.ownerUserId) credentialOwnerId = String(room.ownerUserId);
-    const grant = await authorizeRoomMediaGrant(roomGrantToken(req), roomId);
-    const host = grant && await AppDataSource.getRepository(Session).findOneBy({ roomId, socketId: grant.socketId, role: 'sharer', endedAt: IsNull() });
-    if (!host) { res.status(403).json({ success: false, message: '只有房主可以统一解析房间媒体' }); return; }
+    authorizedRoom = await realtimeSyncCore.withRoomLock(roomId, () => authorizedRoomSelector(req, roomId));
+    if (!authorizedRoom) { res.status(403).json({ success: false, message: '当前成员没有选片权限或房间身份已失效' }); return; }
   }
   if (input.startsWith('media-movie:')) {
     const movieId = Number(input.slice(12));
     const movie = await AppDataSource.getRepository(Movie).findOneBy({ id: movieId });
-    const grant = await authorizeRoomMediaGrant(roomGrantToken(req), roomId);
-    const host = grant && await AppDataSource.getRepository(Session).findOneBy({ roomId: grant.roomId, socketId: grant.socketId, role: 'sharer', endedAt: IsNull() });
-    if (!movie || !host || movie.roomId !== roomId) {
-      res.status(403).json({ success: false, message: '只有当前房主可以刷新房间私有媒体源' }); return;
+    if (!movie || !authorizedRoom || movie.roomId !== roomId) {
+      res.status(403).json({ success: false, message: '媒体记录不属于当前授权房间' }); return;
     }
     mediaMovie = movie;
-    if (movie.sourceInput?.startsWith('provider://')) {
+    // Already shared content may be refreshed, but its source comes only from
+    // the stored movie. New source inputs always use the selecting user's mount.
+    credentialOwnerId = authorizedRoom.ownerUserId ? String(authorizedRoom.ownerUserId) : ownerId;
+    if (movie.sourceInput?.startsWith('provider://') || movie.sourceInput?.startsWith('storage://')) {
       input = movie.sourceInput;
+      const reference = parseMediaServerReference(input) ?? parseStorageReference(input);
+      if (reference?.mountId) {
+        const mount = await AppDataSource.getRepository(UserMount).findOneBy({ id: reference.mountId });
+        if (!mount || mount.type !== reference.provider) {
+          res.status(403).json({ success: false, message: '媒体记录的存储挂载已失效' }); return;
+        }
+        credentialOwnerId = String(mount.userId);
+      }
     } else if ((movie.source === 'emby' || movie.source === 'jellyfin') && movie.path) {
       const mounts = await AppDataSource.getRepository(UserMount).find({
         where: { userId: Number(credentialOwnerId), type: movie.source },
@@ -703,10 +725,32 @@ router.post('/media/resolve', authenticateToken, mediaResolveLimiter, async (req
       sourceGeneration: Number.isSafeInteger(req.body?.sourceGeneration) ? Number(req.body.sourceGeneration) : undefined,
       movieId: mediaMovieId,
       credentialOwnerId,
+      credentialOwnerPolicy: mediaMovie ? 'source-creator' : 'current-viewer',
       qualityChangingTranscode: req.body?.allowQualityChangingTranscode === true ? 'explicit' : 'disabled',
       playbackClientProfile: profile,
     });
     const descriptor = providerResolution.descriptor;
+    const privateSource = providerResolution.privateSource;
+    const providerId = privateSource.providerId;
+    const providerData = privateSource.providerData;
+    if (roomId) {
+      // Resolving an upstream URL can take seconds. Recheck admission and room
+      // policy before issuing any capability, without holding the room queue
+      // during the network request. Save only the source field of a surviving
+      // movie so an old resolve cannot recreate a removed selection.
+      const stillAuthorized = await realtimeSyncCore.withRoomLock(roomId, async () => {
+        if (!(await authorizedRoomSelector(req, roomId))) return false;
+        if (mediaMovie) {
+          const current = await AppDataSource.getRepository(Movie).findOneBy({ id: mediaMovie.id, roomId });
+          if (!current || current.sourceInput !== mediaMovie.sourceInput) return false;
+          if (!descriptor.drm.protected && providerResolution.sourceReference && current.sourceInput !== providerResolution.sourceReference) {
+            await AppDataSource.getRepository(Movie).update({ id: current.id, roomId }, { sourceInput: providerResolution.sourceReference });
+          }
+        }
+        return true;
+      });
+      if (!stillAuthorized) { res.status(403).json({ success: false, message: '选片权限或媒体记录已变更，请重新选择' }); return; }
+    }
     if (descriptor.drm.protected) {
       res.status(422).json({
         success: false,
@@ -715,15 +759,6 @@ router.post('/media/resolve', authenticateToken, mediaResolveLimiter, async (req
         descriptor: toPublicDescriptor(descriptor, ''),
       });
       return;
-    }
-    const privateSource = providerResolution.privateSource;
-    const providerId = privateSource.providerId;
-    const providerData = privateSource.providerData;
-    if (mediaMovie && providerResolution.sourceReference && mediaMovie.sourceInput !== providerResolution.sourceReference) {
-      // Upgrade an old movie record to the stable provider/mount/item identity
-      // after a successful server-side resolution. No temporary URL is stored.
-      mediaMovie.sourceInput = providerResolution.sourceReference;
-      await AppDataSource.getRepository(Movie).save(mediaMovie);
     }
     const requestedSourceGeneration = Number.isSafeInteger(req.body?.sourceGeneration)
       ? Number(req.body.sourceGeneration)

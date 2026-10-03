@@ -61,8 +61,8 @@ export const DANMAKU_SOURCE_OPTIONS: Array<{
   label: string
   value: DanmakuSource
 }> = [
-  { label: '哔哩哔哩视频', value: 'bilibili-video' },
-  { label: '哔哩哔哩番剧', value: 'bilibili-bangumi' },
-  { label: '巴哈姆特', value: 'bahamut' },
-  { label: '弹弹Play', value: 'dandanplay' },
+  { label: 'Bilibili videos', value: 'bilibili-video' },
+  { label: 'Bilibili series', value: 'bilibili-bangumi' },
+  { label: 'Bahamut', value: 'bahamut' },
+  { label: 'DandanPlay', value: 'dandanplay' },
 ]

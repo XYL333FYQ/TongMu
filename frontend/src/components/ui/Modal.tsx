@@ -1,10 +1,11 @@
+import { t, useTranslation } from '@/i18n'
 import { useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from './Button'
-
-const MODAL_ANIMATION_DURATION = 220
+import { LanguageSwitch } from '../LanguageSwitch'
+import { disclosureExitDuration } from './motion'
 
 export interface ModalProps {
   open: boolean
@@ -23,6 +24,8 @@ export function Modal({
   footer,
   className,
 }: ModalProps) {
+  useTranslation()
+
   const [visible, setVisible] = useState(open)
   const [exiting, setExiting] = useState(false)
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -33,8 +36,12 @@ export function Modal({
   const openRef = useRef(open)
   const titleId = useId()
 
-  useEffect(() => { onCloseRef.current = onClose }, [onClose])
-  useEffect(() => { openRef.current = open }, [open])
+  useEffect(() => {
+    onCloseRef.current = onClose
+  }, [onClose])
+  useEffect(() => {
+    openRef.current = open
+  }, [open])
 
   useEffect(() => {
     if (open && !prevOpenRef.current) {
@@ -45,7 +52,7 @@ export function Modal({
       closeTimerRef.current = setTimeout(() => {
         setVisible(false)
         setExiting(false)
-      }, MODAL_ANIMATION_DURATION)
+      }, disclosureExitDuration())
     }
     prevOpenRef.current = open
 
@@ -78,15 +85,39 @@ export function Modal({
     if (!visible) return
     const dialog = dialogRef.current
     if (!dialog) return
-    openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    const focusableSelector = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-    const focusables = () => Array.from(dialog.querySelectorAll<HTMLElement>(focusableSelector))
-      .filter((element) => element.getClientRects().length > 0 && !element.closest('[aria-hidden="true"]'))
-    const initialFocus = focusables()[0] ?? dialog
+    openerRef.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null
+    const focusableSelector =
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    const ownedMenus = () =>
+      Array.from(
+        document.querySelectorAll<HTMLElement>('[data-tongmu-modal-owner]')
+      ).filter((menu) => menu.dataset.tongmuModalOwner === titleId)
+    const containsFocus = () =>
+      dialog.contains(document.activeElement) ||
+      ownedMenus().some((menu) => menu.contains(document.activeElement))
+    const focusables = () =>
+      [
+        ...Array.from(dialog.querySelectorAll<HTMLElement>(focusableSelector)),
+        ...ownedMenus().flatMap((menu) =>
+          Array.from(menu.querySelectorAll<HTMLElement>(focusableSelector))
+        ),
+      ].filter(
+        (element) =>
+          element.getClientRects().length > 0 &&
+          !element.closest('[aria-hidden="true"]')
+      )
+    const initialFocus =
+      dialog.querySelector<HTMLElement>('[data-tongmu-modal-close]') ??
+      focusables()[0] ??
+      dialog
     initialFocus.focus()
     const onKeyDown = (e: KeyboardEvent) => {
       const dialogs = document.querySelectorAll('[data-tongmu-modal]')
       if (dialogs[dialogs.length - 1] !== dialog) return
+      if (e.defaultPrevented) return
       if (e.key === 'Escape' && openRef.current) {
         e.preventDefault()
         e.stopPropagation()
@@ -94,13 +125,23 @@ export function Modal({
       }
       if (e.key !== 'Tab') return
       const items = focusables()
-      if (!items.length) { e.preventDefault(); dialog.focus(); return }
+      if (!items.length) {
+        e.preventDefault()
+        dialog.focus()
+        return
+      }
       const first = items[0]
       const last = items[items.length - 1]
-      if (e.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+      if (
+        e.shiftKey &&
+        (document.activeElement === first || !containsFocus())
+      ) {
         e.preventDefault()
         last.focus()
-      } else if (!e.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+      } else if (
+        !e.shiftKey &&
+        (document.activeElement === last || !containsFocus())
+      ) {
         e.preventDefault()
         first.focus()
       }
@@ -111,7 +152,7 @@ export function Modal({
       if (openerRef.current?.isConnected) openerRef.current.focus()
       openerRef.current = null
     }
-  }, [visible])
+  }, [visible, titleId])
 
   if (!visible) return null
 
@@ -137,11 +178,11 @@ export function Modal({
       />
       <div
         ref={dialogRef}
-        data-tongmu-modal
+        data-tongmu-modal={titleId}
         role="dialog"
         aria-modal="true"
         aria-labelledby={title ? titleId : undefined}
-        aria-label={title ? undefined : '对话框'}
+        aria-label={title ? undefined : t('Dialog')}
         tabIndex={-1}
         className={cn(
           'glass-strong relative z-10 flex w-full max-w-md flex-col overflow-hidden rounded-[var(--md-sys-shape-corner)] p-6 shadow-lg',
@@ -149,29 +190,36 @@ export function Modal({
           className
         )}
         style={{
-          maxHeight: 'calc(100vh - 2rem)',
+          maxHeight: 'calc(100dvh - 2rem)',
           boxShadow:
             '0 8px 24px -8px color-mix(in srgb, var(--md-sys-color-primary) 25%, transparent)',
         }}
       >
-        <div className="flex shrink-0 items-start justify-between">
+        <div className="flex shrink-0 items-start justify-between gap-3">
           {title ? (
-            <h3 id={titleId} className="text-lg font-semibold text-[var(--md-sys-color-on-surface)]">
+            <h3
+              id={titleId}
+              className="min-w-0 flex-1 break-words text-lg font-semibold text-[var(--md-sys-color-on-surface)]"
+            >
               {title}
             </h3>
           ) : (
             <span />
           )}
-          <button
-            type="button"
-            aria-label="关闭弹窗"
-            onClick={onClose}
-            className="rounded-[var(--md-sys-shape-corner)] p-1 text-[var(--md-sys-color-on-surface-variant)] transition-all hover:bg-[var(--md-sys-color-surface-container)] hover:text-[var(--md-sys-color-on-surface)] hover:scale-110 active:scale-95"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <div className="flex shrink-0 items-center gap-1">
+            <LanguageSwitch />
+            <button
+              type="button"
+              data-tongmu-modal-close
+              aria-label={t('Close dialog')}
+              onClick={onClose}
+              className="rounded-[var(--md-sys-shape-corner)] p-1 text-[var(--md-sys-color-on-surface-variant)] transition-all hover:bg-[var(--md-sys-color-surface-container)] hover:text-[var(--md-sys-color-on-surface)] hover:scale-110 active:scale-95"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
-        {/* 内容超出可用高度（小屏）时出滚动条，而不是被裁掉 */}
+        {/* 内容超出可用高度（小屏）时出Scrolling comments，而不是被裁掉 */}
         <div className="mt-4 flex min-h-0 flex-1 flex-col overflow-y-auto text-sm text-[var(--md-sys-color-on-surface-variant)]">
           {children}
         </div>
@@ -195,13 +243,15 @@ export interface ConfirmModalProps extends Omit<ModalProps, 'footer'> {
 }
 
 export function ConfirmModal({
-  okText = '确认',
-  cancelText = '取消',
+  okText = 'Confirm',
+  cancelText = 'Cancel',
   onOk,
   onCancel,
   confirmLoading,
   ...modalProps
 }: ConfirmModalProps) {
+  useTranslation()
+
   return (
     <Modal
       {...modalProps}

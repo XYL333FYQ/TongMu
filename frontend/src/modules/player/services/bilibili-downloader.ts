@@ -54,7 +54,7 @@ export class UrlExpiredError extends DownloadError {
 
 export class DownloadAbortedError extends DownloadError {
   constructor() {
-    super('下载已取消')
+    super('Download was cancelled.')
     this.name = 'DownloadAbortedError'
   }
 }
@@ -87,11 +87,11 @@ export async function downloadM4sStream(
   if (!response.ok) {
     if (response.status === 403 || response.status === 410) {
       throw new UrlExpiredError(
-        `B站 URL 已过期或被拒绝（HTTP ${response.status}），请重新解析`
+        `This Bilibili media link expired or access was denied (HTTP ${response.status}). Resolve it again.`
       )
     }
     throw new DownloadError(
-      `下载失败: HTTP ${response.status} ${response.statusText}`,
+      `Download failed: HTTP ${response.status} ${response.statusText}`,
       response.status
     )
   }
@@ -136,7 +136,7 @@ export async function downloadM4sStream(
       throw new DownloadAbortedError()
     }
     throw new DownloadError(
-      `流式下载失败: ${err instanceof Error ? err.message : String(err)}`
+      `Stream download failed:  ${err instanceof Error ? err.message : String(err)}`
     )
   }
 

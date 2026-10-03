@@ -1,5 +1,5 @@
-import { registerMediaTransport } from './transport';
-import { planPlayback } from './localPlanner';
+import { registerMediaTransport } from './transport'
+import { planPlayback } from './localPlanner'
 import {
   collectPlaybackClientProfile,
   collectPlaybackClientProfileSync,
@@ -10,6 +10,7 @@ import { apiFetch, getApiUrl, safeJson } from '@/lib/api'
 import type { MediaFormat } from '@/lib/mediaFormat'
 import { getRoomMediaGrant } from './roomMediaGrant'
 import type { ResolvedSource } from '@/modules/bilibili/types'
+import { englishErrorMessage } from '@/lib/errorMessage'
 
 export interface PlaybackTransportCandidate {
   mode: 'DIRECT' | 'MANIFEST_ASSISTED' | 'PARTIAL_PROXY' | 'FULL_PROXY'
@@ -30,7 +31,8 @@ export interface PlaybackTransportCandidate {
   playbackSessionUrl?: string
 }
 
-type PlaybackTransport = 'progressive' | 'hls' | 'dash' | 'flv' | 'mpeg-ts' | 'webrtc'
+type PlaybackTransport =
+  'progressive' | 'hls' | 'dash' | 'flv' | 'mpeg-ts' | 'webrtc'
 
 export interface MediaServerSourceMetadata {
   providerReference: string
@@ -99,13 +101,22 @@ export interface MediaDescriptor {
       requestedQn?: number
       actualQn?: number
       preferMp4: boolean
-      availableQualities: Array<{ id: number; label: string; resolution?: string }>
+      availableQualities: Array<{
+        id: number
+        label: string
+        resolution?: string
+      }>
       qualityLabel?: string
       videoCodec?: string
       audioCodec?: string
       videoBandwidth?: number
       fallbackReason?: string
-      pages?: Array<{ page: number; cid: number; part: string; duration: number }>
+      pages?: Array<{
+        page: number
+        cid: number
+        part: string
+        duration: number
+      }>
       currentPage?: number
     }
     emby?: MediaServerSourceMetadata
@@ -129,7 +140,8 @@ export interface PlaybackPlan {
   audioAction: string
   reasons: string[]
   candidateUrl?: string
-  candidateMode?: 'DIRECT' | 'MANIFEST_ASSISTED' | 'PARTIAL_PROXY' | 'FULL_PROXY'
+  candidateMode?:
+    'DIRECT' | 'MANIFEST_ASSISTED' | 'PARTIAL_PROXY' | 'FULL_PROXY'
   playbackSessionUrl?: string
   upstreamMode?: 'direct-play' | 'direct-stream' | 'transcode'
   representationId?: string
@@ -142,7 +154,9 @@ export interface PlaybackPlan {
  * control token, so stored descriptors keep media facts and transport handles
  * but omit session operations.
  */
-export function stripPlaybackSessionCapabilities(descriptor: MediaDescriptor): MediaDescriptor {
+export function stripPlaybackSessionCapabilities(
+  descriptor: MediaDescriptor
+): MediaDescriptor {
   if (!descriptor.transportPlan) return descriptor
   return {
     ...descriptor,
@@ -158,7 +172,9 @@ export function stripPlaybackSessionCapabilities(descriptor: MediaDescriptor): M
 }
 
 /** Persist provider facts and safe expiry facts; signed handles and host plans are request-scoped. */
-export function stripTransientMediaDescriptor(descriptor: MediaDescriptor): Record<string, unknown> {
+export function stripTransientMediaDescriptor(
+  descriptor: MediaDescriptor
+): Record<string, unknown> {
   const persisted: Record<string, unknown> = { ...descriptor }
   persisted.input = ''
   persisted.originalUrl = ''
@@ -182,7 +198,9 @@ export function normalizeMediaGatewayUrl(url?: string): string | undefined {
   return new URL(url, `${getApiUrl()}/`).toString()
 }
 
-export function toBilibiliResolvedSource(resolved: ResolvedMedia): ResolvedSource {
+export function toBilibiliResolvedSource(
+  resolved: ResolvedMedia
+): ResolvedSource {
   const descriptor = resolved.descriptor
   const metadata = descriptor.sourceMetadata?.bilibili
   return {
@@ -224,23 +242,39 @@ export interface ResolveMediaInputOptions {
 }
 
 export type MediaResolveCode =
-  | 'NO_MEDIA_FOUND' | 'ACCESS_DENIED' | 'TARGET_BLOCKED' | 'BROWSER_BUSY'
-  | 'CANCELLED' | 'TIMEOUT' | 'RESOLVE_FAILED' | 'DRM_UNSUPPORTED'
+  | 'NO_MEDIA_FOUND'
+  | 'ACCESS_DENIED'
+  | 'TARGET_BLOCKED'
+  | 'BROWSER_BUSY'
+  | 'CANCELLED'
+  | 'TIMEOUT'
+  | 'RESOLVE_FAILED'
+  | 'DRM_UNSUPPORTED'
 
 const mediaResolveCodes = new Set<MediaResolveCode>([
-  'NO_MEDIA_FOUND', 'ACCESS_DENIED', 'TARGET_BLOCKED', 'BROWSER_BUSY',
-  'CANCELLED', 'TIMEOUT', 'RESOLVE_FAILED', 'DRM_UNSUPPORTED',
+  'NO_MEDIA_FOUND',
+  'ACCESS_DENIED',
+  'TARGET_BLOCKED',
+  'BROWSER_BUSY',
+  'CANCELLED',
+  'TIMEOUT',
+  'RESOLVE_FAILED',
+  'DRM_UNSUPPORTED',
 ])
 
 const mediaResolveMessages: Record<MediaResolveCode, string> = {
-  NO_MEDIA_FOUND: '未找到可验证的媒体资源',
-  ACCESS_DENIED: '源站拒绝访问该页面',
-  TARGET_BLOCKED: '该地址不符合安全访问规则',
-  BROWSER_BUSY: '浏览器解析暂时繁忙，请稍后重试',
-  CANCELLED: '媒体解析已取消',
-  TIMEOUT: '媒体解析超时，请稍后重试',
-  RESOLVE_FAILED: '暂时无法解析此链接，请稍后重试',
-  DRM_UNSUPPORTED: '检测到 DRM 加密，当前无法作为普通媒体播放',
+  NO_MEDIA_FOUND:
+    'No playable media was found. Try a direct media link or another source.',
+  ACCESS_DENIED:
+    'The source refused access. Check whether it requires a signed-in account.',
+  TARGET_BLOCKED:
+    'This address is blocked by the server access rules. Use a permitted media source.',
+  BROWSER_BUSY: 'The browser resolver is busy. Try again shortly.',
+  CANCELLED: 'Media resolution was cancelled.',
+  TIMEOUT: 'Media resolution timed out. Try again or use a direct media link.',
+  RESOLVE_FAILED:
+    'This link could not be resolved. Check the source and try again.',
+  DRM_UNSUPPORTED: 'This media is protected by DRM and cannot be played here.',
 }
 
 export class MediaResolveError extends Error {
@@ -308,27 +342,39 @@ export async function resolveMediaInput(
     viability?: { removed?: Array<{ mode: string; reason: string }> }
   }>(response, {})
   if (!response.ok || !data.success || !data.descriptor) {
-    const code = data.code && mediaResolveCodes.has(data.code as MediaResolveCode)
-      ? data.code as MediaResolveCode
-      : undefined
+    const code =
+      data.code && mediaResolveCodes.has(data.code as MediaResolveCode)
+        ? (data.code as MediaResolveCode)
+        : undefined
     throw new MediaResolveError(
       code,
-      code ? mediaResolveMessages[code] : '媒体解析失败',
+      code
+        ? mediaResolveMessages[code]
+        : 'Unable to resolve this media. Check the link and try again.',
       data.retryable === true,
-      typeof data.requestId === 'string' ? data.requestId : response.headers.get('X-Request-Id') || undefined
+      typeof data.requestId === 'string'
+        ? data.requestId
+        : response.headers.get('X-Request-Id') || undefined
     )
   }
   const result: ResolvedMedia = {
     descriptor: {
       ...data.descriptor,
-      finalUrl: normalizeMediaGatewayUrl(data.descriptor.finalUrl) ?? data.descriptor.finalUrl,
+      finalUrl:
+        normalizeMediaGatewayUrl(data.descriptor.finalUrl) ??
+        data.descriptor.finalUrl,
       audioUrl: normalizeMediaGatewayUrl(data.descriptor.audioUrl),
     },
-    plan: planPlayback(data.descriptor, profile, data.descriptor.transportPlan?.candidates),
+    plan: planPlayback(
+      data.descriptor,
+      profile,
+      data.descriptor.transportPlan?.candidates
+    ),
     profile,
-    sourceReference: data.sourceReference
-      ?? data.descriptor.sourceMetadata?.emby?.providerReference
-      ?? data.descriptor.sourceMetadata?.jellyfin?.providerReference,
+    sourceReference:
+      data.sourceReference ??
+      data.descriptor.sourceMetadata?.emby?.providerReference ??
+      data.descriptor.sourceMetadata?.jellyfin?.providerReference,
   }
   registerMediaTransport(result.descriptor)
   return result
@@ -338,9 +384,15 @@ export function browserCapabilities() {
   return toLegacyClientCapabilities(collectPlaybackClientProfileSync())
 }
 
-function mediaSessionEndpoint(sessionUrl: string, action: 'start' | 'progress' | 'stop' | 'cleanup'): string {
+function mediaSessionEndpoint(
+  sessionUrl: string,
+  action: 'start' | 'progress' | 'stop' | 'cleanup'
+): string {
   const absolute = normalizeMediaGatewayUrl(sessionUrl)
-  if (!absolute) throw new Error('媒体播放会话凭证无效')
+  if (!absolute)
+    throw new Error(
+      'This media playback session is invalid. Reload the content to try again.'
+    )
   const url = new URL(absolute)
   url.pathname = `${url.pathname.replace(/\/$/, '')}/${action}`
   return url.toString()
@@ -349,7 +401,12 @@ function mediaSessionEndpoint(sessionUrl: string, action: 'start' | 'progress' |
 async function postMediaSession(
   sessionUrl: string,
   action: 'start' | 'progress' | 'stop' | 'cleanup',
-  options: { roomId?: string; sourceGeneration?: number; position?: number; paused?: boolean } = {},
+  options: {
+    roomId?: string
+    sourceGeneration?: number
+    position?: number
+    paused?: boolean
+  } = {}
 ): Promise<void> {
   const response = await apiFetch(mediaSessionEndpoint(sessionUrl, action), {
     method: 'POST',
@@ -361,23 +418,51 @@ async function postMediaSession(
       paused: options.paused,
     }),
   })
-  const data = await safeJson<{ success?: boolean; message?: string }>(response, {})
-  if (!response.ok || !data.success) throw new Error(data.message || '媒体播放会话操作失败')
+  const data = await safeJson<{ success?: boolean; message?: string }>(
+    response,
+    {}
+  )
+  if (!response.ok || !data.success)
+    throw new Error(
+      englishErrorMessage(
+        data.message,
+        'Unable to update this media playback session. Reload the content to try again.'
+      )
+    )
 }
 
 /** Start a provider playback session using an opaque capability from resolve. */
-export function startMediaPlaybackSession(sessionUrl: string, options?: { roomId?: string; sourceGeneration?: number }): Promise<void> {
+export function startMediaPlaybackSession(
+  sessionUrl: string,
+  options?: { roomId?: string; sourceGeneration?: number }
+): Promise<void> {
   return postMediaSession(sessionUrl, 'start', options)
 }
 
-export function reportMediaPlaybackProgress(sessionUrl: string, position: number, paused: boolean, options?: { roomId?: string; sourceGeneration?: number }): Promise<void> {
-  return postMediaSession(sessionUrl, 'progress', { ...options, position, paused })
+export function reportMediaPlaybackProgress(
+  sessionUrl: string,
+  position: number,
+  paused: boolean,
+  options?: { roomId?: string; sourceGeneration?: number }
+): Promise<void> {
+  return postMediaSession(sessionUrl, 'progress', {
+    ...options,
+    position,
+    paused,
+  })
 }
 
-export function stopMediaPlaybackSession(sessionUrl: string, position = 0, options?: { roomId?: string; sourceGeneration?: number }): Promise<void> {
+export function stopMediaPlaybackSession(
+  sessionUrl: string,
+  position = 0,
+  options?: { roomId?: string; sourceGeneration?: number }
+): Promise<void> {
   return postMediaSession(sessionUrl, 'stop', { ...options, position })
 }
 
-export function cleanupMediaPlaybackSession(sessionUrl: string, options?: { roomId?: string; sourceGeneration?: number }): Promise<void> {
+export function cleanupMediaPlaybackSession(
+  sessionUrl: string,
+  options?: { roomId?: string; sourceGeneration?: number }
+): Promise<void> {
   return postMediaSession(sessionUrl, 'cleanup', options)
 }

@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FC } from 'react'
 import { Maximize2, Search, Ban, Trash2, ListX, RotateCcw } from 'lucide-react'
@@ -11,7 +12,7 @@ import type { DanmakuItem } from '@/modules/danmaku/types'
 import { useRoomStore } from '@/store/roomStore'
 import { cn, formatDuration } from '@/lib/utils'
 
-const WINDOW_SIZE = 5 // 秒，用于当前时间高亮范围
+const WINDOW_SIZE = 5 // 秒，用于Current时间高亮范围
 const AUTO_SCROLL_RESUME_MS = 2000
 
 // 紧凑列表单项估算高度（px），包含 flex gap 的等效值。
@@ -38,10 +39,10 @@ function getDanmakuTypeLabel(
   mode: number,
   color: number
 ): { label: string; variant: 'default' | 'primary' | 'warning' | 'success' } {
-  if (mode === 5) return { label: '顶部', variant: 'primary' }
-  if (mode === 4) return { label: '底部', variant: 'primary' }
-  if (color !== 16777215) return { label: '彩色', variant: 'warning' }
-  return { label: '滚动', variant: 'default' }
+  if (mode === 5) return { label: t('Top'), variant: 'primary' }
+  if (mode === 4) return { label: t('Bottom'), variant: 'primary' }
+  if (color !== 16777215) return { label: t('Colored'), variant: 'warning' }
+  return { label: t('Scrolling'), variant: 'default' }
 }
 
 /**
@@ -62,6 +63,8 @@ const DanmakuListItem: FC<{
   onDelete,
   expanded = false,
 }) {
+  useTranslation()
+
   const type = getDanmakuTypeLabel(item.mode, item.color)
   return (
     <div
@@ -133,7 +136,7 @@ const DanmakuListItem: FC<{
             ? 'text-[var(--md-sys-color-primary)]'
             : 'text-[var(--md-sys-color-on-surface-variant)]'
         )}
-        title={isBlocked ? '取消屏蔽' : '屏蔽该内容'}
+        title={isBlocked ? t('Unblock') : t('Block this content')}
         onClick={() => onBlock(item.content)}
       >
         <Ban size={11} />
@@ -141,7 +144,7 @@ const DanmakuListItem: FC<{
       <button
         type="button"
         className="shrink-0 rounded p-0.5 text-[var(--md-sys-color-on-surface-variant)] transition-colors hover:bg-white/10 hover:text-red-400"
-        title="删除该弹幕（本地生效）"
+        title={t('Hide this comment locally')}
         onClick={() => onDelete(item.trackId, item.itemId)}
       >
         <Trash2 size={11} />
@@ -170,6 +173,8 @@ function useVirtualList(
   listRef: React.RefObject<HTMLDivElement | null>,
   overscan = OVERSCAN
 ) {
+  useTranslation()
+
   const [listHeight, setListHeight] = useState(320)
   const [scrollTop, setScrollTop] = useState(0)
 
@@ -210,6 +215,8 @@ function useVirtualList(
 }
 
 export function RealtimeDanmakuCard() {
+  useTranslation()
+
   const tracks = useDanmakuStore((state) => state.tracks)
   const blockKeywords = useDanmakuStore((state) => state.blockKeywords)
   const addBlockKeyword = useDanmakuStore((state) => state.addBlockKeyword)
@@ -373,10 +380,10 @@ export function RealtimeDanmakuCard() {
     (content: string) => {
       if (blockKeywords.includes(content)) {
         void removeBlockKeyword(content)
-        message.info('已取消屏蔽该内容')
+        message.info(t('Content unblocked.'))
       } else {
         void addBlockKeyword(content)
-        message.success('已屏蔽该内容关键词')
+        message.success(t('Content keyword blocked.'))
       }
       triggerDanmakuRefresh()
     },
@@ -392,7 +399,7 @@ export function RealtimeDanmakuCard() {
       }
       // removeTrackItem 内部会自动触发 refreshSignal，播放器弹幕层会立即清屏重载
       removeTrackItem(trackId, itemId)
-      message.success('已删除该弹幕（本地生效）')
+      message.success(t('Comment hidden locally.'))
     },
     [tracks, addDeletedLog, removeTrackItem]
   )
@@ -402,7 +409,7 @@ export function RealtimeDanmakuCard() {
       // restoreTrackItem 内部会自动触发 refreshSignal
       restoreTrackItem(trackId, item)
       void removeDeletedLog(trackId, item.id)
-      message.success('已恢复该弹幕')
+      message.success(t('Comment restored.'))
     },
     [restoreTrackItem, removeDeletedLog]
   )
@@ -416,7 +423,7 @@ export function RealtimeDanmakuCard() {
       style={minHeight ? { minHeight } : undefined}
     >
       <Text type="secondary" className="text-xs">
-        暂无弹幕
+        {t('No comments yet.')}
       </Text>
     </div>
   )
@@ -424,16 +431,18 @@ export function RealtimeDanmakuCard() {
   return (
     <div className="glass flex h-full min-h-0 min-w-0 flex-col gap-2 rounded-[var(--md-sys-shape-corner)] p-2">
       <div className="flex shrink-0 items-center justify-between gap-2">
-        <Text className="text-xs font-medium">实时弹幕</Text>
+        <Text className="text-xs font-medium">{t('On-screen comments')}</Text>
         <div className="flex items-center gap-2">
           <Text
             type="secondary"
             className="shrink-0 truncate text-[10px]"
-            title={`全部弹幕（高亮当前 ±${WINDOW_SIZE}s）`}
+            title={t('All comments (highlight within ±{value1}s）', {
+              value1: WINDOW_SIZE,
+            })}
           >
             {allDanmaku.length > 0
-              ? `${allDanmaku.length} 条`
-              : `高亮 ±${WINDOW_SIZE}s`}
+              ? t('{value1}  comments', { value1: allDanmaku.length })
+              : t('Highlight ±{value1}s', { value1: WINDOW_SIZE })}
           </Text>
           {allDanmaku.length > 0 && (
             <Button
@@ -446,7 +455,7 @@ export function RealtimeDanmakuCard() {
                 setManageModalOpen(true)
               }}
             >
-              管理
+              {t('Manage')}
             </Button>
           )}
           {allDanmaku.length > 0 && (
@@ -457,7 +466,7 @@ export function RealtimeDanmakuCard() {
               icon={<Maximize2 className="h-3 w-3" />}
               onClick={() => setModalOpen(true)}
             >
-              查看全部
+              {t('View all')}
             </Button>
           )}
         </div>
@@ -502,7 +511,8 @@ export function RealtimeDanmakuCard() {
       {blockKeywords.length > 0 && (
         <div className="flex min-h-0 max-h-[80px] shrink-0 flex-col border-t border-white/10 px-1 pt-2">
           <div className="mb-1 text-[10px] text-white/40">
-            已屏蔽关键词 ({blockKeywords.length})
+            {t('Blocked keywords (')}
+            {blockKeywords.length})
           </div>
           <div className="flex flex-wrap gap-1 overflow-y-auto">
             {blockKeywords.slice(0, 10).map((kw) => (
@@ -510,7 +520,7 @@ export function RealtimeDanmakuCard() {
                 key={kw}
                 type="button"
                 className="max-w-full truncate rounded-full border border-white/15 bg-white/5 px-2 py-0.5 text-[10px] text-white/70 transition-colors hover:bg-white/10"
-                title={`点击取消屏蔽：${kw}`}
+                title={t('Select to unblock: {value1}', { value1: kw })}
                 onClick={() => {
                   void removeBlockKeyword(kw)
                   triggerDanmakuRefresh()
@@ -534,7 +544,9 @@ export function RealtimeDanmakuCard() {
           setModalOpen(false)
           setSearchQuery('')
         }}
-        title={`实时弹幕 (${allDanmaku.length} 条)`}
+        title={t('On-screen comments ({value1}  comments)', {
+          value1: allDanmaku.length,
+        })}
         className="max-w-2xl"
       >
         <div className="flex flex-col gap-2">
@@ -543,7 +555,7 @@ export function RealtimeDanmakuCard() {
             <Input
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="搜索弹幕内容、轨道或时间 (如 01:23)"
+              placeholder={t('Search comments, tracks or time (01:23)')}
               className="pl-8"
             />
           </div>
@@ -560,7 +572,9 @@ export function RealtimeDanmakuCard() {
             {filteredDanmaku.length === 0 ? (
               <div className="flex h-32 items-center justify-center">
                 <Text type="secondary" className="text-xs">
-                  {searchQuery ? '未找到匹配弹幕' : '暂无弹幕'}
+                  {searchQuery
+                    ? t('No matching comments.')
+                    : t('No comments yet.')}
                 </Text>
               </div>
             ) : (
@@ -591,7 +605,7 @@ export function RealtimeDanmakuCard() {
 
           {searchQuery && (
             <Text type="secondary" className="text-[10px]">
-              找到 {filteredDanmaku.length} 条匹配弹幕
+              {t('Found')} {filteredDanmaku.length} {t('matching comments')}
             </Text>
           )}
         </div>
@@ -600,7 +614,7 @@ export function RealtimeDanmakuCard() {
       <Modal
         open={manageModalOpen}
         onClose={() => setManageModalOpen(false)}
-        title="弹幕管理"
+        title={t('Manage live comments')}
         className="max-w-lg"
       >
         <div className="flex flex-col gap-3">
@@ -618,7 +632,8 @@ export function RealtimeDanmakuCard() {
               )}
               onClick={() => setManageTab('blocked')}
             >
-              已屏蔽 ({blockKeywords.length})
+              {t('Blocked (')}
+              {blockKeywords.length})
             </button>
             <button
               type="button"
@@ -630,7 +645,8 @@ export function RealtimeDanmakuCard() {
               )}
               onClick={() => setManageTab('deleted')}
             >
-              已删除 ({deletedLog.length})
+              {t('Removed (')}
+              {deletedLog.length})
             </button>
           </div>
 
@@ -642,7 +658,7 @@ export function RealtimeDanmakuCard() {
               {blockKeywords.length === 0 ? (
                 <div className="flex h-24 items-center justify-center">
                   <Text type="secondary" className="text-xs">
-                    暂无屏蔽关键词
+                    {t('No blocked keywords.')}
                   </Text>
                 </div>
               ) : (
@@ -667,13 +683,13 @@ export function RealtimeDanmakuCard() {
                     <button
                       type="button"
                       className="shrink-0 rounded p-1 text-[10px] text-[var(--md-sys-color-on-surface-variant)] transition-colors hover:bg-white/10 hover:text-red-400"
-                      title="取消屏蔽"
+                      title={t('Unblock')}
                       onClick={() => {
                         void removeBlockKeyword(kw)
                         triggerDanmakuRefresh()
                       }}
                     >
-                      取消
+                      {t('Cancel')}
                     </button>
                   </div>
                 ))
@@ -689,7 +705,7 @@ export function RealtimeDanmakuCard() {
               {deletedLog.length === 0 ? (
                 <div className="flex h-24 items-center justify-center">
                   <Text type="secondary" className="text-xs">
-                    暂无已删除弹幕
+                    {t('No hidden comments.')}
                   </Text>
                 </div>
               ) : (
@@ -716,11 +732,11 @@ export function RealtimeDanmakuCard() {
                       <button
                         type="button"
                         className="flex shrink-0 items-center gap-1 rounded p-1 text-[10px] text-[var(--md-sys-color-on-surface-variant)] transition-colors hover:bg-white/10 hover:text-green-400"
-                        title="恢复该弹幕"
+                        title={t('Restore comment')}
                         onClick={() => handleRestore(entry.trackId, entry.item)}
                       >
                         <RotateCcw size={12} />
-                        恢复
+                        {t('Restore')}
                       </button>
                     </div>
                   ))}
@@ -730,10 +746,10 @@ export function RealtimeDanmakuCard() {
                     className="mt-1 h-7 w-full text-[10px] text-red-400 hover:bg-red-400/10"
                     onClick={() => {
                       void clearDeletedLog()
-                      message.success('已清空删除记录')
+                      message.success(t('Hidden comment history cleared.'))
                     }}
                   >
-                    清空删除记录
+                    {t('Clear hidden history')}
                   </Button>
                 </>
               )}

@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import { Text, Paragraph } from '@/components/ui/Typography'
 import { Tag } from '@/components/ui/Tag'
 import { IconButton } from '@/components/VideoControls'
@@ -17,9 +18,9 @@ import {
 } from 'lucide-react'
 
 interface WatchControlsBarProps {
-  /** 是否静音 */
+  /** 是否Mute */
   isMuted: boolean
-  /** 是否正在播放 */
+  /** 是否正在Play */
   isPlaying: boolean
   /** 是否有远端音频 */
   hasRemoteAudio: boolean
@@ -27,34 +28,34 @@ interface WatchControlsBarProps {
   hasRemoteStream: boolean
   /** 是否处于画中画 */
   isPictureInPicture: boolean
-  /** 浏览器是否支持画中画 */
+  /** Browse器是否支持画中画 */
   isPiPSupported: boolean
-  /** 是否显示批注工具栏 */
+  /** 是否显示Annotation tools栏 */
   showAnnotationToolbar: boolean
-  /** socket 是否已连接 */
+  /** socket 是否Connected */
   connected: boolean
-  /** WebRTC 连接状态 */
+  /** WebRTC connections状态 */
   connectionState:
     'new' | 'connecting' | 'connected' | 'disconnected' | 'failed' | 'closed'
-  /** 视频分辨率（可选） */
+  /** 视频Resolution（Optional） */
   videoResolution: { width: number; height: number } | null
-  /** 切换静音 */
+  /** 切换Mute */
   onToggleMute: () => void
-  /** 播放 / 暂停 */
+  /** Play / Pause */
   onTogglePlayPause: () => void
-  /** 全屏 */
+  /** Fullscreen */
   onFullscreen: () => void
   /** 切换画中画 */
   onTogglePiP: () => void
-  /** 切换批注工具栏 */
+  /** 切换Annotation tools栏 */
   onToggleAnnotation: () => void
-  /** 刷新连接 */
+  /** Refresh connection */
   onRefresh: () => void
-  /** 控制栏是否可见（自动隐藏），默认 true */
+  /** 控制栏是否可见（自动隐藏），Default true */
   controlBarVisible?: boolean
-  /** 是否处于网页全屏 */
+  /** 是否处于Cinema mode */
   isWebFullscreen?: boolean
-  /** 切换网页全屏 */
+  /** 切换Cinema mode */
   onToggleWebFullscreen?: () => void
 }
 
@@ -63,17 +64,17 @@ function getConnectionStateText(
 ): string {
   switch (state) {
     case 'connecting':
-      return '连接中'
+      return t('Connecting')
     case 'connected':
-      return '已连接'
+      return t('Connected')
     case 'disconnected':
-      return '已断开'
+      return t('Disconnected')
     case 'failed':
-      return '连接失败'
+      return t('Connection failed')
     case 'closed':
-      return '连接已关闭'
+      return t('Connection closed')
     default:
-      return '等待连接'
+      return t('Waiting')
   }
 }
 
@@ -115,6 +116,8 @@ export function WatchControlsBar({
   isWebFullscreen = false,
   onToggleWebFullscreen,
 }: WatchControlsBarProps): JSX.Element {
+  useTranslation()
+
   return (
     <div
       className={cn(
@@ -129,25 +132,29 @@ export function WatchControlsBar({
         )}
       >
         <div className="flex flex-wrap items-center vc-gap">
-          {/* 播放 / 暂停 */}
+          {/* Play / Pause */}
           <IconButton
             icon={isPlaying ? <Pause /> : <Play />}
-            label={isPlaying ? '暂停' : '播放'}
+            label={isPlaying ? t('Pause') : t('Play')}
             onClick={onTogglePlayPause}
           />
           {hasRemoteAudio && (
             <IconButton
               icon={isMuted ? <VolumeX /> : <Volume2 />}
-              label={isMuted ? '取消静音' : '静音'}
+              label={isMuted ? t('Unmute') : t('Mute')}
               onClick={onToggleMute}
             />
           )}
           <IconButton
             icon={isWebFullscreen ? <Minimize /> : <Maximize />}
-            label={isWebFullscreen ? '退出网页全屏' : '网页全屏'}
+            label={isWebFullscreen ? t('Exit cinema mode') : t('Cinema mode')}
             onClick={onToggleWebFullscreen}
           />
-          <IconButton icon={<Maximize />} label="全屏" onClick={onFullscreen} />
+          <IconButton
+            icon={<Maximize />}
+            label={t('Fullscreen')}
+            onClick={onFullscreen}
+          />
           {isPiPSupported && (
             <IconButton
               icon={
@@ -157,38 +164,45 @@ export function WatchControlsBar({
                   <PictureInPicture />
                 )
               }
-              label={isPictureInPicture ? '退出画中画' : '画中画'}
+              label={
+                isPictureInPicture
+                  ? t('Exit picture-in-picture')
+                  : t('Picture-in-picture')
+              }
               onClick={onTogglePiP}
             />
           )}
           <IconButton
             icon={showAnnotationToolbar ? <X /> : <Pencil />}
-            label={showAnnotationToolbar ? '关闭批注' : '批注'}
+            label={
+              showAnnotationToolbar ? t('Hide annotations') : t('Annotations')
+            }
             active={showAnnotationToolbar}
             onClick={onToggleAnnotation}
           />
           <IconButton
             icon={<RefreshCw />}
-            label="刷新连接"
+            label={t('Refresh connection')}
             onClick={onRefresh}
           />
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <Tag color={connected ? 'success' : 'default'}>
-            {connected ? '已连接' : '未连接'}
+            {connected ? t('Connected') : t('Disconnected')}
           </Tag>
-          <Tag color="primary">已加入</Tag>
+          <Tag color="primary">{t('Joined')}</Tag>
           <Tag color={getConnectionStateColor(connectionState)}>
             {getConnectionStateText(connectionState)}
           </Tag>
           {hasRemoteStream && hasRemoteAudio && (
-            <Tag color="cyan">{isMuted ? '静音中' : '音频开启'}</Tag>
+            <Tag color="cyan">{isMuted ? t('Muted') : t('Audio on')}</Tag>
           )}
         </div>
         {videoResolution && (
           <Paragraph className="m-0 mt-2">
             <Text type="secondary">
-              分辨率：{videoResolution.width} x {videoResolution.height}
+              {t('Resolution：')}
+              {videoResolution.width} x {videoResolution.height}
             </Text>
           </Paragraph>
         )}

@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 /**
  * 视频源管理 Hook（v2 重写）：负责将 WatchTogetherState 中的视频源应用到
  * <video> 元素，包括 MSE DASH 合并、音频同步、以及组件挂载时的源恢复。
@@ -156,7 +157,9 @@ function toPlayerSource(
   const source: PlayerSource = {
     url: stripMediaGatewayAuth(state.sourceUrl),
     sourceGeneration: state.sourceGeneration,
-    audioUrl: state.audioUrl ? stripMediaGatewayAuth(state.audioUrl) : state.audioUrl,
+    audioUrl: state.audioUrl
+      ? stripMediaGatewayAuth(state.audioUrl)
+      : state.audioUrl,
     format: state.format,
     videoCodec: state.videoCodec,
     audioCodec: state.audioCodec,
@@ -268,6 +271,8 @@ export function useVideoSource({
   watchTogether,
   isHostRef,
 }: UseVideoSourceOptions): UseVideoSourceReturn {
+  useTranslation()
+
   const { attachSource, cleanup, seekTo, forceReload } = usePlayerSource({
     videoRef,
   })
@@ -388,7 +393,13 @@ export function useVideoSource({
         console.error('[useVideoSource] 恢复视频源失败:', redactMediaError(err))
         suppressEventsRef.current = false
         // 向用户展示错误（如不支持的视频格式），避免黑屏无反馈
-        message.error(err instanceof Error ? err.message : '视频源加载失败')
+        message.error(
+          err instanceof Error
+            ? err.message
+            : t(
+                'Unable to load this video source. Check the source and try again.'
+              )
+        )
       })
   }, [
     watchTogether.sourceUrl,
@@ -419,7 +430,11 @@ export function useVideoSource({
         await restoreSnapshot(video, snapshot)
       } catch (err) {
         console.error('[useVideoSource] 重载视频源失败:', redactMediaError(err))
-        message.error(err instanceof Error ? err.message : '视频重载失败')
+        message.error(
+          err instanceof Error
+            ? err.message
+            : t('Unable to reload this video. Check the source and try again.')
+        )
       } finally {
         suppressEventsRef.current = false
         useRoomStore.getState().setReloadingState(false, null)

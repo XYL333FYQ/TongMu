@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   File,
@@ -32,6 +33,8 @@ interface MountBrowserBaseProps<T extends DirectoryEntry> {
 }
 
 function EntrySkeleton() {
+  useTranslation()
+
   return (
     <div className="flex animate-pulse items-center gap-3 rounded-lg p-2.5">
       <div className="h-5 w-5 rounded bg-[var(--md-sys-color-surface-container-high)]" />
@@ -65,6 +68,8 @@ export default function MountBrowserBase<T extends DirectoryEntry>({
   onConfirm,
   browse,
 }: MountBrowserBaseProps<T>) {
+  useTranslation()
+
   const [currentPath, setCurrentPath] = useState<string | undefined>(undefined)
   const [entries, setEntries] = useState<T[]>([])
   const [parentEntries, setParentEntries] = useState<T[]>([])
@@ -95,7 +100,8 @@ export default function MountBrowserBase<T extends DirectoryEntry>({
           setParentEntries([])
         }
       } catch (err) {
-        const msg = err instanceof Error ? err.message : '加载失败'
+        const msg =
+          err instanceof Error ? err.message : 'Could not load this content.'
         setError(msg)
       } finally {
         setLoading(false)
@@ -220,9 +226,9 @@ export default function MountBrowserBase<T extends DirectoryEntry>({
   }
 
   const breadcrumb = useMemo(() => {
-    if (!currentPath) return [{ name: '根目录', path: undefined }]
+    if (!currentPath) return [{ name: 'Root folder', path: undefined }]
     const parts = currentPath.replace(/\/$/, '').split('/').filter(Boolean)
-    const items = [{ name: '根目录', path: undefined }]
+    const items = [{ name: 'Root folder', path: undefined }]
     let acc = ''
     for (const part of parts) {
       acc = acc ? `${acc}/${part}` : part
@@ -272,12 +278,12 @@ export default function MountBrowserBase<T extends DirectoryEntry>({
             )}
           >
             {multiSelectMode
-              ? `已选择 ${selectedFiles.length} 个文件`
-              : '多选模式可批量添加'}
+              ? t('Selected  {value1}  files', { value1: selectedFiles.length })
+              : t('Select multiple items to add them together.')}
           </Text>
           <div className="flex items-center gap-3">
             <Button variant="secondary" size="md" onClick={onClose}>
-              取消
+              {t('Cancel')}
             </Button>
             <Button
               variant="primary"
@@ -291,8 +297,8 @@ export default function MountBrowserBase<T extends DirectoryEntry>({
               disabled={selectedFiles.length === 0}
             >
               {multiSelectMode
-                ? `添加 (${selectedFiles.length})`
-                : '添加当前文件'}
+                ? t('Add ({value1})', { value1: selectedFiles.length })
+                : t('Add current file')}
             </Button>
           </div>
         </div>
@@ -302,14 +308,14 @@ export default function MountBrowserBase<T extends DirectoryEntry>({
         {error ? (
           <div className="flex flex-col items-center gap-3 py-8">
             <Text className="text-base text-[var(--md-sys-color-error)]">
-              {error}
+              {t(error)}
             </Text>
             <Button
               variant="secondary"
               size="md"
               onClick={() => void load(currentPath)}
             >
-              重试
+              {t('Try again')}
             </Button>
           </div>
         ) : loading && entries.length === 0 ? (
@@ -344,15 +350,15 @@ export default function MountBrowserBase<T extends DirectoryEntry>({
                   })
                 }}
               >
-                {multiSelectMode ? '退出多选' : '多选'}
+                {multiSelectMode ? t('Stop selection') : t('Select multiple')}
               </Button>
             </div>
 
             <div className="grid h-[420px] grid-cols-1 gap-4 overflow-hidden rounded-2xl border border-[var(--md-sys-color-outline-variant)] backdrop-blur-sm md:grid-cols-2">
-              {/* 左侧：上级目录（小屏单栏时隐藏，导航由面包屑承担） */}
+              {/* 左侧：Parent folder（小屏单栏时隐藏，导航由面包屑承担） */}
               <div className="hidden min-h-0 flex-col border-r border-[var(--md-sys-color-outline-variant)] bg-[var(--md-sys-color-surface-container-low)]/60 md:flex">
                 <div className="shrink-0 border-b border-[var(--md-sys-color-outline-variant)] px-4 py-3 text-sm font-semibold uppercase tracking-wide text-[var(--md-sys-color-on-surface-variant)]">
-                  上级目录
+                  {t('Parent folder')}
                 </div>
                 <div className="zen-scroll min-h-0 flex-1 overflow-y-auto p-3">
                   {currentPath ? (
@@ -364,28 +370,28 @@ export default function MountBrowserBase<T extends DirectoryEntry>({
                       )
                     ) : (
                       <Text className="py-8 text-center text-sm text-[var(--md-sys-color-on-surface-variant)]">
-                        上级目录为空
+                        {t('The parent folder is empty.')}
                       </Text>
                     )
                   ) : (
                     <Text className="py-8 text-center text-sm text-[var(--md-sys-color-on-surface-variant)]">
-                      已在根目录
+                      {t('You are at the root folder.')}
                     </Text>
                   )}
                 </div>
               </div>
 
-              {/* 右侧：当前目录 */}
+              {/* 右侧：Current folder */}
               <div className="flex min-h-0 flex-col bg-[var(--md-sys-color-surface)]/80">
                 <div className="shrink-0 border-b border-[var(--md-sys-color-outline-variant)] px-4 py-3 text-sm font-semibold uppercase tracking-wide text-[var(--md-sys-color-on-surface-variant)]">
-                  {currentPath ? getEntryName(currentPath) : '根目录'}
+                  {currentPath ? getEntryName(currentPath) : t('Root folder')}
                 </div>
                 <div className="zen-scroll min-h-0 flex-1 overflow-y-auto p-3">
                   {entries.length > 0 ? (
                     entries.map((entry) => renderEntry(entry, 'right'))
                   ) : (
                     <Text className="py-8 text-center text-sm text-[var(--md-sys-color-on-surface-variant)]">
-                      当前目录为空
+                      {t('This folder is empty.')}
                     </Text>
                   )}
                 </div>
@@ -394,7 +400,7 @@ export default function MountBrowserBase<T extends DirectoryEntry>({
 
             {loading && entries.length > 0 && (
               <div className="absolute inset-0 flex items-center justify-center rounded-2xl bg-[var(--md-sys-color-surface)]/40 backdrop-blur-md">
-                <Spinner tip="加载中..." size={28} />
+                <Spinner tip={t('Loading…')} size={28} />
               </div>
             )}
           </>

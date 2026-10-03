@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 /**
  * Jellyfin 浏览器（复用 EmbyBrowser 的双列 itemId 树形浏览逻辑）
  *
@@ -22,6 +23,8 @@ export default function JellyfinBrowser({
   onSelectFiles,
   selectable = false,
 }: JellyfinBrowserProps) {
+  useTranslation()
+
   return (
     <EmbyBrowser
       mountId={mountId}
@@ -35,7 +38,7 @@ export default function JellyfinBrowser({
           path?: string
         ) => Promise<EmbyDirectoryEntry[]>
       }
-      title="浏览 Jellyfin 媒体库"
+      title={t('Browse Jellyfin')}
     />
   )
 }

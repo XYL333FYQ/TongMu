@@ -29,6 +29,7 @@ import { EncryptLegacyCredentials1790500000000 } from './migrations/179050000000
 import { EncryptMoviePasswords1790600000000 } from './migrations/1790600000000-EncryptMoviePasswords';
 import { ProtectMovieUrls1790700000000 } from './migrations/1790700000000-ProtectMovieUrls';
 import { AddMovieCreateRequests1790800000000 } from './migrations/1790800000000-AddMovieCreateRequests';
+import { AddRoomExperience1790900000000 } from './migrations/1790900000000-AddRoomExperience';
 
 function persistSqlJsDatabase(database: Uint8Array): void {
   // sql.js invokes this after each committed write. Keep the callback
@@ -71,6 +72,7 @@ export const AppDataSource = new DataSource({
     EncryptMoviePasswords1790600000000,
     ProtectMovieUrls1790700000000,
     AddMovieCreateRequests1790800000000,
+    AddRoomExperience1790900000000,
   ],
   subscribers: [],
 });

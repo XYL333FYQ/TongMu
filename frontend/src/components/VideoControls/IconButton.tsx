@@ -11,7 +11,7 @@ export interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement>
   active?: boolean
   /** 视觉变体：ghost 透明底、tonal 半透明底、primary 主色底 */
   variant?: 'ghost' | 'tonal' | 'primary'
-  /** 尺寸：默认 md，紧凑场景用 sm */
+  /** 尺寸：Default md，紧凑场景用 sm */
   size?: 'sm' | 'md'
 }
 

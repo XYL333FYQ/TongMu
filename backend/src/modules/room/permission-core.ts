@@ -1,4 +1,5 @@
 import type { UserRole } from '../../entities/User';
+import { ACTIVITY_CONTROL_ACTIONS, collaborationAllows, type RoomPolicy } from './room-policy';
 
 export type RoomPermissionAction =
   | 'playback.play'
@@ -16,6 +17,11 @@ export type RoomPermissionAction =
   | 'moderator.manage'
   | 'host.transfer'
   | 'room.settings'
+  | 'activity.switch'
+  | 'activity.request'
+  | 'activity.vote'
+  | 'content.suggest'
+  | 'screen.start'
   | 'music.queue.add'
   | 'music.queue.remove'
   | 'music.queue.reorder'
@@ -39,6 +45,8 @@ export interface RoomRoleFacts {
   userId: number | null;
   isHost: boolean;
   isRoomMember: boolean;
+  isDelegate?: boolean;
+  policy?: RoomPolicy;
 }
 
 export interface PermissionTargetFacts {
@@ -94,6 +102,18 @@ export function canPerformRoomAction(
   if (!facts.isRoomMember) return { allowed: false, reason: '不在该房间中' };
   if (target?.role === 'system') return { allowed: false, reason: '不能对系统管理员操作' };
   if (target?.isSelf && action !== 'room.settings') return { allowed: false, reason: '不能对自己执行此操作' };
+
+  if (action === 'activity.request' || action === 'activity.vote' || action === 'content.suggest') return { allowed: true };
+  if (facts.isDelegate) {
+    if (ACTIVITY_CONTROL_ACTIONS.has(action) || action === 'activity.switch' || action === 'screen.start' || action === 'music.heartbeat' || action === 'music.track.ended') return { allowed: true };
+    // Temporary hosting does not inherit platform administration or ownership.
+    return { allowed: false, reason: '代理仅可控制当前活动' };
+  }
+  if (facts.policy && collaborationAllows(facts.policy, action, facts.actorRole === 'guest')) return { allowed: true };
+  if (action === 'activity.switch' || action === 'screen.start') {
+    return facts.actorRole === 'owner' || facts.actorRole === 'system'
+      ? { allowed: true } : { allowed: false, reason: '请向房主请求切换活动' };
+  }
 
   if (facts.actorRole === 'guest') return { allowed: false, reason: '游客无此权限' };
   if (action === 'music.control.request') {

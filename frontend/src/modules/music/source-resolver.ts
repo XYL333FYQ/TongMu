@@ -1,5 +1,7 @@
+import { t } from '@/i18n'
 import { getApiUrl } from '@/lib/api'
 import { apiPost } from '@/lib/api'
+import { englishErrorMessage } from '@/lib/errorMessage'
 import {
   appendMusicPlaybackGrant,
   getRoomMediaGrant,
@@ -118,7 +120,7 @@ export async function resolveMusicSourceDetailed(
     return {
       url: null,
       code: 'MUSIC_INVALID_REQUEST',
-      message: '当前音乐来源无法解析',
+      message: t('This music source could not be opened.'),
     }
   }
   const roomGrant = getRoomMediaGrant(context.roomId)
@@ -126,7 +128,7 @@ export async function resolveMusicSourceDetailed(
     return {
       url: null,
       code: 'MUSIC_ROOM_FORBIDDEN',
-      message: '当前房间授权已失效',
+      message: t('Room access has expired. Return to the room to reconnect.'),
     }
   }
   const quality =
@@ -148,7 +150,12 @@ export async function resolveMusicSourceDetailed(
       return {
         url: null,
         code: data?.code || 'NCM_UPSTREAM_ERROR',
-        message: data?.message || '网易云音乐解析失败',
+        message: englishErrorMessage(
+          data?.message,
+          t(
+            'NetEase Music could not open this track. Check your connection and account access.'
+          )
+        ),
         ...facts,
       }
     }
@@ -165,7 +172,9 @@ export async function resolveMusicSourceDetailed(
     return {
       url: null,
       code: 'NCM_UPSTREAM_ERROR',
-      message: '网易云音乐解析失败',
+      message: t(
+        'NetEase Music could not open this track. Check your connection and account access.'
+      ),
     }
   }
 }

@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 /**
  * RemoteVideoPlayer —— WebRTC 远程流播放组件（ArtPlayer 版）。
  *
@@ -13,11 +14,11 @@ import { Spinner } from '@/components/ui/Spinner'
 import { LiveArtPlayer } from '@/modules/art-player'
 
 interface RemoteVideoPlayerProps {
-  /** video 元素 ref（由调用方通过 useRef 创建并传入） */
+  /** video 元素 ref（由调用方通过 useRef Create并传入） */
   videoRef: RefObject<HTMLVideoElement | null>
-  /** 设置 video 元素 ref 的回调（来自调用方的 setVideoRef） */
+  /** Settings video 元素 ref 的回调（来自调用方的 setVideoRef） */
   setVideoRef: (node: HTMLVideoElement | null) => void
-  /** 是否静音 */
+  /** 是否Mute */
   isMuted: boolean
   /** 是否已收到远端视频流 */
   hasRemoteStream: boolean
@@ -31,6 +32,8 @@ export function RemoteVideoPlayer({
   hasRemoteStream,
   peerConnection,
 }: RemoteVideoPlayerProps): JSX.Element {
+  useTranslation()
+
   // 用 state 跟踪 video 元素，避免在 render 中读取 ref.current
   const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null)
   const handleVideoReady = useCallback(
@@ -51,7 +54,7 @@ export function RemoteVideoPlayer({
       />
       {!hasRemoteStream && (
         <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-black/80">
-          <Spinner tip="正在接收画面..." size={32} />
+          <Spinner tip={t('Receiving screen…')} size={32} />
         </div>
       )}
     </div>

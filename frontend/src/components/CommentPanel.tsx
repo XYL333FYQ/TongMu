@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import { useEffect, useRef, useState } from 'react'
 import { Send, MessageSquareQuote, MessagesSquare } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
@@ -8,7 +9,6 @@ import { Text } from '@/components/ui/Typography'
 import { Avatar } from '@/components/ui/Avatar'
 import { message } from '@/components/ui/message'
 import { SegmentedToggle } from '@/components/ui/SegmentedToggle'
-import { useAuthStore } from '@/store/authStore'
 import { useRoomStore } from '@/store/roomStore'
 import { cn, formatIsoTime } from '@/lib/utils'
 import type { Socket } from 'socket.io-client'
@@ -54,7 +54,8 @@ export function CommentPanel({
   roomId,
   commentsOnly = false,
 }: CommentPanelProps) {
-  const currentUser = useAuthStore((state) => state.user)
+  useTranslation()
+
   // 读取 watch-together 模式下的当前播放进度，用于 send-danmaku 持久化实时弹幕记录
   // screen-share 模式下 currentTime 始终为 0，无影响
   const videoCurrentTime = useRoomStore(
@@ -131,7 +132,7 @@ export function CommentPanel({
     if (!socket || !roomId) return
     const content = input.trim()
     if (!content) {
-      message.warning('请输入评论内容')
+      message.warning(t('Write a message first.'))
       return
     }
 
@@ -142,7 +143,7 @@ export function CommentPanel({
       (response: SendCommentResponse) => {
         if (!response.success) {
           setSending(false)
-          message.error(response.message ?? '发送失败')
+          message.error(response.message ?? t('Could not send the message.'))
           return
         }
 
@@ -155,7 +156,10 @@ export function CommentPanel({
               if (danmakuResponse.success) {
                 setInput('')
               } else {
-                message.error(danmakuResponse.message ?? '弹幕发送失败')
+                message.error(
+                  danmakuResponse.message ??
+                    t('Could not send the on-screen comment.')
+                )
               }
             }
           )
@@ -173,10 +177,11 @@ export function CommentPanel({
     <div className="glass-card flex min-h-0 flex-1 flex-col gap-3 overflow-hidden rounded-[var(--md-sys-shape-corner)] p-4">
       {!commentsOnly && (
         <SegmentedToggle
+          className="[&_button]:flex-auto [&_button]:whitespace-nowrap [&_button]:px-2"
           options={[
-            { value: 'comments', label: '评论区' },
-            { value: 'tracks', label: '弹幕轨道' },
-            { value: 'realtime', label: '实时弹幕' },
+            { value: 'comments', label: t('Messages') },
+            { value: 'tracks', label: t('Tracks') },
+            { value: 'realtime', label: t('Live comments') },
           ]}
           value={rightPanelTab}
           onChange={(v) => setRightPanelTab(v as typeof rightPanelTab)}
@@ -204,7 +209,7 @@ export function CommentPanel({
                       }}
                     />
                     <Text type="secondary" className="text-center text-xs">
-                      暂无评论，快来第一条吧
+                      {t('Say hello to everyone in the room.')}
                     </Text>
                   </div>
                 )}
@@ -251,7 +256,7 @@ export function CommentPanel({
                                 }}
                               >
                                 <MessageSquareQuote className="h-2.5 w-2.5" />
-                                弹幕
+                                {t('On-screen comments')}
                               </span>
                             )}
                           </div>
@@ -281,7 +286,7 @@ export function CommentPanel({
                     handleSendComment()
                   }
                 }}
-                placeholder={`${currentUser?.username ?? ''} 说点什么…`}
+                placeholder={t('Message the room…')}
                 className="flex-1"
               />
               <Button
@@ -291,12 +296,12 @@ export function CommentPanel({
                 icon={<Send className="h-4 w-4" />}
                 onClick={handleSendComment}
               >
-                发送
+                {t('Send')}
               </Button>
             </Space>
             <div className="flex items-center">
               <Switch
-                label="以弹幕形式发送"
+                label={t('Also show on the video')}
                 checked={sendAsDanmaku}
                 onChange={(e) => setSendAsDanmaku(e.target.checked)}
               />

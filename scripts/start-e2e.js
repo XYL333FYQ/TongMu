@@ -35,6 +35,7 @@ const child = spawn(process.execPath, [
     JWT_ACCESS_EXPIRES_IN: process.env.TONGMU_REAL_MEDIA_SMOKE === 'true' ? '5m' : '2s',
     MEDIA_ROOM_GRANT_TTL_MS: process.env.TONGMU_REAL_MEDIA_SMOKE === 'true' ? '300000' : '2000',
     VITE_API_URL: 'http://127.0.0.1:3333',
+    VITE_MUSIC_FIXTURES: 'true',
   },
 });
 

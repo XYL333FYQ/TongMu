@@ -1,3 +1,4 @@
+import { t, useTranslation } from '@/i18n'
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { Play, Trash2, Film, Monitor, ListVideo, Maximize } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
@@ -9,7 +10,12 @@ import { ConfirmModal, Modal } from '@/components/ui/Modal'
 import { message } from '@/components/ui/message'
 import { useSocket } from '@/hooks/useSocket'
 import { useRoomStore, type Movie } from '@/store/roomStore'
-import { filterQualitiesByVip, getBilibiliUserInfo } from '@/modules/bilibili/bilibiliApi'
+import { useRoomExperienceStore } from '@/store/roomExperienceStore'
+import { roomErrorMessage } from '../roomErrors'
+import {
+  filterQualitiesByVip,
+  getBilibiliUserInfo,
+} from '@/modules/bilibili/bilibiliApi'
 import {
   resolveMediaInput,
   stripTransientMediaDescriptor,
@@ -35,21 +41,21 @@ interface MovieListPanelProps {
 }
 
 const SOURCE_LABELS: Record<string, string> = {
-  bilibili: '哔哩哔哩',
-  mp4: '视频直链',
+  bilibili: 'Bilibili',
+  mp4: 'Media link',
   webdav: 'WebDAV',
   ftp: 'FTP',
   openlist: 'OpenList',
   smb: 'SMB',
   emby: 'Emby',
   jellyfin: 'Jellyfin',
-  'server-files': '服务器文件',
-  url: '视频直链',
-  'web-page': '电影网页',
-  'browser-page': '浏览器解析',
-  live: '直播',
-  anime: '番剧',
-  anisubs: '番剧订阅',
+  'server-files': 'Server files',
+  url: 'Media link',
+  'web-page': 'Webpage',
+  'browser-page': 'Browser resolver',
+  live: 'Live',
+  anime: 'Anime',
+  anisubs: 'Anime subscriptions',
   kazumi: 'Kazumi',
 }
 
@@ -68,6 +74,8 @@ const FORMAT_LABELS: Record<string, string> = {
 }
 
 export function MovieListPanel({ isHost }: MovieListPanelProps) {
+  useTranslation()
+
   const { socket } = useSocket()
   const movies = useRoomStore((state) => state.movies)
   const currentMovieId = useRoomStore((state) => state.currentMovieId)
@@ -88,6 +96,12 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
     (state) => state.viewerCliResolvedSource
   )
   const mode = useRoomStore((state) => state.mode)
+  const experience = useRoomExperienceStore((state) => state.snapshot)
+  const canPlay = experience?.permissions.playback ?? isHost
+  const watchActive =
+    experience?.activity === 'watch' || (!experience && mode !== 'screen-share')
+  const [playingId, setPlayingId] = useState<number | null>(null)
+  const playInFlightRef = useRef(false)
   const [search, setSearch] = useState('')
   const [removingId, setRemovingId] = useState<number | null>(null)
   const [qualityLoadingId, setQualityLoadingId] = useState<number | null>(null)
@@ -124,37 +138,66 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
   }, [movies, search])
 
   const handlePlay = (movieId: number) => {
-    if (!isHost) {
-      message.info('只有房主可以切换影片')
+    if (!isHost || !canPlay || !watchActive || playInFlightRef.current) {
+      message.info(
+        !watchActive
+          ? t('Switch to Watch to play.')
+          : t('Playback permission is required.')
+      )
       return
     }
-    if (!socket) {
-      message.error('未连接房间')
+    if (!socket?.connected || !roomId) {
+      message.error(t('Reconnect to the room first.'))
       return
     }
-    socket.emit('play-movie', { roomId, movieId })
-    requestMoviePlay(movieId)
+    playInFlightRef.current = true
+    setPlayingId(movieId)
+    socket
+      .timeout(8000)
+      .emit(
+        'play-movie',
+        { roomId, movieId },
+        (
+          timeout: Error | null,
+          response?: { success: boolean; message?: string }
+        ) => {
+          playInFlightRef.current = false
+          setPlayingId(null)
+          if (useRoomStore.getState().roomId !== roomId) return
+          if (timeout || !response?.success) {
+            message.error(
+              timeout
+                ? t('Playback was not confirmed. Try again.')
+                : roomErrorMessage(response?.message)
+            )
+            return
+          }
+          requestMoviePlay(movieId)
+        }
+      )
   }
 
   const handleRemove = async (movieId: number): Promise<boolean> => {
     if (removeInFlightRef.current) return false
     if (!isHost) {
-      message.info('只有房主可以删除影片')
+      message.info(t('You do not have permission to remove content.'))
       return false
     }
     if (!roomId) {
-      message.error('未连接房间')
+      message.error(t('Reconnect to the room first.'))
       return false
     }
     removeInFlightRef.current = true
     setRemovingId(movieId)
     try {
       await removeMovie(roomId, movieId)
-      message.success('影片已删除')
+      message.success(t('Removed from the queue.'))
       return true
     } catch (err) {
       console.error('[MovieListPanel] remove movie error:', err)
-      message.error(err instanceof Error ? err.message : '删除影片失败')
+      message.error(
+        err instanceof Error ? err.message : t('Could not remove the video.')
+      )
       return false
     } finally {
       removeInFlightRef.current = false
@@ -172,7 +215,7 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
       const parsePrefs = getBilibiliParseOptions(movie.id)
       const proxyUrl = parsePrefs.cliEnabled ? getActiveCliProxyUrl() : null
       if (parsePrefs.cliEnabled && !proxyUrl) {
-        throw new Error('CLI 代理未连接，请先启动本地 zcontrol-cli')
+        throw new Error('Start your local CLI resolver.')
       }
       let resolved: ResolvedSource
       let mediaCore: ResolvedMedia | undefined
@@ -190,7 +233,9 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
             true
           )
         } else {
-          throw new Error('无法提取 BV 号或 cid，无法使用 CLI 代理')
+          throw new Error(
+            'The BV ID or content ID is missing. The CLI resolver cannot use this item.'
+          )
         }
       } else {
         mediaCore = await resolveMediaInput(movie.sourceInput || movie.url, {
@@ -206,7 +251,9 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
           ? {
               url: mediaCore.descriptor.finalUrl,
               sourceInput: movie.sourceInput || movie.url,
-              mediaDescriptor: stripTransientMediaDescriptor(mediaCore.descriptor),
+              mediaDescriptor: stripTransientMediaDescriptor(
+                mediaCore.descriptor
+              ),
             }
           : {}),
         audioUrl: resolved.audioUrl,
@@ -223,7 +270,9 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
       }
     } catch (err) {
       console.error('[MovieListPanel] change quality error:', err)
-      message.error(err instanceof Error ? err.message : '切换清晰度失败')
+      message.error(
+        err instanceof Error ? err.message : t('Could not change quality.')
+      )
     } finally {
       setQualityLoadingId(null)
     }
@@ -242,13 +291,13 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
 
     const proxyUrl = getActiveCliProxyUrl()
     if (!proxyUrl) {
-      message.error('CLI 代理未连接')
+      message.error(t('Local CLI resolver disconnected.'))
       return
     }
 
     const bvid = extractBvid(movie.url)
     if (!bvid || !movie.cid) {
-      message.error('无法解析该 B站 影片')
+      message.error(t('Could not resolve this Bilibili video.'))
       return
     }
 
@@ -268,7 +317,9 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
       }
     } catch (err) {
       console.error('[MovieListPanel] viewer change quality error:', err)
-      message.error(err instanceof Error ? err.message : 'CLI 切换清晰度失败')
+      message.error(
+        err instanceof Error ? err.message : t('Could not change CLI quality.')
+      )
     } finally {
       setQualityLoadingId(null)
     }
@@ -290,7 +341,7 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
       const parsePrefs = getBilibiliParseOptions(movie.id)
       const proxyUrl = parsePrefs.cliEnabled ? getActiveCliProxyUrl() : null
       if (parsePrefs.cliEnabled && !proxyUrl) {
-        throw new Error('CLI 代理未连接，请先启动本地 zcontrol-cli')
+        throw new Error('Start your local CLI resolver.')
       }
       const targetPage = movie.pages?.find((p) => p.page === page)
       let resolved: ResolvedSource
@@ -309,7 +360,9 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
             true
           )
         } else {
-          throw new Error('无法提取 BV 号或 cid，无法使用 CLI 代理')
+          throw new Error(
+            'The BV ID or content ID is missing. The CLI resolver cannot use this item.'
+          )
         }
       } else {
         mediaCore = await resolveMediaInput(movie.sourceInput || movie.url, {
@@ -325,7 +378,9 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
           ? {
               url: mediaCore.descriptor.finalUrl,
               sourceInput: movie.sourceInput || movie.url,
-              mediaDescriptor: stripTransientMediaDescriptor(mediaCore.descriptor),
+              mediaDescriptor: stripTransientMediaDescriptor(
+                mediaCore.descriptor
+              ),
             }
           : {}),
         audioUrl: resolved.audioUrl,
@@ -343,7 +398,9 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
       }
     } catch (err) {
       console.error('[MovieListPanel] change page error:', err)
-      message.error(err instanceof Error ? err.message : '切换分P失败')
+      message.error(
+        err instanceof Error ? err.message : t('Could not change episode.')
+      )
     } finally {
       setPageLoadingId(null)
     }
@@ -365,7 +422,7 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
             style={{ color: 'var(--md-sys-color-secondary)' }}
           />
           <Paragraph type="secondary" className="m-0 text-xs">
-            当前为远程共享模式，影片播放已暂停
+            {t('Video playback is paused during screen sharing.')}
           </Paragraph>
         </div>
       )}
@@ -374,11 +431,11 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
         size="sm"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
-        placeholder="搜索影片…"
+        placeholder={t('Search the queue…')}
         className="px-2.5"
       />
 
-      {/* 影片列表滚动区域 — pl-2.5 平衡左右剩余宽度，
+      {/* QueueScrolling区域 — pl-2.5 平衡左右剩余宽度，
           scrollbar-gutter:stable 占右侧 10px，pl-2.5 补左侧 10px，
           使视频卡片左右距面板边缘宽度一致 */}
       <div className="movie-list-scroll min-h-[120px] min-w-0 flex-1 overflow-y-auto rounded-[var(--md-sys-shape-corner)] pl-2.5">
@@ -396,7 +453,11 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
               />
             </div>
             <Paragraph type="secondary" className="m-0 text-xs">
-              {search ? '未找到匹配的影片' : isHost ? '暂无影片，请切换到“添加影片”' : '暂无影片，等待房主添加'}
+              {search
+                ? t('No matching videos.')
+                : isHost
+                  ? t('Your queue is empty. Use Choose content to add a video.')
+                  : t('Your queue is empty. Suggest content for everyone.')}
             </Paragraph>
           </div>
         )}
@@ -524,13 +585,19 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
                       className="h-7 flex-shrink-0 px-2"
                       icon={<Play className="h-3.5 w-3.5" />}
                       onClick={() => handlePlay(movie.id)}
-                      disabled={!isHost || isScreenShare}
+                      loading={playingId === movie.id}
+                      disabled={
+                        !isHost ||
+                        !canPlay ||
+                        !watchActive ||
+                        playingId !== null
+                      }
                       title={
-                        isScreenShare
-                          ? '远程共享模式下不可播放'
-                          : isHost
-                            ? '播放'
-                            : '仅房主可播放'
+                        !watchActive
+                          ? t('Switch to Watch to play.')
+                          : isHost && canPlay
+                            ? t('Play')
+                            : t('Playback permission required')
                       }
                     />
                   )}
@@ -545,15 +612,15 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
                       disabled={!isHost || isScreenShare}
                       title={
                         isScreenShare
-                          ? '远程共享模式下不可删除'
+                          ? t('Switch to Watch to edit the queue.')
                           : isHost
-                            ? '删除'
-                            : '仅房主可删除'
+                            ? t('Remove')
+                            : t('Queue permission required')
                       }
                     />
                   )}
                 </div>
-                {/* B站解析设置：每个 B站 影片独享一份配置；房主可操作，观众可查看并独立开启 CLI 代理 */}
+                {/* Bilibili playback settings：每个 B站 影片独享一份配置；房主可操作，Members可查看并独立On CLI 代理 */}
                 {movie.sourceType === 'bilibili' && !isScreenShare && (
                   <BilibiliParseSettings
                     movieId={movie.id}
@@ -571,7 +638,7 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
 
   return (
     <div className="glass-card zen-card flex h-full min-w-0 flex-col overflow-hidden rounded-[var(--md-sys-shape-corner)]">
-      {/* 卡片头部：图标 + 标题 + 影片数量 + 全屏按钮 */}
+      {/* 卡片头部：图标 + 标题 + 影片数量 + Fullscreen按钮 */}
       <div className="flex items-center gap-2.5 border-b border-[var(--glass-border)] px-4 py-3">
         <div
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--md-sys-shape-corner)]"
@@ -585,12 +652,14 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
           />
         </div>
         <div className="flex min-w-0 flex-1 flex-col">
-          <Text className="text-sm font-semibold leading-tight">影片列表</Text>
+          <Text className="text-sm font-semibold leading-tight">
+            {t('Queue')}
+          </Text>
           <Text
             type="secondary"
             className="text-[10px] uppercase tracking-wide"
           >
-            {filteredMovies.length} 部影片
+            {filteredMovies.length} {t('videos')}
           </Text>
         </div>
         <button
@@ -598,8 +667,8 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
           onClick={() => setShowListModal(true)}
           className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--md-sys-shape-corner)] transition-colors hover:bg-[var(--md-sys-color-surface-container-highest)]"
           style={{ color: 'var(--md-sys-color-on-surface-variant)' }}
-          title="展开查看完整影片列表"
-          aria-label="展开查看完整影片列表"
+          title={t('Expand queue')}
+          aria-label={t('Expand queue')}
         >
           <Maximize className="h-3.5 w-3.5" />
         </button>
@@ -610,11 +679,11 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
         {movieListContent}
       </div>
 
-      {/* 完整影片列表弹窗 */}
+      {/* 完整Queue弹窗 */}
       <Modal
         open={showListModal}
         onClose={() => setShowListModal(false)}
-        title={`影片列表 (${movies.length} 部)`}
+        title={t('Queue ({value1} videos)', { value1: movies.length })}
         className="max-w-2xl"
       >
         <div className="flex max-h-[70vh] flex-col gap-2.5 overflow-hidden">
@@ -623,9 +692,11 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
       </Modal>
       <ConfirmModal
         open={deleteTarget !== null}
-        onClose={() => { if (!removeInFlightRef.current) setDeleteTarget(null) }}
-        title="删除影片"
-        okText="确认删除"
+        onClose={() => {
+          if (!removeInFlightRef.current) setDeleteTarget(null)
+        }}
+        title={t('Remove video')}
+        okText={t('Remove')}
         confirmLoading={removingId === deleteTarget?.id}
         onOk={() => {
           if (!deleteTarget) return
@@ -634,7 +705,7 @@ export function MovieListPanel({ isHost }: MovieListPanelProps) {
           })
         }}
       >
-        确定从房间影片列表中删除「{deleteTarget?.title}」吗？
+        {t('Remove from the room queue:')} {deleteTarget?.title}?
       </ConfirmModal>
     </div>
   )
@@ -666,6 +737,8 @@ function BilibiliQualitySelect({
   selectedQn,
   onChange,
 }: BilibiliQualitySelectProps) {
+  useTranslation()
+
   // 订阅该影片解析偏好的变化，确保在 BilibiliParseSettings 中切换 MP4/DASH 模式后
   // 本组件能立即重新渲染，避免禁用状态停留在旧模式。
   const parsePrefs = useBilibiliParsePreferences(movie.id)
