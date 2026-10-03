@@ -62,8 +62,14 @@ export class MusicAudioLifecycle {
     this.abortController = new AbortController()
     this.ownedObjectUrl = ownedObjectUrl ? sourceUrl : null
     const isCurrent = () => this.isCurrent(generation, epoch)
+    let readyDelivered = false
     const onReady: EventListener = () => {
-      if (isCurrent()) callbacks.onReady?.()
+      // Seeking or recovering from buffering fires canplay again. Initial
+      // positioning must run once, otherwise it seeks repeatedly and produces
+      // short, interrupted fragments of the track.
+      if (!isCurrent() || readyDelivered) return
+      readyDelivered = true
+      callbacks.onReady?.()
     }
     const onError: EventListener = (event) => {
       if (isCurrent()) callbacks.onError?.(event)

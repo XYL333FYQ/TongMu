@@ -227,6 +227,27 @@ test('room heartbeats and unchanged control snapshots preserve a track load erro
   assert.equal(useMusicStore.getState().error, null)
 })
 
+test('audio buffering and seek readiness cannot repeatedly reset playback position', () => {
+  const audio = new FakeAudio()
+  const controller = new lifecycle.MusicAudioLifecycle(audio)
+  let readyCalls = 0
+  controller.attach('/track.mp3', 1, { onReady: () => {
+    readyCalls += 1
+    audio.currentTime = 0
+    // A seek can itself trigger readiness, including before a queued callback ends.
+    audio.fire('canplay')
+  } })
+  audio.fire('loadedmetadata')
+  audio.currentTime = 12
+  audio.fire('canplay')
+  audio.fire('canplay')
+  assert.equal(readyCalls, 1)
+  assert.equal(audio.currentTime, 12)
+  controller.attach('/next.mp3', 2, { onReady: () => { readyCalls += 1 } })
+  audio.fire('canplay')
+  assert.equal(readyCalls, 2)
+})
+
 test('audio lifecycle unloads sources idempotently and ignores stale callbacks', () => {
   const audio = new FakeAudio()
   const controller = new lifecycle.MusicAudioLifecycle(audio)
