@@ -854,6 +854,34 @@ test('generic page extraction combines video tags, JSON-LD and player config whi
   assert.ok(result.candidates.at(-1).url.includes('preroll-ad.mp4'));
 });
 
+test('encoded player configurations expose only the current media and preserve signed URL encoding', () => {
+  const media = 'https://cdn.example/film%2Foriginal/master.m3u8?signature=a%2Fb%2Bc%3D';
+  const next = 'https://cdn.example/other-film/master.m3u8';
+  const fullyEncoded = [...Buffer.from(media)].map(byte => `%${byte.toString(16).padStart(2, '0')}`).join('');
+  for (const envelope of [media, encodeURIComponent(media), fullyEncoded]) {
+    const config = { encrypt: 2, url: Buffer.from(envelope).toString('base64'),
+      url_next: Buffer.from(next).toString('base64'), vod_data: { title: 'Film } with "quotes"' } };
+    const html = `<script>var player_aaaa=${JSON.stringify(config)}; unrelated();</script>`;
+    const result = discoverCandidatesFromHtml(html, 'https://watch.example/page');
+    assert.equal(result.candidates[0].url, media);
+    assert.equal(result.candidates.some(item => item.url === next), false);
+  }
+  const uriConfig = { encrypt: 1, url: encodeURIComponent(media) };
+  assert.equal(discoverCandidatesFromHtml(`<script>player_bb=${JSON.stringify(uriConfig)}</script>`,
+    'https://watch.example/page').candidates[0].url, media);
+});
+
+test('player data decoding does not execute JavaScript or accept malformed encoded addresses', () => {
+  const malicious = '<script>player_aaaa={"encrypt":2,"url":(()=>{throw new Error("must not execute")})()};</script>';
+  assert.deepEqual(discoverCandidatesFromHtml(malicious, 'https://watch.example/page').candidates, []);
+  for (const config of [{ encrypt: 2, url: '@@@@' },
+    { encrypt: 2, url: Buffer.from('javascript:alert(1)').toString('base64') },
+    { encrypt: 1, url: 'https%3A%2F%2Fcdn.example%2Fbad%ZZ.m3u8' }]) {
+    assert.deepEqual(discoverCandidatesFromHtml(`<script>player_a=${JSON.stringify(config)}</script>`,
+      'https://watch.example/page').candidates, []);
+  }
+});
+
 test('generic page retains highest sibling without promoting unrelated ads', () => {
   const result = discoverCandidatesFromHtml('<video src="/movie/master_720p.m3u8"></video><script type="application/ld+json">{"contentUrl":"https://watch.example/movie/master_1080p.m3u8"}</script><video src="https://ads.example/preroll_2160p.m3u8"></video>', 'https://watch.example/page');
   assert.equal(result.candidates[0].url, 'https://watch.example/movie/master_1080p.m3u8');

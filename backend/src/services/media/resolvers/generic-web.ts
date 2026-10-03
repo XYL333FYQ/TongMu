@@ -33,6 +33,55 @@ function walkJson(value: unknown, base: string, candidates: Map<string, MediaCan
   }
 }
 
+/** Read a JSON player assignment as data, without evaluating the site's code. */
+function playerConfigurations(script: string): Record<string, unknown>[] {
+  const configs: Record<string, unknown>[] = [];
+  let inspected = 0;
+  for (const match of script.matchAll(/\bplayer_[a-zA-Z0-9_]+\s*=\s*(?=\{)/g)) {
+    if (inspected++ >= 12) break;
+    const start = match.index! + match[0].length;
+    let depth = 0;
+    let quoted = false;
+    let escaped = false;
+    for (let end = start; end < Math.min(script.length, start + 131_072); end++) {
+      const char = script[end];
+      if (quoted) {
+        if (escaped) escaped = false;
+        else if (char === '\\') escaped = true;
+        else if (char === '"') quoted = false;
+      } else if (char === '"') quoted = true;
+      else if (char === '{') depth++;
+      else if (char === '}' && --depth === 0) {
+        try {
+          const config = JSON.parse(script.slice(start, end + 1));
+          if (config && typeof config === 'object' && !Array.isArray(config)) configs.push(config);
+        } catch { /* Executable or malformed object literals are not JSON. */ }
+        break;
+      }
+    }
+  }
+  return configs;
+}
+
+function playerMediaUrl(config: Record<string, unknown>): string | undefined {
+  if (typeof config.url !== 'string' || config.url.length > 65_536) return undefined;
+  let value = config.url;
+  try {
+    if (config.encrypt === 2 || config.encrypt === '2') {
+      if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return undefined;
+      value = Buffer.from(value, 'base64').toString('utf8');
+    } else if (config.encrypt !== undefined && ![0, 1, '0', '1'].includes(config.encrypt as number | string)) {
+      return undefined;
+    }
+    // A Base64 envelope can contain an already valid URL. Preserve its escaped
+    // signed path/query; only unwrap URI encoding when the URL itself is encoded.
+    if (!/^https?:\/\//i.test(value) && [1, 2, '1', '2'].includes(config.encrypt as number | string)) {
+      value = decodeURIComponent(value);
+    }
+  } catch { return undefined; }
+  return MEDIA_HINT.test(value) ? value : undefined;
+}
+
 async function readHtml(response: Awaited<ReturnType<typeof fetchWithProxyPolicy>>): Promise<string> {
   if (!response.body) return '';
   const reader = response.body.getReader();
@@ -124,6 +173,11 @@ export function discoverCandidatesFromHtml(
     });
     $('script[type="application/ld+json"]').each((_index, element) => {
       try { walkJson(JSON.parse($(element).text()), pageUrl, candidates); } catch { /* malformed site data */ }
+    });
+    $('script:not([src])').each((_index, element) => {
+      for (const config of playerConfigurations($(element).text())) {
+        addCandidate(candidates, playerMediaUrl(config), pageUrl, 100, 'encoded player config');
+      }
     });
     for (const match of html.matchAll(/https?:\\?\/\\?\/[^"'\s<>]+/g)) {
       if (MEDIA_HINT.test(match[0])) addCandidate(candidates, match[0], pageUrl, /\.m3u8|\.mpd/i.test(match[0]) ? 85 : 65, 'embedded player config');
