@@ -750,12 +750,20 @@ test('repeated Enter while a movie POST is pending sends one add request', async
   await openContent(page)
   let postCount = 0
   let releasePost: (() => Promise<void>) | undefined
+  let postResponseFailure = ''
   await page.route('**/api/rooms/*/movies', async (route) => {
     if (route.request().method() !== 'POST') return route.continue()
     postCount += 1
+    // Keep the UI request pending by withholding the response, while the
+    // server checks the deliberately short-lived fixture grant immediately.
+    // Delaying the request itself also tests grant expiry, a different case.
+    const response = await route.fetch()
+    if (!response.ok()) {
+      postResponseFailure = `${response.status()} ${redactLogText(await response.text())}`
+    }
     await new Promise<void>((resolve) => {
       releasePost = async () => {
-        await route.continue()
+        await route.fulfill({ response })
         resolve()
       }
     })
@@ -774,7 +782,9 @@ test('repeated Enter while a movie POST is pending sends one add request', async
   await input.press('Enter')
   await input.press('Enter')
   expect(postCount).toBe(1)
-  await releasePost?.()
+  await expect.poll(() => Boolean(releasePost)).toBe(true)
+  await releasePost!()
+  expect(postResponseFailure).toBe('')
   await expect(page.getByText('Added to the queue.')).toBeVisible()
   await input.press('Enter')
   expect(postCount).toBe(1)
@@ -1269,7 +1279,6 @@ for (const [pathname, resolver] of [
     await input.fill(`${FIXTURE_ORIGIN}/${pathname}`)
     const responsePromise = page.waitForResponse(
       (response) =>
-        response.ok() &&
         response.url().endsWith('/api/stream/media/resolve') &&
         response.request().postDataJSON().input ===
           `${FIXTURE_ORIGIN}/${pathname}`

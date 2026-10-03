@@ -40,8 +40,8 @@ jobs:
       - name: Frontend build
         run: npm run build -w frontend
 
-      - name: Install Chrome for E2E media coverage
-        run: npx playwright install --with-deps chrome
+      - name: Install Chrome and Chromium for frontend and resolver coverage
+        run: npx playwright install --with-deps chrome chromium
 
       - name: Prepare FFmpeg for portable media fixtures
         run: |
