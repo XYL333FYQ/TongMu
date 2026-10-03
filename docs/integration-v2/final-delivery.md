@@ -42,7 +42,7 @@
 | 检查 | 已确认结果 | 限制 |
 | --- | --- | --- |
 | 后端构建与测试 | `.backend-lifecycle-stable.log`：245 PASS、1 SKIP、0 FAIL；常规 174 PASS，迁移 34 PASS，幂等回执 7 PASS，房间集成 30 PASS | Windows 不允许创建测试符号链接，Local File 遍历及符号链接逃逸用例整体跳过；不算通过。房间测试使用隔离 SQL.js 数据和真实处理器；媒体 HTTP/JWT 测试使用受控上游 |
-| 前端测试与生产构建 | `.frontend-final-confirmed.log`：80 PASS、0 FAIL、0 SKIP；`.frontend-build-final-confirmed.log`：类型检查和生产构建通过；`.backend-type-final-delivery.log`：后端类型检查通过 | 既有 mediabunny 动态导入及大包警告仍在；构建通过不代替功能验收。登录/注册入口另外经过实际浏览器点击检查 |
+| 前端测试与生产构建 | `.frontend-final-confirmed.log`：80 PASS、0 FAIL、0 SKIP；`.frontend-build-final-confirmed.log` 和最后卡片调整后的 `.frontend-build-cards-final.log`：类型检查和生产构建通过；`.backend-type-final-delivery.log`：后端类型检查通过 | 最后卡片样式另运行大厅 4 项测试，并重新查看 16 种宽高。既有 mediabunny 动态导入及大包警告仍在；构建通过不代替功能验收 |
 | lint | `.lint-delta-bilingual.log`：188 个修改的 src TS/TSX 文件对照，排除 `prettier/prettier` 后新增非格式规则问题为 0 | 该对照记录原始 4797 errors、13 warnings，并非全站 lint 总数；全站 lint 命令仍失败，不能声称通过 |
 | 完整本地 E2E | `.e2e-delivery-confirmed.log`：62 项中 59 PASS、3 SKIP、0 FAIL。覆盖 Direct/Gateway、HLS/DASH、BrowserResolver、多人选片及播放、活动切换、30 秒代理/正式转交、导航、退出、合成投屏、fake 语音、中英文和动效 | 本轮默认跳过两项外部 ODC 和一项需显式启用的切片缓存测试。此前开启缓存的 `.e2e-final-stable.log` 为 60 PASS / 2 SKIP；外部样本另行实际播放，不把跳过算通过。最后窄侧栏标签样式另外经人工复查和针对性回归 |
 | 外部媒体单独验证 | `.e2e-external-final.log`：ODC Direct 与页面解析 2 PASS，均实际解码 1920×1080 | 仅这两个当时可访问的外部样本；不能推断全部来源或真实账号能力。记录含可恢复媒体/网络诊断，PASS 不表示控制台零告警 |
@@ -51,7 +51,7 @@
 | 认证刷新后的解析 | `.e2e-ci-auth-retry-fixed.log`：3 PASS / 0 FAIL；动态页面用例主动等访问令牌过期后再解析，并实际播放 | 测试看现有 `apiFetch` 一次认证刷新后的最终响应；第二次认证失败或 422 仍立即参与失败断言，不延长期限，不跳过播放检查 |
 | Firefox / WebKit | `.e2e-firefox-stable.log`、`.e2e-webkit-stable.log`：各 6 PASS，覆盖语言持久化、菜单键盘/减少动画、私密密码重试、审核与满员、请求投票、登录限制 | 重点流程验证，未运行这两个引擎的完整媒体套件；不等同 macOS/iOS/Android 真机验收 |
 | 截图与人工操作 | [截图与操作记录](screenshots/README.md)、[视口几何记录](screenshots/viewport-checks.json)：大厅和播放房间各检查 16 种宽高，另外检查账户、管理、登录、创建、错误和短高度设置窗口 | 真实内置浏览器操作；720×450 用于等效 200% 重排，未称为原生缩放或手机真机验证。控制台包含预期无效链接错误及可恢复 HLS 诊断 |
-| GitHub CI / Docker | [main 的检查运行](https://github.com/XYL333FYQ/TongMu/actions?query=branch%3Amain)：同 SHA 的 CI 通过后执行 Linux Docker 浏览器、迁移与持久卷验证 | 本机没有 Docker；远程实际结果在最终交付回复绑定运行链接与 SHA。VPS 部署工作流保持仅手动触发 |
+| GitHub CI / Docker | [整合版本 bf3d241 的实际运行](https://github.com/XYL333FYQ/TongMu/actions/runs/37098598521) 全部通过：Linux 后端 246 PASS / 0 SKIP，前端 80 PASS，E2E 60 PASS / 2 SKIP；Docker 镜像、历史库升级、构建身份、Chromium、BrowserResolver、媒体运行及持久卷重建检查通过 | 最后卡片底部对齐与对应截图在此后补齐，最终交付提交仍需对应同 SHA 的检查；结果绑定最终交付回复与 [main 检查列表](https://github.com/XYL333FYQ/TongMu/actions?query=branch%3Amain)。VPS 部署仅手动触发 |
 
 媒体回归必须分别核对 Media Protocol、Direct/Gateway、HLS/DASH、BrowserResolver 与真实浏览器播放；当前结果按各套测试的覆盖范围解释，不用单项绿灯代替整个媒体链路验收。
 

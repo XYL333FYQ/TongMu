@@ -2141,6 +2141,8 @@ body[data-no-hover-transform='true'] .tongmu-home__empty button:hover {
   gap: 22px;
 }
 .tm-room-card {
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--tm-border);
   border-radius: 16px;
   overflow: hidden;
@@ -2154,6 +2156,7 @@ body[data-no-hover-transform='true'] .tongmu-home__empty button:hover {
   box-shadow: 0 8px 26px #00000009;
 }
 .tm-room-art {
+  flex-shrink: 0;
   position: relative;
   display: grid;
   place-items: center;
@@ -2200,6 +2203,9 @@ body[data-no-hover-transform='true'] .tongmu-home__empty button:hover {
   background: #429781;
 }
 .tm-room-card-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
   padding: 20px;
 }
 .tm-room-card-type {
@@ -2229,6 +2235,7 @@ body[data-no-hover-transform='true'] .tongmu-home__empty button:hover {
   margin-left: auto;
 }
 .tm-room-card-footer {
+  margin-top: auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
