@@ -8,11 +8,35 @@ const { DirectUrlResolver } = require('../dist/services/media/resolvers/direct-u
 const { ResolverNotApplicableError } = require('../dist/services/media/types');
 const { MediaResolutionError } = require('../dist/services/media/resolution-error');
 const { ProxyTargetError } = require('../dist/services/proxy/safe-fetch');
+const { buildBilibiliUnifiedManifest } = require('../dist/services/media/manifest/bilibili');
 
 const mp4 = Buffer.from([0, 0, 0, 12, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d]);
 const adapter = (id, resolver) => new LegacyResolverAdapter({ id, sourceKinds: ['web-page'], resolver });
 const context = (browserSniff, options = {}) => providerContextFromResolverContext({
   userId: 'fixture', browserSniff, deadline: Date.now() + 10_000, ...options,
+});
+
+test('Bilibili adapter retains identity for the gateway to synthesize DASH instead of reading an MP4 as a manifest', async () => {
+  const videoUrl = 'https://example.com/video.m4s';
+  const audioUrl = 'https://example.com/audio.m4s';
+  const provider = new LegacyResolverAdapter({ id: 'bilibili', sourceKinds: ['bilibili'], resolver: {
+    name: 'bilibili', canHandle: () => true,
+    resolve: async (input) => ({ input, originalUrl: input, finalUrl: videoUrl, audioUrl,
+      transport: 'dash', container: 'dash', sourceType: 'bilibili', resolver: 'bilibili',
+      duration: 635, actualQuality: 32, headers: { Referer: 'https://www.bilibili.com/' },
+      drm: { protected: false }, probe: { method: 'resolver', bytesRead: 0, warnings: [] } }),
+  }});
+  const result = await new MediaProviderRegistry([provider]).resolveProvider('https://www.bilibili.com/video/fixture', context(false), {});
+  assert.equal(result.privateSource.providerId, 'bilibili');
+  assert.equal(result.candidates[0].transport, 'dash');
+  assert.equal(result.candidates[0].url, videoUrl);
+  assert.equal(result.candidates[0].audioUrl, audioUrl);
+  assert.equal(result.candidates[0].actualQuality, 32);
+  const manifest = buildBilibiliUnifiedManifest({ videoUrl, audioUrl, duration: result.descriptor.duration, quality: 32 });
+  assert.match(manifest, /<MPD /);
+  assert.match(manifest, /video\.m4s/);
+  assert.match(manifest, /audio\.m4s/);
+  assert.match(manifest, /PT635S/);
 });
 
 async function withHttpFixture(work) {

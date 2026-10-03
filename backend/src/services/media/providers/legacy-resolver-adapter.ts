@@ -91,7 +91,10 @@ export class LegacyResolverAdapter implements MediaProvider {
       requiresCustomHeaders: Object.keys(descriptor.headers ?? {}).some((key) => !/^accept(?:-language)?$/i.test(key)),
     }];
     return {
-      privateSource: privateSourceFor(descriptor),
+      // Preserve the adapter identity so the gateway can apply provider-specific
+      // handling (Bilibili DASH tracks require a generated MPD, not MPD parsing
+      // of the binary video URL).
+      privateSource: { ...privateSourceFor(descriptor), providerId: this.id },
       descriptor,
       candidates,
     };
