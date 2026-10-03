@@ -1,0 +1,28 @@
+name: TongMu production diagnostics
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: Inspect service and public source access without changing the VPS
+        shell: bash
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/tongmu_actions
+          chmod 600 ~/.ssh/tongmu_actions
+          ssh-keyscan -p "$VPS_PORT" -H "$VPS_HOST" >> ~/.ssh/known_hosts
+          ssh -i ~/.ssh/tongmu_actions -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" 'bash -se' < scripts/deploy/diagnose-production.sh
