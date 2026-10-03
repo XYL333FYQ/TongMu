@@ -101,8 +101,26 @@ test('Bilibili explicit 4K cannot become 720P; unreachable DASH does not invoke 
   const result = await resolveBilibiliVideo({ url: 'BV9876543210', qn: 120 });
   assert.equal(result.format, 'dash'); assert.equal(result.currentQn, 120); assert.equal(result.requestedQn, 120);
   assert.equal(calls.length, 1); assert.notEqual(calls[0].fnval, 1);
+  assert.equal(calls[0].qualitySelection, 'exact');
   play.getPlayUrl.mock.mockImplementation(async () => ({ format: 'mp4', currentQn: 64, durl: [{ url: 'https://cdn.example/720' }] }));
   await assert.rejects(resolveBilibiliVideo({ url: 'BV9876543210', qn: 120 }), /源站实际只返回/);
+});
+
+test('Bilibili auto quality uses real returned tracks when anonymous quality metadata is misleading', () => {
+  const data = { quality: 64, accept_quality: [64, 32, 16], dash: { video: [
+    { id: 32, bandwidth: 790942, codecs: 'avc1.64001F', base_url: 'https://cdn.example/480' },
+    { id: 16, bandwidth: 354509, codecs: 'avc1.64001E', base_url: 'https://cdn.example/360' },
+  ] } };
+  assert.throws(() => normalizePlayUrlData(data, 64), /representation/);
+  const auto = normalizePlayUrlData(data, 127, undefined, undefined, 'highest-available');
+  assert.equal(auto.currentQn, 32);
+  assert.equal(auto.bestVideo.id, 32);
+  assert.match(auto.fallbackReason, /实际返回/);
+  const genuineHd = normalizePlayUrlData({ ...data, dash: { video: [...data.dash.video,
+    { id: 120, bandwidth: 4000000, codecs: 'avc1.640033', base_url: 'https://cdn.example/4k' },
+  ] } }, 127, undefined, undefined, 'highest-available');
+  assert.equal(genuineHd.currentQn, 120);
+  assert.equal(genuineHd.bestVideo.id, 120);
 });
 test('BrowserResolver entire captured-response -> probe -> descriptor chain preserves cross-origin sanitization', async t => {
   let listener;

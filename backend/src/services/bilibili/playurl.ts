@@ -44,6 +44,7 @@ export interface BilibiliPlayUrlResult {
   currentQn?: number;
   /** 视频可用清晰度列表。 */
   acceptQuality?: { id: number; label: string; resolution?: string }[];
+  fallbackReason?: string;
 }
 
 interface RawDashMedia {
@@ -92,6 +93,7 @@ export interface GetPlayUrlOptions {
   platform?: 'html5';
   /** Request-scoped client tuple capabilities; used only for DASH representation selection. */
   playbackProfile?: PlaybackClientProfileV1;
+  qualitySelection?: 'exact' | 'highest-available';
 }
 
 export class NoPermissionError extends Error {
@@ -251,6 +253,7 @@ export function normalizePlayUrlData(
   requestedQn?: number,
   codec?: string,
   playbackProfile?: PlaybackClientProfileV1,
+  qualitySelection: 'exact' | 'highest-available' = 'exact',
 ): BilibiliPlayUrlResult | null {
   if (!data) return null;
 
@@ -259,7 +262,7 @@ export function normalizePlayUrlData(
   // platform=html5 时返回 720P），若仍按请求值展示会导致前端显示与实际流不一致。
   // 例如：请求 qn=80(1080P)，但 B站降级返回 data.quality=64(720P) + 720P 的 MP4 URL，
   // 此时 video.videoWidth/Height=1280x720，必须用 data.quality=64 才能正确显示。
-  const qn = data.quality ?? requestedQn ?? DEFAULT_QN;
+  let qn = data.quality ?? requestedQn ?? DEFAULT_QN;
   const acceptQuality = buildAcceptQuality(
     data.accept_quality,
     data.accept_description,
@@ -287,6 +290,14 @@ export function normalizePlayUrlData(
     // 例如请求 qn=32(480P)，但返回包含 id=80(1080P)/64(720P)/32(480P)/16(360P)，
     // 不过滤会选到 id=80 的 1080P 流。
     const allTracks = data.dash.video.map(normalizeDashMedia);
+    if (qualitySelection === 'highest-available') {
+      const available = allTracks.map(t => t.id).filter(id => Number.isSafeInteger(id) && id > 0);
+      if (!available.length) throw new NoPermissionError();
+      // Anonymous responses can report quality=64 while only carrying 32/16.
+      // Automatic selection uses the actual representations, never their label.
+      // Explicit quality requests retain the exact-match behavior below.
+      qn = Math.max(...available);
+    }
     const matchedQnTracks = allTracks.filter((t) => t.id === qn);
     if (!matchedQnTracks.length) throw new Error(`源站未返回实际清晰度 ${qn} 对应的 DASH representation`);
     let tracksToSort = matchedQnTracks;
@@ -325,6 +336,8 @@ export function normalizePlayUrlData(
       bestAudio: audio[0],
       currentQn: qn,
       acceptQuality,
+      fallbackReason: qualitySelection === 'highest-available' && qn !== data.quality
+        ? '已按源站实际返回的视频轨道选择当前可用最高画质' : undefined,
     };
   }
 
@@ -391,7 +404,7 @@ async function getPlayUrlWbi(
     { cookie },
   );
 
-  const result = normalizePlayUrlData(res.data, effectiveQn, options?.codec, options?.playbackProfile);
+  const result = normalizePlayUrlData(res.data, effectiveQn, options?.codec, options?.playbackProfile, options?.qualitySelection);
   return result;
 }
 
@@ -427,7 +440,7 @@ async function getPlayUrlLegacy(
     { cookie },
   );
 
-  const result = normalizePlayUrlData(res.data, effectiveQn, options?.codec, options?.playbackProfile);
+  const result = normalizePlayUrlData(res.data, effectiveQn, options?.codec, options?.playbackProfile, options?.qualitySelection);
   return result;
 }
 

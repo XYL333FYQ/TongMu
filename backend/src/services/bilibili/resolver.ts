@@ -522,6 +522,7 @@ export async function resolveBilibiliVideo(
     codec,
     isVip,
     playbackProfile: playbackClientProfile,
+    qualitySelection: qn === undefined ? 'highest-available' : 'exact',
   });
   if (!playUrl) throw new ResolveError('源站未返回可播放媒体，请检查账号权限', 'NO_PERMISSION');
   if (qn !== undefined && playUrl.currentQn !== qn) {
@@ -577,6 +578,7 @@ export async function resolveBilibiliVideo(
       currentQn: playUrl.currentQn,
       requestedQn,
       qualityLabel: qualityLabel(playUrl.currentQn),
+      fallbackReason: playUrl.fallbackReason,
       videoBandwidth: playUrl.bestVideo.bandwidth,
       acceptQuality,
       pages: pagesInfo,
