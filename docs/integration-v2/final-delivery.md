@@ -48,6 +48,7 @@
 | 外部媒体单独验证 | `.e2e-external-final.log`：ODC Direct 与页面解析 2 PASS，均实际解码 1920×1080 | 仅这两个当时可访问的外部样本；不能推断全部来源或真实账号能力。记录含可恢复媒体/网络诊断，PASS 不表示控制台零告警 |
 | 最终针对性回归 | `.e2e-final-focused.log`：显式开启切片缓存后 3 PASS / 0 FAIL，验证授权 Range、原画质与上游读取边界、手机横竖布局，以及入队/立即播放/导航保持会话 | 在最后窄侧栏标签和计数文案修正后执行；两种语言的 1024×768 实际点击、单行宽度及重载恢复另有内置浏览器证据 |
 | CI 环境与测试隔离修正 | `.e2e-ci-fixture-fixed.log`：3 PASS / 0 FAIL，覆盖重复 Enter、静态页面解析和 BrowserResolver 动态页面解析 | CI 同时安装 Chrome 与 Playwright Chromium；前者供前端媒体测试，后者供后端 BrowserResolver。防重复测试延后响应而非真实授权请求，仍保留一次提交与成功提示断言；未延长生产凭证或取消过期测试 |
+| 认证刷新后的解析 | `.e2e-ci-auth-retry-fixed.log`：3 PASS / 0 FAIL；动态页面用例主动等访问令牌过期后再解析，并实际播放 | 测试看现有 `apiFetch` 一次认证刷新后的最终响应；第二次认证失败或 422 仍立即参与失败断言，不延长期限，不跳过播放检查 |
 | Firefox / WebKit | `.e2e-firefox-stable.log`、`.e2e-webkit-stable.log`：各 6 PASS，覆盖语言持久化、菜单键盘/减少动画、私密密码重试、审核与满员、请求投票、登录限制 | 重点流程验证，未运行这两个引擎的完整媒体套件；不等同 macOS/iOS/Android 真机验收 |
 | 截图与人工操作 | [截图与操作记录](screenshots/README.md)、[视口几何记录](screenshots/viewport-checks.json)：大厅和播放房间各检查 16 种宽高，另外检查账户、管理、登录、创建、错误和短高度设置窗口 | 真实内置浏览器操作；720×450 用于等效 200% 重排，未称为原生缩放或手机真机验证。控制台包含预期无效链接错误及可恢复 HLS 诊断 |
 | GitHub CI / Docker | [main 的检查运行](https://github.com/XYL333FYQ/TongMu/actions?query=branch%3Amain)：同 SHA 的 CI 通过后执行 Linux Docker 浏览器、迁移与持久卷验证 | 本机没有 Docker；远程实际结果在最终交付回复绑定运行链接与 SHA。VPS 部署工作流保持仅手动触发 |
@@ -63,5 +64,7 @@ Windows 本机运行的后端、前端和浏览器检查是当前实际环境证
 最后完整回归曾出现一次房主返回时的预期页面重载打断测试读状态。修正仅在该轮询中原子读取主持身份和 Socket，并只对“Execution context was destroyed”重试；15 秒期限和真实权限/身份断言保留。其他错误仍抛出。独立代理交接用例随后通过，完整冻结回归结果见上表。
 
 首轮 [GitHub CI](https://github.com/XYL333FYQ/TongMu/actions/runs/37096382742) 的浏览器回归为 58 PASS / 2 SKIP / 2 FAIL，不能算通过，Docker 因前置失败未执行。随后补齐后端解析器需要的 Chromium，并将防重复提交测试与两秒夹具凭证过期分开；解析测试也直接断言失败响应的内容，避免只等待成功响应而掩盖原因。对应三项本机回归通过。最终远程结论必须以交付回复中同 SHA 的后续实际运行结果为准。
+
+第二轮 [GitHub CI](https://github.com/XYL333FYQ/TongMu/actions/runs/37097428779) 为 59 PASS / 2 SKIP / 1 FAIL：防重复测试通过，解析测试捕获了现有 `apiFetch` 自动刷新前的首次 401。最后修正观测时机，允许一次现有认证刷新后检查最终响应，并在本机主动等待令牌过期验证这条流程；三项针对性测试通过。产品认证策略没有改动，失败的第二次认证响应仍会使测试失败。
 
 未验证的网络源、系统或硬件能力保持未验证状态；它们不进入“完成”统计。

@@ -1277,11 +1277,38 @@ for (const [pathname, resolver] of [
       /Paste a video, playlist or webpage URL/
     )
     await input.fill(`${FIXTURE_ORIGIN}/${pathname}`)
+    if (resolver === 'browser') {
+      // Exercise the same short-lived access-token challenge as Linux CI.
+      await expect
+        .poll(() =>
+          page.evaluate(() => {
+            const token = localStorage.getItem('zviewer-access-token')
+            if (!token) return false
+            const payload = JSON.parse(
+              atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))
+            )
+            return payload.exp * 1000 <= Date.now()
+          })
+        )
+        .toBe(true)
+    }
+    let authenticationChallenges = 0
     const responsePromise = page.waitForResponse(
-      (response) =>
-        response.url().endsWith('/api/stream/media/resolve') &&
-        response.request().postDataJSON().input ===
-          `${FIXTURE_ORIGIN}/${pathname}`
+      (response) => {
+        if (
+          !response.url().endsWith('/api/stream/media/resolve') ||
+          response.request().postDataJSON().input !==
+            `${FIXTURE_ORIGIN}/${pathname}`
+        )
+          return false
+        // apiFetch handles one auth challenge with refresh + retry. Inspect
+        // that final attempt, including a second auth failure or a 422.
+        if ([401, 403].includes(response.status())) {
+          authenticationChallenges += 1
+          return authenticationChallenges > 1
+        }
+        return true
+      }
     )
     await panel.getByRole('button', { name: 'Resolve', exact: true }).click()
     const response = await responsePromise
