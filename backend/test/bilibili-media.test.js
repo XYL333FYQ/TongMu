@@ -85,6 +85,30 @@ function connectRequest(port, authority) {
   });
 }
 
+test('recursive HLS children retain authorization without embedding a full parent capability', () => {
+  const resource = { url: 'https://example.com/master.m3u8', scope: 'user:fixture',
+    headers: { Referer: 'https://example.com/watch' }, expiresAt: Date.now() + 60_000,
+    rewriteManifest: true, resourceKind: 'hls-manifest', transportMode: 'FULL_PROXY' };
+  const parent = issueMediaHandle(resource);
+  const master = rewriteManifest('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000\nchild.m3u8', 'application/vnd.apple.mpegurl', resource, { id: parent.id });
+  const childUrl = master.split('\n').find(line => line.startsWith('/api/stream/media/'));
+  const childId = childUrl.split('/').at(-1).split('?')[0];
+  const child = resolveMediaHandle(childId, 'fixture');
+  assert.ok(child);
+  assert.match(child.parentResourceId, /^sha256:[\w-]{43}$/);
+  assert.equal(child.parentResourceId.includes(parent.id), false);
+  const playlist = rewriteManifest('#EXTM3U\n#EXTINF:6,\nsegment.ts\n#EXT-X-ENDLIST', 'application/vnd.apple.mpegurl', child, { id: childId });
+  const segmentUrl = playlist.split('\n').find(line => line.startsWith('/api/stream/media/'));
+  const segmentId = segmentUrl.split('/').at(-1).split('?')[0];
+  const segment = resolveMediaHandle(segmentId, 'fixture');
+  assert.ok(segment);
+  assert.equal(segment.url, 'https://example.com/segment.ts');
+  assert.equal(segment.headers.Referer, resource.headers.Referer);
+  assert.equal(segment.rewriteManifest, false);
+  assert.equal(resolveMediaHandle(segmentId, 'other-user'), undefined);
+  assert.equal(segmentId.length < childId.length + 100, true);
+});
+
 test('CDN probe accepts a successful HEAD without downloading a body', async () => {
   const calls = [];
   const fakeFetch = async (_url, init) => {

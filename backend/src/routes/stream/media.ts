@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { redactMediaError } from '../../services/media/redact';
 import { MediaResolutionError } from '../../services/media/resolution-error';
 import {
@@ -544,7 +545,10 @@ function mapTypedManifestResource(
       : effectiveResource.contentType,
     rewriteManifest: isManifestHandleKind(manifestKind),
     resourceKind: manifestKind,
-    parentResourceId: mapping.parentResourceId,
+    // Parent identity is diagnostic metadata, never an authorization grant.
+    // Embedding the complete encrypted parent recursively in every child makes
+    // long HLS playlists grow by megabytes and stalls their download.
+    parentResourceId: `sha256:${createHash('sha256').update(mapping.parentResourceId).digest('base64url')}`,
     rootSourceIdentity: effectiveResource.rootSourceIdentity ?? resource.url,
     recursiveDepth: mapping.recursiveDepth,
     allowRange: mapping.allowRange,
