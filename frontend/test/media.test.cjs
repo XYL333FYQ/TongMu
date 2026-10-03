@@ -385,6 +385,16 @@ test('browser capability collector is bounded and fingerprints deterministically
     assert.equal(profile.supportsInsecureHttpMedia, false)
     assert.ok(profile.mediaCapabilities.length > 0)
     assert.ok(profile.mediaCapabilities.length <= 64)
+    assert.ok(profile.mediaCapabilities.some(item =>
+      item.transport === 'dash' && item.container === 'dash' &&
+      item.pipeline === 'mse' && item.videoCodec === 'h264' &&
+      item.audioCodec === 'aac' && item.exactCodecStrings.includes('avc1.64001f')
+    ))
+    global.MediaSource.isTypeSupported = () => false
+    const unsupported = playbackProfile.collectPlaybackClientProfileSync()
+    assert.ok(!unsupported.mediaCapabilities.some(item =>
+      item.transport === 'dash' && item.videoCodec === 'h264'
+    ))
     assert.ok(
       profile.mediaCapabilities.some(
         (item) => item.videoCodec === 'h264' && item.audioCodec === 'aac'
