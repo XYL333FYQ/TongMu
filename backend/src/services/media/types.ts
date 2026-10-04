@@ -116,6 +116,8 @@ export interface MediaDescriptor {
   headers?: Record<string, string>;
   /** Internal-only credential provenance; stripped from public descriptors. */
   credentialOrigins?: string[];
+  /** Server-only alternate CDNs for the exact selected representation. */
+  privateTransportAlternatives?: Record<string, string[]>;
   candidates?: MediaCandidate[];
   probe: {
     method: 'head' | 'range-get' | 'resolver';

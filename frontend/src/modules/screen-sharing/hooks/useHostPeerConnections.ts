@@ -343,6 +343,10 @@ export function useHostPeerConnections(
   const handleViewerReady = useCallback(
     (data: ViewerReadyPayload) => {
       const viewerSocketId = data.from
+      // Existing members also send ready when screen sharing mounts.
+      setViewerIds((prev) =>
+        prev.includes(viewerSocketId) ? prev : [...prev, viewerSocketId]
+      )
       console.log('[useHostPeerConnections] viewer ready:', viewerSocketId)
       readyViewerIdsRef.current.add(viewerSocketId)
       // 观看端已创建 RTCPeerConnection，此时发送 offer 才不会被丢弃

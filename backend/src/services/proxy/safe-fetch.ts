@@ -156,7 +156,7 @@ export function sanitizeProxyHeaders(input?: Record<string, string>): Record<str
   return output;
 }
 
-function stripCrossOriginCredentials(headers: Record<string, string>): Record<string, string> {
+export function stripCrossOriginCredentials(headers: Record<string, string>): Record<string, string> {
   const output: Record<string, string> = {};
   for (const [name, value] of Object.entries(headers)) {
     const lower = name.toLowerCase();

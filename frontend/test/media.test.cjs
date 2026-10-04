@@ -24,6 +24,43 @@ function load(
   return module.exports
 }
 const playbackProfile = load('playbackProfile.ts')
+test('room gateway URLs replace another socket grant while retaining source identity and hash', () => {
+  const previousWindow = global.window
+  const previousStorage = global.sessionStorage
+  global.window = { location: { origin: 'http://localhost' } }
+  global.sessionStorage = {
+    getItem: () =>
+      JSON.stringify({ roomId: 'room-a', grant: 'viewer-current' }),
+  }
+  try {
+    const grants = load('roomMediaGrant.ts')
+    const video = new URL(
+      grants.appendRoomMediaGrant(
+        '/api/stream/media/sealed?sourceGeneration=4&roomGrant=host-old#track',
+        'room-a'
+      ),
+      window.location.origin
+    )
+    assert.equal(video.searchParams.get('roomGrant'), 'viewer-current')
+    assert.equal(video.searchParams.get('sourceGeneration'), '4')
+    assert.equal(video.hash, '#track')
+    const audio = new URL(
+      grants.appendMusicPlaybackGrant(
+        '/api/music/playback/sealed?roomGrant=host-old',
+        'room-a'
+      ),
+      window.location.origin
+    )
+    assert.equal(audio.searchParams.get('roomGrant'), 'viewer-current')
+    assert.equal(
+      grants.appendRoomMediaGrant('/api/stream/media/sealed', 'other-room'),
+      '/api/stream/media/sealed'
+    )
+  } finally {
+    global.window = previousWindow
+    global.sessionStorage = previousStorage
+  }
+})
 const storageReference = load('storageReference.ts')
 const { planPlayback } = load('localPlanner.ts', {
   './playbackProfile': playbackProfile,
@@ -385,21 +422,35 @@ test('browser capability collector is bounded and fingerprints deterministically
     assert.equal(profile.supportsInsecureHttpMedia, false)
     assert.ok(profile.mediaCapabilities.length > 0)
     assert.ok(profile.mediaCapabilities.length <= 64)
-    assert.ok(profile.mediaCapabilities.some(item =>
-      item.transport === 'dash' && item.container === 'dash' &&
-      item.pipeline === 'mse' && item.videoCodec === 'h264' &&
-      item.audioCodec === 'aac' && item.exactCodecStrings.includes('avc1.64001f')
-    ))
-    assert.ok(profile.mediaCapabilities.some(item =>
-      item.transport === 'dash' && item.container === 'dash' &&
-      item.pipeline === 'mse' && item.videoCodec === 'h264' &&
-      item.audioCodec === 'aac' && item.exactCodecStrings.includes('avc1.640032')
-    ))
+    assert.ok(
+      profile.mediaCapabilities.some(
+        (item) =>
+          item.transport === 'dash' &&
+          item.container === 'dash' &&
+          item.pipeline === 'mse' &&
+          item.videoCodec === 'h264' &&
+          item.audioCodec === 'aac' &&
+          item.exactCodecStrings.includes('avc1.64001f')
+      )
+    )
+    assert.ok(
+      profile.mediaCapabilities.some(
+        (item) =>
+          item.transport === 'dash' &&
+          item.container === 'dash' &&
+          item.pipeline === 'mse' &&
+          item.videoCodec === 'h264' &&
+          item.audioCodec === 'aac' &&
+          item.exactCodecStrings.includes('avc1.640032')
+      )
+    )
     global.MediaSource.isTypeSupported = () => false
     const unsupported = playbackProfile.collectPlaybackClientProfileSync()
-    assert.ok(!unsupported.mediaCapabilities.some(item =>
-      item.transport === 'dash' && item.videoCodec === 'h264'
-    ))
+    assert.ok(
+      !unsupported.mediaCapabilities.some(
+        (item) => item.transport === 'dash' && item.videoCodec === 'h264'
+      )
+    )
     assert.ok(
       profile.mediaCapabilities.some(
         (item) => item.videoCodec === 'h264' && item.audioCodec === 'aac'

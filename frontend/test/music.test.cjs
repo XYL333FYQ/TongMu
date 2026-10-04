@@ -43,6 +43,105 @@ const { useMusicStore } = load('src/modules/music/store.ts', {
 })
 const { updateArtLocale } = load('src/modules/art-player/artLocale.ts')
 
+test('first Play keeps an in-flight NCM resolution and loading heartbeats preserve playback intent', async () => {
+  const effects = []
+  const stateUpdates = []
+  const emitted = []
+  let heartbeat
+  let completeResolve
+  const audio = new FakeAudio()
+  audio.readyState = 0
+  audio.getAttribute = () => audio.src || null
+  audio.canPlayType = () => 'probably'
+  const state = {
+    currentSourceRef: 'music://ncm/track/7001',
+    musicGeneration: 1,
+    currentQueueItemId: 1,
+    currentItem: { metadata: {} },
+    positionSec: 12,
+    playbackRate: 1,
+    version: 1,
+    isPlaying: false,
+    setError: () => {},
+  }
+  const socket = {
+    connected: true,
+    emit: (event, value) => emitted.push([event, value]),
+  }
+  const hook = load('src/modules/music/useMusicSync.ts', {
+    '@/i18n': { ...i18n, useTranslation: () => {} },
+    react: {
+      useRef: (value) => ({ current: value }),
+      useCallback: (fn) => fn,
+      useEffect: (fn) => effects.push(fn),
+      useState: (value) => [value, (next) => stateUpdates.push(next)],
+    },
+    '@/hooks/useSocket': { useSocket: () => ({ socket, connected: true }) },
+    '@/store/roomExperienceStore': {
+      useRoomExperienceStore: (select) => select({ snapshot: null }),
+    },
+    '@/lib/errorMessage': { englishErrorMessage: (value) => value },
+    './audio-lifecycle': lifecycle,
+    '@/lib/mediaTeardown': {},
+    './domain': domain,
+    './realtime-version': versions,
+    './store': {
+      useMusicStore: Object.assign(() => state, { getState: () => state }),
+    },
+    './source-resolver': {
+      isMusicQuality: () => true,
+      resolveMusicSourceDetailed: () =>
+        new Promise((resolve) => {
+          completeResolve = resolve
+        }),
+    },
+  })
+  const previousWindow = global.window
+  global.window = {
+    setInterval: (fn) => {
+      heartbeat = fn
+      return 1
+    },
+    clearInterval: () => {},
+  }
+  try {
+    const controls = hook.useMusicSync({
+      roomId: 'music-room',
+      isHost: true,
+      audioRef: { current: audio },
+    })
+    const cleanup = effects.find((fn) =>
+      fn.toString().includes('resolveMusicSourceDetailed')
+    )()
+    effects.find((fn) => fn.toString().includes('setInterval'))()
+    controls.play()
+    assert.equal(
+      stateUpdates.length,
+      0,
+      'Play must not cancel and restart the first resolution'
+    )
+    assert.equal(emitted.at(-1)[0], 'music:play')
+    state.isPlaying = true
+    heartbeat()
+    assert.equal(emitted.at(-1)[1].isPlaying, true)
+    assert.equal(
+      emitted.at(-1)[1].positionSec,
+      12,
+      'unloaded audio time must not reset the room'
+    )
+    completeResolve({ url: '/first.wav', mimeType: 'audio/wav' })
+    await new Promise((resolve) => setImmediate(resolve))
+    audio.readyState = 4
+    audio.paused = false
+    audio.currentTime = 14
+    heartbeat()
+    assert.equal(emitted.at(-1)[1].positionSec, 14)
+    cleanup()
+  } finally {
+    global.window = previousWindow
+  }
+})
+
 test('module translation switches music controls and keeps user template values intact', () => {
   assert.equal(domain.modeLabel('repeat-one'), 'Repeat one')
   locale = 'zh'
@@ -201,21 +300,43 @@ class FakeAudio {
 }
 
 test('playback errors distinguish browser permission, interrupted playback and unavailable media', () => {
-  assert.equal(lifecycle.classifyMusicPlaybackError({ name: 'NotAllowedError' }), 'blocked')
-  assert.equal(lifecycle.classifyMusicPlaybackError({ name: 'AbortError' }), 'aborted')
-  assert.equal(lifecycle.classifyMusicPlaybackError({ name: 'NotSupportedError' }), 'unavailable')
-  assert.equal(lifecycle.classifyMusicPlaybackError(new Error('upstream failed')), 'unavailable')
+  assert.equal(
+    lifecycle.classifyMusicPlaybackError({ name: 'NotAllowedError' }),
+    'blocked'
+  )
+  assert.equal(
+    lifecycle.classifyMusicPlaybackError({ name: 'AbortError' }),
+    'aborted'
+  )
+  assert.equal(
+    lifecycle.classifyMusicPlaybackError({ name: 'NotSupportedError' }),
+    'unavailable'
+  )
+  assert.equal(
+    lifecycle.classifyMusicPlaybackError(new Error('upstream failed')),
+    'unavailable'
+  )
 })
 
 test('room heartbeats and unchanged control snapshots preserve a track load error', () => {
   useMusicStore.getState().reset('fixture-room')
   const snapshot = {
-    roomId: 'fixture-room', session: { sessionId: 'fixture-session' },
-    queue: [], currentItem: null, currentQueueItemId: 1, currentIndex: 0,
-    currentSourceRef: 'music://ncm/track/101', isPlaying: false,
-    positionSec: 0, playbackRate: 1, playMode: 'sequential',
-    musicGeneration: 1, version: 1, serverTimestamp: 100,
-    host: { socketId: 'host', userId: 1, online: true }, hostOffline: false,
+    roomId: 'fixture-room',
+    session: { sessionId: 'fixture-session' },
+    queue: [],
+    currentItem: null,
+    currentQueueItemId: 1,
+    currentIndex: 0,
+    currentSourceRef: 'music://ncm/track/101',
+    isPlaying: false,
+    positionSec: 0,
+    playbackRate: 1,
+    playMode: 'sequential',
+    musicGeneration: 1,
+    version: 1,
+    serverTimestamp: 100,
+    host: { socketId: 'host', userId: 1, online: true },
+    hostOffline: false,
   }
   useMusicStore.getState().applySnapshot(snapshot, true)
   useMusicStore.getState().setError('Track request failed')
@@ -223,7 +344,14 @@ test('room heartbeats and unchanged control snapshots preserve a track load erro
   assert.equal(useMusicStore.getState().error, 'Track request failed')
   useMusicStore.getState().applySnapshot({ ...snapshot, version: 2 })
   assert.equal(useMusicStore.getState().error, 'Track request failed')
-  useMusicStore.getState().applySnapshot({ ...snapshot, version: 3, musicGeneration: 2, currentSourceRef: 'music://ncm/track/102' })
+  useMusicStore
+    .getState()
+    .applySnapshot({
+      ...snapshot,
+      version: 3,
+      musicGeneration: 2,
+      currentSourceRef: 'music://ncm/track/102',
+    })
   assert.equal(useMusicStore.getState().error, null)
 })
 
@@ -231,19 +359,25 @@ test('audio buffering and seek readiness cannot repeatedly reset playback positi
   const audio = new FakeAudio()
   const controller = new lifecycle.MusicAudioLifecycle(audio)
   let readyCalls = 0
-  controller.attach('/track.mp3', 1, { onReady: () => {
-    readyCalls += 1
-    audio.currentTime = 0
-    // A seek can itself trigger readiness, including before a queued callback ends.
-    audio.fire('canplay')
-  } })
+  controller.attach('/track.mp3', 1, {
+    onReady: () => {
+      readyCalls += 1
+      audio.currentTime = 0
+      // A seek can itself trigger readiness, including before a queued callback ends.
+      audio.fire('canplay')
+    },
+  })
   audio.fire('loadedmetadata')
   audio.currentTime = 12
   audio.fire('canplay')
   audio.fire('canplay')
   assert.equal(readyCalls, 1)
   assert.equal(audio.currentTime, 12)
-  controller.attach('/next.mp3', 2, { onReady: () => { readyCalls += 1 } })
+  controller.attach('/next.mp3', 2, {
+    onReady: () => {
+      readyCalls += 1
+    },
+  })
   audio.fire('canplay')
   assert.equal(readyCalls, 2)
 })

@@ -168,6 +168,7 @@ export default function AdminPage() {
     return saved === 'tile' ? 'tile' : 'list'
   })
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
+  const [updateError, setUpdateError] = useState('')
   const [updateLoading, setUpdateLoading] = useState(false)
   const [applyLoading, setApplyLoading] = useState(false)
   const [uploadLoading, setUploadLoading] = useState(false)
@@ -277,9 +278,11 @@ export default function AdminPage() {
       const data = (await res.json()) as {
         success: boolean
         info?: UpdateInfo
+        code?: string
         message?: string
       }
       if (data.success && data.info) {
+        setUpdateError('')
         setUpdateInfo(data.info)
         if (data.info.hasUpdate) {
           message.info(
@@ -291,11 +294,19 @@ export default function AdminPage() {
           message.success(t('You are up to date.'))
         }
       } else {
+        const reason =
+          data.code === 'UPDATE_NOT_CONFIGURED'
+            ? 'Online updates are disabled because no trusted update repository is configured.'
+            : data.message || 'Could not check for updates.'
+        setUpdateInfo(null)
+        setUpdateError(reason)
         message.error(
-          englishErrorMessage(data.message, 'Could not check for updates.')
+          englishErrorMessage(reason, t('Could not check for updates.'))
         )
       }
     } catch (err) {
+      setUpdateInfo(null)
+      setUpdateError('Could not check for updates.')
       console.error('[AdminPage] check update error:', err)
       message.error(t('Could not check for updates.'))
     } finally {
@@ -1826,7 +1837,12 @@ export default function AdminPage() {
                         <div className="space-y-3">
                           <div className="flex items-center justify-between py-2">
                             <Text type="secondary" className="text-sm">
-                              {t('Version information is unavailable.')}
+                              {updateError
+                                ? englishErrorMessage(
+                                    updateError,
+                                    t('Could not check for updates.')
+                                  )
+                                : t('Version information is unavailable.')}
                             </Text>
                             <Button
                               variant="secondary"

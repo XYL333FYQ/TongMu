@@ -68,7 +68,7 @@ export interface PlaybackCandidate {
     audioChannels?: number;
   };
 }
-export type PublicMediaDescriptor = Omit<MediaDescriptor, 'input' | 'originalUrl' | 'headers' | 'credentialOrigins' | 'candidates'> & {
+export type PublicMediaDescriptor = Omit<MediaDescriptor, 'input' | 'originalUrl' | 'headers' | 'credentialOrigins' | 'privateTransportAlternatives' | 'candidates'> & {
   input: string; originalUrl: string; transportPlan?: TransportPlan;
 };
 
@@ -115,7 +115,7 @@ export function publicMetadata(value: unknown, depth = 0): any {
   if (!value || typeof value !== 'object') return value;
   if (Array.isArray(value)) return value.map(item => publicMetadata(item, depth + 1));
   return Object.fromEntries(Object.entries(value)
-    .filter(([key]) => !/^(?:input|originalUrl|sourceInput|headers|credentialOrigins|candidates|playbackPlan|cookie|authorization|password)$/i.test(key) && !/token|api.?key|secret/i.test(key))
+    .filter(([key]) => !/^(?:input|originalUrl|sourceInput|headers|credentialOrigins|privateTransportAlternatives|candidates|playbackPlan|cookie|authorization|password)$/i.test(key) && !/token|api.?key|secret/i.test(key))
     .map(([key, item]) => [key, key === 'transportPlan' ? publicTransportPlan(item) : publicMetadata(item, depth + 1)]));
 }
 function publicTransportPlan(value: any): TransportPlan | undefined {

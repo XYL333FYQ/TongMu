@@ -1074,6 +1074,9 @@ router.get('/media/:id', async (req: AuthenticatedRequest, res) => {
       url: resource.url, targetPolicy: resource.targetPolicy ?? 'public-only',
       trustedPrivateHosts: resource.trustedPrivateHosts,
       headers: { extra: resource.headers },
+      fallbackUrls: resource.providerId === 'bilibili'
+        ? ((resource.providerData?.transportAlternatives as Record<string, string[]> | undefined)?.[resource.url])
+        : undefined,
       sliceCache: sliceCacheContext(resource, resource.url),
       defaultContentType: resource.contentType, cors: 'global', logTag: 'media-handle', errorMessage: '媒体网关请求失败',
     });

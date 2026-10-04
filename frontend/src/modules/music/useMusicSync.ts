@@ -4,7 +4,10 @@ import type { RefObject } from 'react'
 import { useSocket } from '@/hooks/useSocket'
 import { useRoomExperienceStore } from '@/store/roomExperienceStore'
 import { englishErrorMessage } from '@/lib/errorMessage'
-import { MusicAudioLifecycle, classifyMusicPlaybackError } from './audio-lifecycle'
+import {
+  MusicAudioLifecycle,
+  classifyMusicPlaybackError,
+} from './audio-lifecycle'
 import {
   ROOM_MEDIA_TEARDOWN_EVENT,
   type RoomMediaTeardownDetail,
@@ -93,6 +96,7 @@ export function useMusicSync({
   const attachedGenerationRef = useRef<number | null>(null)
   const resumeAfterSocketReconnectRef = useRef(false)
   const resolveEpochRef = useRef(0)
+  const pendingResolveEpochRef = useRef<number | null>(null)
   const snapshotInitializedRef = useRef(false)
   const ackedTrackRef = useRef<string | null>(null)
   const [resolutionAttempt, setResolutionAttempt] = useState(0)
@@ -111,15 +115,22 @@ export function useMusicSync({
     useMusicStore.getState().setError(message)
   }, [])
 
-  const setPlaybackError = useCallback((error: unknown) => {
-    const kind = classifyMusicPlaybackError(error)
-    if (kind === 'aborted') return
-    if (kind === 'blocked') {
-      setError(t('Your browser blocked autoplay. Press Play to continue.'))
-    } else if (!useMusicStore.getState().error) {
-      setError(t('Unable to load this track. Check the media connection or choose a supported audio format.'))
-    }
-  }, [setError])
+  const setPlaybackError = useCallback(
+    (error: unknown) => {
+      const kind = classifyMusicPlaybackError(error)
+      if (kind === 'aborted') return
+      if (kind === 'blocked') {
+        setError(t('Your browser blocked autoplay. Press Play to continue.'))
+      } else if (!useMusicStore.getState().error) {
+        setError(
+          t(
+            'Unable to load this track. Check the media connection or choose a supported audio format.'
+          )
+        )
+      }
+    },
+    [setError]
+  )
 
   const applySnapshot = useCallback(
     (value: unknown, force = false) => {
@@ -201,8 +212,10 @@ export function useMusicSync({
       const response = value as Partial<MusicControlResponse>
       if (typeof response.requestId !== 'string') return
       useMusicStore.getState().resolvePendingRequest(response.requestId)
-      if (response.accepted && response.snapshot)
+      if (response.accepted && response.snapshot) {
+        setError(null)
         applySnapshot(response.snapshot)
+      }
       if (response.accepted === false && response.reason)
         setError(
           englishErrorMessage(
@@ -319,92 +332,101 @@ export function useMusicSync({
     )
       ? state.currentItem?.metadata?.requestedQuality
       : undefined
+    pendingResolveEpochRef.current = resolveEpoch
     void resolveMusicSourceDetailed(sourceRef, {
       roomId,
       queueItemId: state.currentQueueItemId || 0,
       musicGeneration: generation,
       requestedQuality,
-    }).then((resolution) => {
-      if (cancelled || resolveEpochRef.current !== resolveEpoch) return
-      const sourceUrl = resolution.url
-      if (!sourceUrl) {
-        const available = resolution.availableQualities?.length
-          ? t(' Available qualities: {qualities}.', {
-              qualities: resolution.availableQualities.join(', '),
-            })
-          : ''
-        setError(
-          `${englishErrorMessage(resolution.message, t('This music source could not be opened.'))}${available}`
-        )
-        return
-      }
-      if (/^music:\/\/ncm\//.test(sourceRef)) {
-        setQualityFacts({
-          sourceRef,
-          generation,
-          facts: {
-            requestedQuality:
-              resolution.requestedQuality || requestedQuality || 'exhigh',
-            actualQuality: resolution.actualQuality ?? null,
-            availableQualities: resolution.availableQualities || [],
-            availableMaximum: resolution.availableMaximum ?? null,
-          },
-        })
-      }
-      if (
-        /^music:\/\/ncm\//.test(sourceRef) &&
-        resolution.mimeType &&
-        audio.canPlayType(resolution.mimeType) === ''
-      ) {
-        setError(
-          t(
-            'Your browser does not support this audio format ({value1}). Choose another supported quality; the quality has not been reduced automatically.',
-            { value1: resolution.mimeType }
+    })
+      .then((resolution) => {
+        if (cancelled || resolveEpochRef.current !== resolveEpoch) return
+        const sourceUrl = resolution.url
+        if (!sourceUrl) {
+          const available = resolution.availableQualities?.length
+            ? t(' Available qualities: {qualities}.', {
+                qualities: resolution.availableQualities.join(', '),
+              })
+            : ''
+          setError(
+            `${englishErrorMessage(resolution.message, t('This music source could not be opened.'))}${available}`
           )
-        )
-        return
-      }
-      attachedSourceRef.current = sourceRef
-      attachedGenerationRef.current = generation
-      ackedTrackRef.current = null
-      lifecycle.attach(sourceUrl, generation, {
-        onReady: () => {
-          const current = useMusicStore.getState()
-          if (
-            current.musicGeneration !== generation ||
-            current.currentSourceRef !== sourceRef
-          )
-            return
-          audio.currentTime = Math.max(0, current.positionSec)
-          sendTrackAck(true)
-          if (active && current.isPlaying) void audio.play().catch(setPlaybackError)
-        },
-        onError: () =>
+          return
+        }
+        if (/^music:\/\/ncm\//.test(sourceRef)) {
+          setQualityFacts({
+            sourceRef,
+            generation,
+            facts: {
+              requestedQuality:
+                resolution.requestedQuality || requestedQuality || 'exhigh',
+              actualQuality: resolution.actualQuality ?? null,
+              availableQualities: resolution.availableQualities || [],
+              availableMaximum: resolution.availableMaximum ?? null,
+            },
+          })
+        }
+        if (
+          /^music:\/\/ncm\//.test(sourceRef) &&
+          resolution.mimeType &&
+          audio.canPlayType(resolution.mimeType) === ''
+        ) {
           setError(
             t(
-              'Unable to load this track. Check the media connection or choose a supported audio format.'
+              'Your browser does not support this audio format ({value1}). Choose another supported quality; the quality has not been reduced automatically.',
+              { value1: resolution.mimeType }
             )
-          ),
-        onEnded: () => {
-          if (!isHost || !socket) return
-          const current = useMusicStore.getState()
-          if (
-            current.musicGeneration !== generation ||
-            current.currentSourceRef !== sourceRef
           )
-            return
-          socket.emit('music:ended', {
-            roomId,
-            queueItemId: current.currentQueueItemId,
-            musicGeneration: current.musicGeneration,
-            baseVersion: current.version,
-            mutationId: clientId(),
-          })
-        },
+          return
+        }
+        attachedSourceRef.current = sourceRef
+        attachedGenerationRef.current = generation
+        ackedTrackRef.current = null
+        lifecycle.attach(sourceUrl, generation, {
+          onReady: () => {
+            const current = useMusicStore.getState()
+            if (
+              current.musicGeneration !== generation ||
+              current.currentSourceRef !== sourceRef
+            )
+              return
+            audio.currentTime = Math.max(0, current.positionSec)
+            sendTrackAck(true)
+            if (active && current.isPlaying)
+              void audio.play().catch(setPlaybackError)
+          },
+          onError: () =>
+            setError(
+              t(
+                'Unable to load this track. Check the media connection or choose a supported audio format.'
+              )
+            ),
+          onEnded: () => {
+            if (!isHost || !socket) return
+            const current = useMusicStore.getState()
+            if (
+              current.musicGeneration !== generation ||
+              current.currentSourceRef !== sourceRef
+            )
+              return
+            socket.emit('music:ended', {
+              roomId,
+              queueItemId: current.currentQueueItemId,
+              musicGeneration: current.musicGeneration,
+              baseVersion: current.version,
+              mutationId: clientId(),
+            })
+          },
+        })
       })
-    })
+      .finally(() => {
+        if (pendingResolveEpochRef.current === resolveEpoch)
+          pendingResolveEpochRef.current = null
+      })
     return () => {
       cancelled = true
+      if (pendingResolveEpochRef.current === resolveEpoch)
+        pendingResolveEpochRef.current = null
     }
   }, [
     active,
@@ -430,9 +452,7 @@ export function useMusicSync({
       audio.pause()
       return
     }
-    void audio
-      .play()
-      .catch(setPlaybackError)
+    void audio.play().catch(setPlaybackError)
   }, [
     active,
     audioRef,
@@ -457,17 +477,26 @@ export function useMusicSync({
       if (!socket.connected) return
       const current = useMusicStore.getState()
       const audio = audioRef.current
+      const hasCurrentAudio = Boolean(
+        audio &&
+        lifecycleRef.current?.generation === current.musicGeneration &&
+        audio.readyState >= 2
+      )
       socket.emit('music:heartbeat', {
         roomId,
         queueItemId: current.currentQueueItemId,
         musicGeneration: current.musicGeneration,
         positionSec:
-          audio && Number.isFinite(audio.currentTime)
+          hasCurrentAudio && audio && Number.isFinite(audio.currentTime)
             ? audio.currentTime
             : current.positionSec,
-        isPlaying: Boolean(
-          audio && !audio.paused && current.currentQueueItemId !== null
-        ),
+        // A pending source is paused by default. It must not overwrite the
+        // host's Play command before the first audio data arrives.
+        isPlaying: hasCurrentAudio
+          ? Boolean(
+              audio && !audio.paused && current.currentQueueItemId !== null
+            )
+          : current.isPlaying,
         playbackRate: audio?.playbackRate ?? current.playbackRate,
         baseVersion: current.version,
         clientTimestamp: Date.now(),
@@ -513,9 +542,7 @@ export function useMusicSync({
       resumeAfterSocketReconnectRef.current = false
       const audio = audioRef.current
       if (!audio || !useMusicStore.getState().isPlaying) return
-      void audio
-        .play()
-        .catch(setPlaybackError)
+      void audio.play().catch(setPlaybackError)
     }
     socket.on('connect', handleReconnect)
     return () => {
@@ -557,6 +584,7 @@ export function useMusicSync({
       payload: Record<string, unknown> = {}
     ) => {
       if (!socket || !roomId || isHost) return false
+      setError(null)
       const current = useMusicStore.getState()
       const requestId = clientId()
       useMusicStore.getState().addPendingRequest(requestId)
@@ -621,13 +649,11 @@ export function useMusicSync({
     if (canControl) {
       if (store.isPlaying) return emitHostMutation('music:pause')
       if (audio?.getAttribute('src') && !audio.error)
-        void audio
-          .play()
-          .catch(setPlaybackError)
-      else {
+        void audio.play().catch(setPlaybackError)
+      else if (pendingResolveEpochRef.current === null) {
         attachedSourceRef.current = null
         attachedGenerationRef.current = null
-        setResolutionAttempt(attempt => attempt + 1)
+        setResolutionAttempt((attempt) => attempt + 1)
       }
       return emitHostMutation('music:play')
     }

@@ -18,6 +18,7 @@ import { Readable, Transform } from 'node:stream';
 import { isInternalNetworkHost } from '../network-utils';
 import {
   fetchWithProxyPolicy,
+  stripCrossOriginCredentials,
   ProxyTargetError,
   type ProxyTargetPolicy,
 } from './safe-fetch';
@@ -40,6 +41,7 @@ export const DEFAULT_PROXY_UA =
 
 /** 上游请求默认超时（毫秒） */
 const DEFAULT_UPSTREAM_TIMEOUT_MS = 30_000;
+const MAX_RETRYABLE_RANGE_BYTES = 8 * 1024 * 1024;
 
 /**
  * 通配 CORS 头。video.src 跨源加载媒体时需要 ACAO:*，否则会被 ORB 阻止。
@@ -94,6 +96,8 @@ export interface ProxyHttpOptions {
   errorMessage: string;
   /** Optional cache context. The caller must have authorized the media handle. */
   sliceCache?: SliceCacheRequestContext;
+  /** Provider-owned alternate CDNs of this exact representation; never another quality. */
+  fallbackUrls?: string[];
   /**
    * Optional provider-owned re-resolution after an upstream auth/expiry
    * response. The callback must return the same logical resource and may not
@@ -252,6 +256,13 @@ export async function proxyHttpUpstream(
       return;
     }
     let upstreamHeaders = buildUpstreamHeaders(req, h);
+    const selectFallback = (attempt: number) => {
+      const nextUrl = opts.fallbackUrls?.[attempt];
+      if (!nextUrl) return;
+      if (new URL(nextUrl).origin !== new URL(requestUrl).origin)
+        upstreamHeaders = stripCrossOriginCredentials(upstreamHeaders);
+      requestUrl = nextUrl;
+    };
     const startUpstreamFetch = () =>
       fetchWithProxyPolicy(requestUrl, {
         method: req.method,
@@ -274,7 +285,17 @@ export async function proxyHttpUpstream(
 
     // 转发原始 HTTP 方法：HEAD 请求转发为 HEAD（避免上游下载整个视频体），
     // GET 请求转发为 GET（含 Range 头时上游返回 206 部分内容）。
-    let upstream = await startUpstreamFetch().catch(async (fetchErr: unknown) => {
+    const fetchWithNetworkRetry = async () => {
+      for (let attempt = 0; ; attempt += 1) {
+        try { return await startUpstreamFetch(); } catch (error) {
+          if (attempt >= 2 || req.method !== 'GET' || controller.signal.aborted ||
+              res.destroyed || error instanceof ProxyTargetError) throw error;
+          selectFallback(attempt);
+          logger.warn('media-proxy', 'network_retry', { proxyKind: logTag, attempt: attempt + 1 });
+        }
+      }
+    };
+    let upstream = await fetchWithNetworkRetry().catch(async (fetchErr: unknown) => {
       const isAbort =
         fetchErr instanceof Error && fetchErr.name === 'AbortError';
       const isTimeoutAbort = isAbort && abortedByTimeout;
@@ -385,6 +406,53 @@ export async function proxyHttpUpstream(
       }
     }
 
+    // DASH consumes complete byte-range fragments. Keep small bounded fragments
+    // private until complete, so a broken CDN connection can be retried without
+    // sending a truncated response or joining bytes from different responses.
+    let bufferedRange: Buffer | undefined;
+    if (req.method === 'GET' && parsedRange?.kind === 'explicit' &&
+        expectedBodyLength !== undefined && expectedBodyLength <= MAX_RETRYABLE_RANGE_BYTES) {
+      for (let attempt = 0; ; attempt += 1) {
+        timeout = setTimeout(() => { abortedByTimeout = true; controller.abort(); }, timeoutMs);
+        try {
+          const reader = upstream.body?.getReader();
+          if (!reader) throw new Error('上游分片缺少响应体');
+          const chunks: Buffer[] = [];
+          let length = 0;
+          try {
+            for (;;) {
+              const next = await reader.read();
+              if (next.done) break;
+              length += next.value.byteLength;
+              if (length > expectedBodyLength) throw new Error('上游分片超过请求长度');
+              chunks.push(Buffer.from(next.value));
+            }
+          } finally {
+            try { await reader.cancel(); } catch { /* disconnected upstream */ }
+            reader.releaseLock();
+          }
+          if (length !== expectedBodyLength) throw new Error('上游分片不完整');
+          bufferedRange = Buffer.concat(chunks, length);
+          break;
+        } catch (error) {
+          if (attempt >= 2 || controller.signal.aborted || res.destroyed) throw error;
+          logger.warn('media-proxy', 'fragment_retry', { proxyKind: logTag, attempt: attempt + 1 });
+          selectFallback(attempt);
+          upstream = await fetchWithNetworkRetry();
+          const retryRange = parseContentRangeHeader(upstream.headers.get('content-range'));
+          const retryLength = contentLengthValue(upstream.headers.get('content-length'));
+          const resolved = retryRange && resolveByteRange(parsedRange, retryRange.total);
+          if (upstream.status !== 206 || !retryRange || resolved?.kind !== 'single' ||
+              resolved.range.start !== retryRange.start || resolved.range.end !== retryRange.end ||
+              retryRange.end - retryRange.start + 1 !== expectedBodyLength ||
+              (retryLength.present && retryLength.value !== expectedBodyLength)) {
+            await upstream.body?.cancel();
+            throw new Error('重试分片与请求 Range 不一致');
+          }
+        } finally { clearTimeout(timeout); }
+      }
+    }
+
     // 转发上游状态码：Range 请求上游返回 206 时必须转发 206，
     // 否则前端 fetch 看到 200 会误判为完整响应（而非部分内容），
     // 影响后续 Content-Range / Content-Length 解析与缓存语义。
@@ -432,6 +500,11 @@ export async function proxyHttpUpstream(
       : 'no-transform';
     res.setHeader('Cache-Control', finalCacheControl);
 
+    if (bufferedRange) {
+      bytesSent = bufferedRange.length;
+      res.end(bufferedRange);
+      return;
+    }
     if (!upstream.body) {
       // HEAD 请求：上游 body 为 null，status 已由上游设置（200/206），
       // 仅返回头信息，不传输 body。

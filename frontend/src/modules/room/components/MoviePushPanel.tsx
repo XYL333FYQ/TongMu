@@ -923,6 +923,12 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
       message.warning(t('Paste a video URL.'))
       return
     }
+    if (/^magnet:/i.test(url.trim())) {
+      setMediaResolveError(
+        t('Magnet links are not supported yet. Use a video URL or webpage.')
+      )
+      return
+    }
 
     if (addInFlightRef.current) return
     if (resolveAbortRef.current && !resolveAbortRef.current.signal.aborted)
@@ -2047,7 +2053,7 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
                 >
                   {t('Connect a source in your account')}
                 </a>
-                . Only the selected items are shared with the room.
+                . {t('Only the selected items are shared with the room.')}
               </div>
             )}
 
@@ -2175,11 +2181,13 @@ export function MoviePushPanel({ isHost }: MoviePushPanelProps) {
                 <Text type="secondary" className="block">
                   {t('Range:')}{' '}
                   {mediaDiagnostics.descriptor.rangeSupported
-                    ? t('yes')
-                    : t('no')}{' '}
+                    ? t('Supported')
+                    : t('Not supported')}{' '}
                   {t('· Engine:')} {mediaDiagnostics.plan.engine} {t('· Mode:')}{' '}
                   {mediaDiagnostics.plan.mode} {t('· Proxy:')}{' '}
-                  {mediaDiagnostics.plan.proxy ? t('signed handle') : t('no')}
+                  {mediaDiagnostics.plan.proxy
+                    ? t('signed handle')
+                    : t('Not used')}
                 </Text>
                 <Text type="secondary" className="block">
                   {t('Resolution:')}{' '}

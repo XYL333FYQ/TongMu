@@ -71,7 +71,7 @@ export function VoiceChatPanel({
   return createPortal(
     <div
       className={cn(
-        'fixed bottom-6 right-6 z-40 flex flex-col items-end gap-3',
+        'tm-room-utility tm-room-utility--voice fixed bottom-6 right-6 z-40 flex flex-col items-end gap-3',
         'transition-all duration-300'
       )}
     >

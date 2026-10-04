@@ -138,6 +138,8 @@ export interface ResolveResult {
   cid: number;
   videoUrl: string;
   audioUrl?: string;
+  videoBackupUrls?: string[];
+  audioBackupUrls?: string[];
   videoCodec?: string;
   audioCodec?: string;
   format: 'dash' | 'mp4';
@@ -601,6 +603,8 @@ export async function resolveBilibiliVideo(
       cid: effectiveCid,
       videoUrl,
       audioUrl: audioUrl ?? undefined,
+      videoBackupUrls: [...new Set([playUrl.bestVideo.baseUrl, ...(playUrl.bestVideo.backupUrl ?? [])].map(upgradeBilibiliUrlToHttps))].filter(value => value !== videoUrl),
+      audioBackupUrls: playUrl.bestAudio ? [...new Set([playUrl.bestAudio.baseUrl, ...(playUrl.bestAudio.backupUrl ?? [])].map(upgradeBilibiliUrlToHttps))].filter(value => value !== audioUrl) : undefined,
       videoCodec: playUrl.bestVideo.codecs,
       audioCodec: playUrl.bestAudio?.codecs,
       format: 'dash',

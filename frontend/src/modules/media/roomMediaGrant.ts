@@ -62,8 +62,10 @@ export function appendRoomMediaGrant(url: string, roomId?: string): string {
   try {
     const parsed = new URL(url, window.location.origin)
     if (!parsed.pathname.startsWith('/api/stream/media/')) return url
-    if (parsed.searchParams.has('roomGrant')) return url
-    return `${url}${url.includes('?') ? '&' : '?'}roomGrant=${encodeURIComponent(grant)}`
+    parsed.searchParams.set('roomGrant', grant)
+    if (url.startsWith('/') && !url.startsWith('//'))
+      return `${parsed.pathname}${parsed.search}${parsed.hash}`
+    return parsed.toString()
   } catch {
     return url
   }
@@ -76,7 +78,6 @@ export function appendMusicPlaybackGrant(url: string, roomId?: string): string {
   try {
     const parsed = new URL(url, window.location.origin)
     if (!parsed.pathname.startsWith('/api/music/playback/')) return url
-    if (parsed.searchParams.has('roomGrant')) return url
     parsed.searchParams.set('roomGrant', grant)
     if (url.startsWith('/') && !url.startsWith('//')) {
       return `${parsed.pathname}${parsed.search}${parsed.hash}`

@@ -360,5 +360,9 @@ test('Music permissions distinguish queue management, host authority, and viewer
   assert.equal(canPerformRoomAction(facts('owner'), 'music.play').allowed, true);
   assert.equal(canPerformRoomAction(facts('owner', false), 'music.play').allowed, false);
   assert.equal(canPerformRoomAction(facts('member'), 'music.control.request').allowed, true);
-  assert.equal(canPerformRoomAction(facts('guest'), 'music.control.request').allowed, false);
+    assert.equal(canPerformRoomAction(facts('guest'), 'music.control.request').allowed, true);
+    assert.equal(canPerformRoomAction(facts('guest'), 'music.track.ack').allowed, true);
+    assert.equal(canPerformRoomAction(facts('guest'), 'music.play').allowed, false);
+    assert.equal(canPerformRoomAction(facts('guest'), 'music.queue.add').allowed, false);
+    assert.equal(canPerformRoomAction({ ...facts('guest'), isRoomMember: false }, 'music.control.request').allowed, false);
 });

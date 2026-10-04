@@ -310,6 +310,8 @@ export const pagesZh: Record<string, string> = {
   'Choose archive': '选择压缩包',
   '.zip or .tar.gz archives': '.zip 或 .tar.gz 压缩包',
   'Version information is unavailable.': '暂时无法获取版本信息。',
+  'Online updates are disabled because no trusted update repository is configured.':
+    '在线更新未启用：部署尚未配置可信更新仓库。',
   'Check for updates': '检查更新',
   'Remove user': '移除用户',
   'Remove user {name}? This cannot be undone.':

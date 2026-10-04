@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { useLocation } from 'react-router-dom'
 import { create } from 'zustand'
 import { apiFetch } from '@/lib/api'
 import type { RoomListItem } from '@/lib/roomDirectory'
@@ -35,7 +36,11 @@ function clearDirectory() {
   useDirectoryStore.setState({ rooms: [], loading: false, error: '' })
 }
 
-function loadDirectory(key: string, force = false): Promise<void> {
+function loadDirectory(
+  key: string,
+  force = false,
+  background = false
+): Promise<void> {
   if (identity !== key) {
     generation += 1
     currentRequest?.controller.abort()
@@ -52,7 +57,7 @@ function loadDirectory(key: string, force = false): Promise<void> {
   currentRequest?.controller.abort()
   const requestGeneration = generation
   const controller = new AbortController()
-  useDirectoryStore.setState({ loading: true, error: '' })
+  if (!background) useDirectoryStore.setState({ loading: true, error: '' })
   const promise = (async () => {
     try {
       const response = await apiFetch('/api/rooms', {
@@ -97,6 +102,7 @@ export function useRoomDirectory(
   isAuthenticated: boolean,
   userId?: string
 ) {
+  const { pathname } = useLocation()
   const { t } = useTranslation()
   const rooms = useDirectoryStore((state) => state.rooms)
   const loading = useDirectoryStore((state) => state.loading)
@@ -110,6 +116,25 @@ export function useRoomDirectory(
     }
     void loadDirectory(userId ?? 'authenticated')
   }, [authResolved, isAuthenticated, userId])
+
+  useEffect(() => {
+    if (
+      !authResolved ||
+      !isAuthenticated ||
+      !['/', '/rooms'].includes(pathname)
+    )
+      return
+    const refreshVisible = () => {
+      if (document.visibilityState === 'visible' && !currentRequest)
+        void loadDirectory(userId ?? 'authenticated', false, true)
+    }
+    const timer = window.setInterval(refreshVisible, 5000)
+    document.addEventListener('visibilitychange', refreshVisible)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', refreshVisible)
+    }
+  }, [authResolved, isAuthenticated, userId, pathname])
 
   return {
     rooms,

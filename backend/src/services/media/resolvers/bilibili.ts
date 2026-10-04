@@ -39,6 +39,10 @@ export class BilibiliResolver implements SourceResolver {
       loggedIn: result.loggedIn, vip: result.vipStatus === 1,
       fallbackReason: result.fallbackReason, drm: { protected: false },
       headers: result.format === 'dash' ? getBilibiliMediaHeaders() : undefined,
+      privateTransportAlternatives: {
+        [result.videoUrl]: result.videoBackupUrls ?? [],
+        ...(result.audioUrl ? { [result.audioUrl]: result.audioBackupUrls ?? [] } : {}),
+      },
       sourceMetadata: {
         bilibili: {
           cid: result.cid,

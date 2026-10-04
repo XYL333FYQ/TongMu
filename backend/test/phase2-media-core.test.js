@@ -11,6 +11,15 @@ const {
 } = require('../dist/services/media/playback-profile');
 const { filterPlaybackCandidates } = require('../dist/services/media/viability');
 const { publicMetadata } = require('../dist/services/media/protocol');
+const { sniffMediaMagic } = require('../dist/services/media/probe');
+
+test('DASH namespace declarations and comments are not encryption, while ContentProtection is', () => {
+  const clear = Buffer.from('<MPD xmlns:cenc="urn:mpeg:cenc:2013"><!-- Widevine ContentProtection --><Period /></MPD>');
+  assert.deepEqual(sniffMediaMagic(clear).drm, []);
+  const encrypted = Buffer.from('<MPD><Period><ContentProtection schemeIdUri="urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed" /></Period></MPD>');
+  assert.ok(sniffMediaMagic(encrypted).drm.includes('Widevine'));
+  assert.ok(sniffMediaMagic(encrypted).drm.includes('CENC'));
+});
 const {
   MediaProviderRegistry,
   providerContextFromResolverContext,

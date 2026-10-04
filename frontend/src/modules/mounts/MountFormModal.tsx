@@ -449,7 +449,7 @@ export default function MountFormModal({
     <Modal
       open={open}
       onClose={onClose}
-      title={modalTitle}
+      title={t(modalTitle)}
       footer={
         <>
           <Button variant="secondary" size="sm" onClick={onClose}>

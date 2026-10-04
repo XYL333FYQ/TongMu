@@ -94,7 +94,9 @@ export class LegacyResolverAdapter implements MediaProvider {
       // Preserve the adapter identity so the gateway can apply provider-specific
       // handling (Bilibili DASH tracks require a generated MPD, not MPD parsing
       // of the binary video URL).
-      privateSource: { ...privateSourceFor(descriptor), providerId: this.id },
+      privateSource: { ...privateSourceFor(descriptor), providerId: this.id,
+        providerData: descriptor.privateTransportAlternatives
+          ? { transportAlternatives: descriptor.privateTransportAlternatives } : undefined },
       descriptor,
       candidates,
     };

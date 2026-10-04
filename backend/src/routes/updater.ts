@@ -113,6 +113,7 @@ router.get(
       const message = reportUpdateError('check', err, '检查更新失败');
       res.status(err instanceof UpdateNotConfiguredError ? 503 : 500).json({
         success: false,
+        code: err instanceof UpdateNotConfiguredError ? 'UPDATE_NOT_CONFIGURED' : 'UPDATE_CHECK_FAILED',
         message,
       });
     }

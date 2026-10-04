@@ -32,7 +32,10 @@ const SERVER_POLL_INTERVAL_MS = 2000
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.min(units.length - 1, Math.floor(Math.log2(bytes) / 10))
+  const i = Math.max(
+    0,
+    Math.min(units.length - 1, Math.floor(Math.log2(bytes) / 10))
+  )
   const value = bytes / 2 ** (10 * i)
   return `${value >= 100 ? value.toFixed(0) : value.toFixed(1)} ${units[i]}`
 }
@@ -49,13 +52,14 @@ export function TrafficPanel() {
   const [speeds, setSpeeds] = useState({ downSpeed: 0, upSpeed: 0 })
   const [server, setServer] = useState<ServerTraffic | null>(null)
   const [serverAvailable, setServerAvailable] = useState(true)
-  const prevLocalRef = useRef({ ...local, at: Date.now() })
+  const prevLocalRef = useRef({ ...local, at: 0 })
 
   const user = useAuthStore((s) => s.user)
   const isRoot = user?.role === 'root'
 
   // 安装全局流量打点（幂等）+ 本地速度采样（1s 差分，EMA 平滑）
   useEffect(() => {
+    prevLocalRef.current = { ...getLocalTraffic(), at: Date.now() }
     installTrafficCounter()
     const timer = setInterval(() => {
       const now = Date.now()
@@ -129,7 +133,7 @@ export function TrafficPanel() {
   return createPortal(
     <div
       className={cn(
-        'fixed bottom-6 left-6 z-40 flex flex-col items-start gap-3',
+        'tm-room-utility tm-room-utility--traffic fixed bottom-6 left-6 z-40 flex flex-col items-start gap-3',
         'transition-all duration-300'
       )}
     >

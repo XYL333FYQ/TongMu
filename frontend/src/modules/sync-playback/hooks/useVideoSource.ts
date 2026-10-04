@@ -373,7 +373,7 @@ export function useVideoSource({
     const startTime = state.currentTime > 0 ? state.currentTime : undefined
     void applySourceToVideo(video, state, startTime)
       .then(() => {
-        if (state.currentTime > 0) {
+        if (state.currentTime > 0 && state.format !== 'dash') {
           video.currentTime = state.currentTime
         }
         if (video.playbackRate !== state.playbackRate) {

@@ -103,7 +103,7 @@ export function canPerformRoomAction(
   if (target?.role === 'system') return { allowed: false, reason: '不能对系统管理员操作' };
   if (target?.isSelf && action !== 'room.settings') return { allowed: false, reason: '不能对自己执行此操作' };
 
-  if (action === 'activity.request' || action === 'activity.vote' || action === 'content.suggest') return { allowed: true };
+  if (action === 'activity.request' || action === 'activity.vote' || action === 'content.suggest' || action === 'music.control.request' || action === 'music.track.ack') return { allowed: true };
   if (facts.isDelegate) {
     if (ACTIVITY_CONTROL_ACTIONS.has(action) || action === 'activity.switch' || action === 'screen.start' || action === 'music.heartbeat' || action === 'music.track.ended') return { allowed: true };
     // Temporary hosting does not inherit platform administration or ownership.
@@ -116,12 +116,6 @@ export function canPerformRoomAction(
   }
 
   if (facts.actorRole === 'guest') return { allowed: false, reason: '游客无此权限' };
-  if (action === 'music.control.request') {
-    return { allowed: true };
-  }
-  if (action === 'music.track.ack') {
-    return { allowed: true };
-  }
   if (MUSIC_QUEUE_ACTIONS.has(action)) {
     return facts.actorRole === 'owner' || facts.actorRole === 'moderator' || facts.actorRole === 'system'
       ? { allowed: true }

@@ -100,10 +100,12 @@ export function sniffMediaMagic(bytes: Uint8Array): { container: MediaContainer;
   }
   if (/<MPD(?:\s|>)/i.test(trimmed.slice(0, 8192))) {
     const systems = new Set<string>();
-    if (/widevine|edef8ba9/i.test(ascii)) systems.add('Widevine');
-    if (/playready|9a04f079/i.test(ascii)) systems.add('PlayReady');
-    if (/fairplay|com\.apple\.fps/i.test(ascii)) systems.add('FairPlay');
-    if (/ContentProtection|cenc:/i.test(ascii)) systems.add('CENC');
+    // Declaring xmlns:cenc does not mean that the tracks are encrypted.
+    const protection = ascii.replace(/<!--[\s\S]*?-->/g, '').match(/<(?:[\w.-]+:)?ContentProtection\b[^>]*(?:\/>|>[\s\S]*?<\/(?:[\w.-]+:)?ContentProtection\s*>)/gi)?.join('\n') ?? '';
+    if (/widevine|edef8ba9/i.test(protection)) systems.add('Widevine');
+    if (/playready|9a04f079/i.test(protection)) systems.add('PlayReady');
+    if (/fairplay|com\.apple\.fps/i.test(protection)) systems.add('FairPlay');
+    if (protection) systems.add('CENC');
     return { container: 'dash', magic: 'MPD XML', drm: [...systems] };
   }
   if (bytes.length >= 8 && Buffer.from(bytes.slice(4, 8)).toString('ascii') === 'ftyp') {

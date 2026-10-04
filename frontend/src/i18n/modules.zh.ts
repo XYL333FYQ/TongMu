@@ -1,5 +1,12 @@
 /** Module interface copy. Source values and protocol identifiers are never translated. */
 export const modulesZh: Record<string, string> = {
+  'Magnet links are not supported yet. Use a video URL or webpage.':
+    '暂不支持磁力链接，请使用视频地址或网页链接。',
+  'Only the selected items are shared with the room.':
+    '只有选中的内容会共享到房间。',
+  'Not used': '未使用',
+  Supported: '支持',
+  'Not supported': '不支持',
   'Restoring your room…': '正在恢复房间…',
   'Use a GitHub repository URL: https://github.com/owner/repo':
     '无法解析 GitHub 仓库地址，请使用 https://github.com/owner/repo 格式',

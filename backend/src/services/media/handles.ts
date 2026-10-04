@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { deflateRawSync, inflateRawSync } from 'node:zlib';
 import { CONFIG_DIR } from '../paths';
 import { redactMediaError } from './redact';
 import type { ManifestHandleKind } from './manifest/model';
@@ -78,7 +79,17 @@ const key = loadKey();
 function seal(resource: object): string {
   const iv = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', key, iv);
-  const encrypted = Buffer.concat([cipher.update(JSON.stringify(resource), 'utf8'), cipher.final()]);
+  let plain = Buffer.from(JSON.stringify(resource), 'utf8');
+  // Bilibili MPDs repeat signed track URLs, and alternate CDN URLs can push
+  // the capability beyond the room's 8 KiB source limit. Compress only these
+  // provider claims with no account credentials; authenticate before inflating.
+  const media = resource as Partial<MediaHandleResource>;
+  if (media.providerId === 'bilibili' && plain.length > 2048 &&
+      !Object.keys(media.headers ?? {}).some(key => /cookie|authorization|token|key/i.test(key))) {
+    const compressed = deflateRawSync(plain);
+    if (compressed.length < plain.length) plain = Buffer.concat([Buffer.from([0]), compressed]);
+  }
+  const encrypted = Buffer.concat([cipher.update(plain), cipher.final()]);
   return [iv, cipher.getAuthTag(), encrypted].map((part) => part.toString('base64url')).join('.');
 }
 
@@ -96,11 +107,13 @@ function open(token: string): unknown {
     if (!ivRaw || !tagRaw || !encryptedRaw || extra) return undefined;
     const decipher = createDecipheriv('aes-256-gcm', key, decodeCanonicalBase64Url(ivRaw));
     decipher.setAuthTag(decodeCanonicalBase64Url(tagRaw));
-    const plain = Buffer.concat([
+    let plain = Buffer.concat([
       decipher.update(decodeCanonicalBase64Url(encryptedRaw)),
       decipher.final(),
-    ]).toString('utf8');
-    return JSON.parse(plain) as unknown;
+    ]);
+    // Existing uncompressed capabilities remain valid through upgrades.
+    if (plain[0] === 0) plain = inflateRawSync(plain.subarray(1), { maxOutputLength: 8 * 1024 * 1024 });
+    return JSON.parse(plain.toString('utf8')) as unknown;
   } catch { return undefined; }
 }
 

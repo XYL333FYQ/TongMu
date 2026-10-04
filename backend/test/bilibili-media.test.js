@@ -363,6 +363,101 @@ test('media proxy preserves valid 206 range semantics', async (t) => {
   assert.equal(response.body.toString(), '23');
 });
 
+test('media proxy retries a truncated fragment without leaking or mixing partial bytes', async (t) => {
+  let attempts = 0;
+  const upstream = http.createServer((req, res) => {
+    attempts += 1;
+    assert.equal(req.headers.range, 'bytes=2-7');
+    res.writeHead(206, { 'Content-Range': 'bytes 2-7/10', 'Content-Length': '6' });
+    if (attempts === 1) {
+      res.write('XX');
+      setTimeout(() => res.destroy(), 10);
+    } else res.end('234567');
+  });
+  const upstreamPort = await listen(upstream);
+  t.after(() => { upstream.closeAllConnections(); upstream.close(); });
+  const app = express();
+  app.get('/proxy', (req, res) => proxyHttpUpstream(req, res, {
+    url: `http://127.0.0.1:${upstreamPort}/video`, targetPolicy: 'trusted-private',
+    trustedPrivateHosts: ['127.0.0.1'], logTag: 'fragment-test', errorMessage: 'failed',
+  }));
+  const gateway = http.createServer(app);
+  const port = await listen(gateway);
+  t.after(() => gateway.close());
+  const response = await request(port, '/proxy', { Range: 'bytes=2-7' });
+  assert.equal(attempts, 2);
+  assert.equal(response.status, 206);
+  assert.equal(response.body.toString(), '234567');
+});
+
+test('media proxy bounds fragment retries and rejects a changed retry range', async (t) => {
+  for (const changedRange of [false, true]) {
+    let attempts = 0;
+    const upstream = http.createServer((_req, res) => {
+      attempts += 1;
+      res.writeHead(206, { 'Content-Range': changedRange && attempts > 1 ? 'bytes 3-8/10' : 'bytes 2-7/10', 'Content-Length': '6' });
+      res.write('XX');
+      setTimeout(() => res.destroy(), 10);
+    });
+    const upstreamPort = await listen(upstream);
+    t.after(() => { upstream.closeAllConnections(); upstream.close(); });
+    const app = express();
+    app.get('/proxy', (req, res) => proxyHttpUpstream(req, res, {
+      url: `http://127.0.0.1:${upstreamPort}/video`, targetPolicy: 'trusted-private',
+      trustedPrivateHosts: ['127.0.0.1'], logTag: 'fragment-test', errorMessage: 'failed',
+    }));
+    const gateway = http.createServer(app);
+    const port = await listen(gateway);
+    t.after(() => gateway.close());
+    const response = await request(port, '/proxy', { Range: 'bytes=2-7' });
+    assert.equal(response.status, 502);
+    assert.equal(attempts, changedRange ? 2 : 3);
+    assert.equal(response.body.includes(Buffer.from('XX')), false);
+  }
+});
+
+test('media proxy switches to a provider alternate CDN without changing the requested bytes', async (t) => {
+  const seen = [];
+  const upstream = http.createServer((req, res) => {
+    seen.push([req.url, req.headers.range]);
+    res.writeHead(206, { 'Content-Range': 'bytes 2-7/10', 'Content-Length': '6' });
+    if (req.url === '/primary') { res.write('XX'); setTimeout(() => res.destroy(), 10); }
+    else res.end('234567');
+  });
+  const upstreamPort = await listen(upstream);
+  t.after(() => { upstream.closeAllConnections(); upstream.close(); });
+  const app = express();
+  app.get('/proxy', (req, res) => proxyHttpUpstream(req, res, {
+    url: `http://127.0.0.1:${upstreamPort}/primary`,
+    fallbackUrls: [`http://127.0.0.1:${upstreamPort}/backup`],
+    targetPolicy: 'trusted-private', trustedPrivateHosts: ['127.0.0.1'],
+    logTag: 'alternate-test', errorMessage: 'failed',
+  }));
+  const gateway = http.createServer(app);
+  const port = await listen(gateway);
+  t.after(() => gateway.close());
+  const response = await request(port, '/proxy', { Range: 'bytes=2-7' });
+  assert.deepEqual(seen, [['/primary', 'bytes=2-7'], ['/backup', 'bytes=2-7']]);
+  assert.equal(response.body.toString(), '234567');
+});
+
+test('Bilibili alternate CDN claims stay compact, authenticated and server-private', () => {
+  const url = `https://cdn.example.com/video.m4s?signature=${'abcdef'.repeat(100)}`;
+  const alternatives = { [url]: [url.replace('cdn.', 'backup.'), url.replace('cdn.', 'backup2.')] };
+  const resource = { url, scope: 'user:fixture', providerId: 'bilibili',
+    manifestBody: `<MPD><BaseURL>${url}</BaseURL></MPD>`,
+    providerData: { transportAlternatives: alternatives } };
+  const handle = issueMediaHandle(resource);
+  assert.ok(handle.url.length < 8192);
+  assert.deepEqual(resolveMediaHandle(handle.id, 'fixture').providerData, resource.providerData);
+  assert.equal(resolveMediaHandle(tamperAuthenticatedHandle(handle.id), 'fixture'), undefined);
+  const legacy = issueMediaHandle({ url, scope: 'user:fixture' });
+  assert.equal(resolveMediaHandle(legacy.id, 'fixture').url, url);
+  const publicDescriptor = toPublicDescriptor({ finalUrl: url, privateTransportAlternatives: alternatives }, '/api/stream/media/sealed');
+  assert.equal(publicDescriptor.privateTransportAlternatives, undefined);
+  assert.equal(JSON.stringify(publicDescriptor).includes('signature'), false);
+});
+
 test('media proxy stops when an upstream ignores Range instead of relaying the whole file', async (t) => {
   const upstream = http.createServer((_req, res) => {
     res.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': '1000000' });

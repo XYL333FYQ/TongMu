@@ -61,6 +61,7 @@ test('room directory shares an in-flight GET and discards a previous account res
   }
   const { useRoomDirectory } = load('src/hooks/useRoomDirectory.ts', {
     '@/i18n': { useTranslation: () => ({ t: (source) => source }) },
+    'react-router-dom': { useLocation: () => ({ pathname: '/room/test' }) },
     react: { useEffect: (effect) => effect() },
     zustand: {
       create: (initializer) => {
@@ -122,6 +123,7 @@ test('changing language updates a displayed directory error without another requ
   }
   const { useRoomDirectory } = load('src/hooks/useRoomDirectory.ts', {
     '@/i18n': { useTranslation: () => i18n },
+    'react-router-dom': { useLocation: () => ({ pathname: '/room/test' }) },
     '@/lib/errorMessage': errors,
     react: {
       useEffect: (effect, dependencies) => {

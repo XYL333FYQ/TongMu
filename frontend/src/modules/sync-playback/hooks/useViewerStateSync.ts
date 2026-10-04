@@ -213,7 +213,9 @@ export function useViewerStateSync({
         if (!currentVideo) return
 
         // 源变化时完整同步所有字段
-        if (state.currentTime > 0) {
+        // DASH already positions itself via initialize(startTime). A second
+        // native seek at loadedmetadata cancels its first pending fragments.
+        if (state.currentTime > 0 && state.format !== 'dash') {
           try {
             currentVideo.currentTime = state.currentTime
           } catch {
@@ -331,7 +333,13 @@ export function useViewerStateSync({
       const processState = async (s: WatchTogetherState) => {
         isApplyingRef.current = true
         try {
-          await applyStateChanges(s, isSourceChange)
+          // Queued snapshots may share the source that just finished loading.
+          // Recompute at consumption time instead of reusing the drain's first
+          // event, otherwise every pending snapshot attaches the source again.
+          await applyStateChanges(
+            s,
+            lastAppliedSourceUrlRef.current !== s.sourceUrl
+          )
         } catch (err: unknown) {
           console.error(
             '[useViewerStateSync] applyStateChanges failed:',
@@ -586,6 +594,12 @@ export function useViewerHeartbeat({
         lastAppliedIsPlayingRef.current = payload.isPlaying
         suppressEventsRef.current = false
       }
+
+      // Metadata can arrive before the first DASH fragment. Seeking on every
+      // heartbeat then cancels the pending fragment and leaves the viewer with
+      // an advancing clock but zero decoded frames. Let buffering finish first;
+      // explicit host seek controls still use their separate handler.
+      if (video.readyState < 2) return
 
       // 进度校正：软同步 + 硬 seek 两阶段策略（P2-Opt#9）
       // 软同步区间：差异 > 阈值 但 ≤ HARD_SEEK_THRESHOLD_SEC → 调整 playbackRate 渐进追赶

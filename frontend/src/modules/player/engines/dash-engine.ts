@@ -97,7 +97,10 @@ export const dashEngine: PlayerEngine = {
           resolveProxyUrl(source.url, source.headers, source.format, {
             noProxyFallback: source.noProxyFallback,
           }),
-          false
+          false,
+          source.startTime && source.startTime > 0
+            ? source.startTime
+            : undefined
         )
         await waitForMetadata(video, source.signal)
         return {

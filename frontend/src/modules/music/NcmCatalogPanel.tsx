@@ -188,6 +188,14 @@ export function NcmCatalogPanel({
 
   const setError = catalog.setError
 
+  const openDetail = useCallback((target: DetailTarget) => {
+    const state = useNcmCatalogStore.getState()
+    state.setPlaylistDetail(null)
+    state.setAlbumDetail(null)
+    state.setArtistDetail(null)
+    setDetailTarget(target)
+  }, [])
+
   const changeSearchQuery = useCallback((value: string) => {
     setSearchOffset(0)
     useNcmCatalogStore.getState().setSearchQuery(value)
@@ -283,7 +291,10 @@ export function NcmCatalogPanel({
 
   useEffect(() => {
     const view = catalog.view
-    if (!['playlists', 'albums', 'artists', 'liked', 'fm', 'cloud'].includes(view)) return
+    if (
+      !['playlists', 'albums', 'artists', 'liked', 'fm', 'cloud'].includes(view)
+    )
+      return
     if (!loggedIn || !accountId) {
       setError(t('Connect your NetEase Music account first.'))
       return
@@ -291,17 +302,18 @@ export function NcmCatalogPanel({
     const controller = new AbortController()
     const generation = useNcmCatalogStore.getState().generation
     useNcmCatalogStore.getState().setLoading(true)
-    const path = view === 'albums'
-      ? '/api/music/ncm/subscribed-albums'
-      : view === 'artists'
-        ? '/api/music/ncm/subscribed-artists'
-        : view === 'playlists'
-          ? '/api/music/ncm/playlists'
-          : view === 'liked'
-            ? '/api/music/ncm/liked'
-            : view === 'cloud'
-              ? '/api/music/ncm/cloud'
-              : '/api/music/ncm/fm'
+    const path =
+      view === 'albums'
+        ? '/api/music/ncm/subscribed-albums'
+        : view === 'artists'
+          ? '/api/music/ncm/subscribed-artists'
+          : view === 'playlists'
+            ? '/api/music/ncm/playlists'
+            : view === 'liked'
+              ? '/api/music/ncm/liked'
+              : view === 'cloud'
+                ? '/api/music/ncm/cloud'
+                : '/api/music/ncm/fm'
     const params = view === 'fm' ? '' : `?offset=${privateOffset}&pageSize=20`
     void apiGet<CatalogApiBody>(`${path}${params}`, {
       signal: controller.signal,
@@ -316,9 +328,7 @@ export function NcmCatalogPanel({
           setError(errorFrom(result))
           return
         }
-        const page = pageFrom<MusicCatalogSearchItem>(
-          result.data
-        )
+        const page = pageFrom<MusicCatalogSearchItem>(result.data)
         if (!page) {
           setError(t('The music service returned an invalid collection.'))
           return
@@ -658,7 +668,7 @@ export function NcmCatalogPanel({
         key={`${playlist.playlistId}-${index}`}
         type="button"
         onClick={() =>
-          setDetailTarget({ kind: 'playlist', id: playlist.playlistId })
+          openDetail({ kind: 'playlist', id: playlist.playlistId })
         }
         className="flex min-w-0 items-center gap-2 rounded-lg bg-[var(--md-sys-color-surface-container-low)] p-2 text-left hover:bg-[var(--md-sys-color-surface-container-high)]"
       >
@@ -686,7 +696,7 @@ export function NcmCatalogPanel({
         </span>
       </button>
     ),
-    []
+    [openDetail]
   )
 
   const renderSearchItem = (item: MusicCatalogSearchItem, index: number) => {
@@ -697,7 +707,7 @@ export function NcmCatalogPanel({
         <button
           key={`${item.albumId}-${index}`}
           type="button"
-          onClick={() => setDetailTarget({ kind: 'album', id: item.albumId })}
+          onClick={() => openDetail({ kind: 'album', id: item.albumId })}
           className="flex min-w-0 items-center gap-2 rounded-lg bg-[var(--md-sys-color-surface-container-low)] p-2 text-left hover:bg-[var(--md-sys-color-surface-container-high)]"
         >
           <span className="min-w-0 flex-1">
@@ -716,7 +726,7 @@ export function NcmCatalogPanel({
       <button
         key={`${item.artistId}-${index}`}
         type="button"
-        onClick={() => setDetailTarget({ kind: 'artist', id: item.artistId })}
+        onClick={() => openDetail({ kind: 'artist', id: item.artistId })}
         className="flex min-w-0 items-center gap-2 rounded-lg bg-[var(--md-sys-color-surface-container-low)] p-2 text-left hover:bg-[var(--md-sys-color-surface-container-high)]"
       >
         <span className="min-w-0 flex-1">
@@ -724,8 +734,12 @@ export function NcmCatalogPanel({
             {item.name}
           </span>
           <span className="block truncate text-[10px] text-[var(--md-sys-color-on-surface-variant)]">
-            {item.trackCount ?? '?'} {t('tracks ·')} {item.albumCount ?? '?'}{' '}
-            {t('albums')}
+            {item.trackCount !== null && (
+              <>
+                {item.trackCount} {t('tracks ·')}{' '}
+              </>
+            )}
+            {item.albumCount ?? '?'} {t('albums')}
           </span>
         </span>
         <span className="shrink-0 text-[10px]">{t('Open artist')}</span>
@@ -734,7 +748,11 @@ export function NcmCatalogPanel({
   }
 
   const renderDetails = () => {
-    if (catalog.playlistDetail) {
+    if (catalog.loading) return <p role="status">{t('Loading…')}</p>
+    if (
+      detailTarget?.kind === 'playlist' &&
+      catalog.playlistDetail?.playlist.playlistId === detailTarget.id
+    ) {
       return (
         <div className="space-y-1.5">
           <div className="rounded-lg bg-[var(--md-sys-color-surface-container-low)] p-2">
@@ -755,7 +773,10 @@ export function NcmCatalogPanel({
         </div>
       )
     }
-    if (catalog.albumDetail)
+    if (
+      detailTarget?.kind === 'album' &&
+      catalog.albumDetail?.albumId === detailTarget.id
+    )
       return (
         <div className="space-y-1.5">
           <div className="rounded-lg bg-[var(--md-sys-color-surface-container-low)] p-2">
@@ -768,7 +789,10 @@ export function NcmCatalogPanel({
           {catalog.albumDetail.tracks.map(renderTrack)}
         </div>
       )
-    if (catalog.artistDetail)
+    if (
+      detailTarget?.kind === 'artist' &&
+      catalog.artistDetail?.artist.artistId === detailTarget.id
+    )
       return (
         <div className="space-y-1.5">
           <div className="rounded-lg bg-[var(--md-sys-color-surface-container-low)] p-2">
@@ -787,9 +811,7 @@ export function NcmCatalogPanel({
             <button
               key={`${album.albumId}-${index}`}
               type="button"
-              onClick={() =>
-                setDetailTarget({ kind: 'album', id: album.albumId })
-              }
+              onClick={() => openDetail({ kind: 'album', id: album.albumId })}
               className="block w-full truncate rounded-lg bg-[var(--md-sys-color-surface-container-low)] p-2 text-left text-xs"
             >
               {t('Albums：')}
@@ -1165,10 +1187,18 @@ export function NcmCatalogPanel({
                       {renderTrack(track)}
                     </div>
                   ))}
-              {catalog.loading && <p role="status" className="text-[10px]">{t('Loading……')}</p>}
-              {!catalog.loading && !catalog.error && privatePage?.items.length === 0 && (
-                <p role="status" className="text-[10px]">{t('Your collection is empty.')}</p>
+              {catalog.loading && (
+                <p role="status" className="text-[10px]">
+                  {t('Loading……')}
+                </p>
               )}
+              {!catalog.loading &&
+                !catalog.error &&
+                privatePage?.items.length === 0 && (
+                  <p role="status" className="text-[10px]">
+                    {t('Your collection is empty.')}
+                  </p>
+                )}
             </div>
           ) : (
             <div className="mt-2 space-y-1.5">

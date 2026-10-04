@@ -101,8 +101,15 @@ export async function executeSeek(params: ExecuteSeekParams): Promise<boolean> {
     return true
   }
 
-  // 非 MSE 流，普通 seek
-  if (!isMseStream(state) || !state.sourceUrl) return false
+  // Standard MPDs let dash.js handle native seeking. They have no custom
+  // dual-track controller; its fallback would assign currentTime a second time
+  // during the seeking event and cancel dash.js's newly scheduled fragments.
+  if (
+    !isMseStream(state) ||
+    !state.sourceUrl ||
+    (state.format === 'dash' && !state.audioUrl)
+  )
+    return false
 
   // 目标时间在已缓冲范围内，普通 seek
   if (isInBufferedRange(video, targetTime)) return false
