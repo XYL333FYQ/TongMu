@@ -519,13 +519,42 @@ export async function resolveBilibiliVideo(
 
   // 播放地址（使用 effectiveCid 对应的分集 cid 请求 playurl）
   emit('playurl', '正在获取播放地址...');
-  const playUrl = await getPlayUrl(info.bvid, effectiveCid, cookie, {
-    qn: requestedQn,
-    codec,
-    isVip,
-    playbackProfile: playbackClientProfile,
-    qualitySelection: qn === undefined ? 'highest-available' : 'exact',
-  });
+  const automaticQuality = qn === undefined;
+  const qualityAttempts = automaticQuality
+    ? [
+        requestedQn,
+        ...getQualityFallbackCandidates(requestedQn, isVip, Boolean(cookie)),
+      ]
+    : [requestedQn];
+  let playUrl: Awaited<ReturnType<typeof getPlayUrl>> = null;
+  let qualityPermissionFallback = false;
+  for (let index = 0; index < qualityAttempts.length; index += 1) {
+    const attemptQn = qualityAttempts[index];
+    try {
+      playUrl = await getPlayUrl(info.bvid, effectiveCid, cookie, {
+        qn: attemptQn,
+        codec,
+        isVip,
+        playbackProfile: playbackClientProfile,
+        qualitySelection: automaticQuality ? 'highest-available' : 'exact',
+      });
+      break;
+    } catch (error) {
+      // Automatic quality may step down only when Bilibili explicitly denies
+      // the requested tier. Network, CDN, and codec failures keep the original
+      // quality request intact; a manually selected tier always remains exact.
+      if (!automaticQuality || !(error instanceof NoPermissionError)) {
+        throw error;
+      }
+      const nextQn = qualityAttempts[index + 1];
+      if (nextQn === undefined) throw error;
+      qualityPermissionFallback = true;
+      emit(
+        'playurl',
+        `当前画质无权限，正在尝试 ${qualityLabel(nextQn) ?? nextQn}...`,
+      );
+    }
+  }
   if (!playUrl) throw new ResolveError('源站未返回可播放媒体，请检查账号权限', 'NO_PERMISSION');
   if (qn !== undefined && playUrl.currentQn !== qn) {
     throw new ResolveError(`请求 ${qualityLabel(qn)}，源站实际只返回 ${qualityLabel(playUrl.currentQn)}；请检查账号、授权或主动选择其他清晰度`, 'QUALITY_UNAVAILABLE');
@@ -580,7 +609,9 @@ export async function resolveBilibiliVideo(
       currentQn: playUrl.currentQn,
       requestedQn,
       qualityLabel: qualityLabel(playUrl.currentQn),
-      fallbackReason: playUrl.fallbackReason,
+      fallbackReason: qualityPermissionFallback
+        ? `源站拒绝了较高画质权限请求，已按实际可用轨道选择最高档 ${qualityLabel(playUrl.currentQn) ?? playUrl.currentQn}`
+        : playUrl.fallbackReason,
       videoBandwidth: playUrl.bestVideo.bandwidth,
       acceptQuality,
       pages: pagesInfo,

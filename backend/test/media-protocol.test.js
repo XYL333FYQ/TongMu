@@ -297,3 +297,61 @@ test('Bilibili automatic quality starts within the account limit before choosing
     assert.match(result.qualityLabel, /720P（当前可用最高）/);
   }
 });
+
+test('Bilibili automatic quality retries lower only after an upstream permission denial', async t => {
+  const video = require('../dist/services/bilibili/video');
+  const play = require('../dist/services/bilibili/playurl');
+  const cdn = require('../dist/services/bilibili/cdn');
+  const permission = require('../dist/services/bilibili/permission');
+  const requestedQns = [];
+  t.mock.method(permission, 'getVipStatus', async () => false);
+  t.mock.method(video, 'getVideoInfo', async () => ({
+    bvid: 'BV1111111111', cid: 1, title: 'test', duration: 3,
+  }));
+  t.mock.method(play, 'getPlayUrl', async (_id, _cid, _cookie, options) => {
+    requestedQns.push(options.qn);
+    assert.equal(options.qualitySelection, 'highest-available');
+    if (options.qn !== 32) throw new play.NoPermissionError();
+    return {
+      format: 'dash', currentQn: 32,
+      bestVideo: { id: 32, baseUrl: 'https://cdn.example/480', codecs: 'avc1', bandwidth: 790942 },
+      acceptQuality: [{ id: 32, label: '480P' }, { id: 16, label: '360P' }],
+    };
+  });
+  t.mock.method(cdn, 'findReachableMediaUrl', async () => null);
+
+  const result = await new BilibiliResolver().resolve('BV1111111111', {
+    userId: '1', cookie: 'fixture-session-cookie',
+  });
+  assert.deepEqual(requestedQns, [80, 74, 64, 32]);
+  assert.equal(result.requestedQuality, undefined);
+  assert.equal(result.actualQuality, 32);
+  assert.match(result.qualityLabel, /480P（当前可用最高）/);
+  assert.match(result.fallbackReason, /权限.*最高档 480P/);
+
+  const explicitQns = [];
+  play.getPlayUrl.mock.mockImplementation(async (_id, _cid, _cookie, options) => {
+    explicitQns.push(options.qn);
+    throw new play.NoPermissionError();
+  });
+  await assert.rejects(
+    new BilibiliResolver().resolve('BV1111111111', {
+      userId: '1', cookie: 'fixture-session-cookie', requestedQn: 80,
+    }),
+    /权限|画质/i,
+  );
+  assert.deepEqual(explicitQns, [80]);
+
+  const transportQns = [];
+  play.getPlayUrl.mock.mockImplementation(async (_id, _cid, _cookie, options) => {
+    transportQns.push(options.qn);
+    throw new Error('upstream timeout');
+  });
+  await assert.rejects(
+    new BilibiliResolver().resolve('BV1111111111', {
+      userId: '1', cookie: 'fixture-session-cookie',
+    }),
+    /upstream timeout/,
+  );
+  assert.deepEqual(transportQns, [80]);
+});
