@@ -290,18 +290,36 @@ export function normalizePlayUrlData(
     // 例如请求 qn=32(480P)，但返回包含 id=80(1080P)/64(720P)/32(480P)/16(360P)，
     // 不过滤会选到 id=80 的 1080P 流。
     const allTracks = data.dash.video.map(normalizeDashMedia);
+    let audioTracks = sortByBandwidthDesc(data.dash.audio?.map(normalizeDashMedia));
+    let highestAvailableQn: number | undefined;
     if (qualitySelection === 'highest-available') {
-      const available = allTracks.map(t => t.id).filter(id => Number.isSafeInteger(id) && id > 0);
+      const available = [...new Set(allTracks.map(t => t.id).filter(id => Number.isSafeInteger(id) && id > 0))];
       if (!available.length) throw new NoPermissionError();
       // Anonymous responses can report quality=64 while only carrying 32/16.
       // Automatic selection uses the actual representations, never their label.
       // Explicit quality requests retain the exact-match behavior below.
-      qn = Math.max(...available);
+      highestAvailableQn = Math.max(...available);
+      qn = highestAvailableQn;
+      if (playbackProfile) {
+        // Prefer the source's highest representation that this exact browser
+        // profile can decode. Some browsers support H.264 level 4.2 but not
+        // level 5.0, for example; failing the whole parse would hide a lower
+        // original-quality track that remains playable without transcoding.
+        const supportedQn = available
+          .sort((a, b) => b - a)
+          .find((candidateQn) => {
+            const candidateVideos = allTracks.filter((track) => track.id === candidateQn);
+            return candidateVideos.some((video) => audioTracks.length > 0
+              ? audioTracks.some((audio) => dashPairSupported(playbackProfile, video, audio))
+              : dashPairSupported(playbackProfile, video));
+          });
+        if (supportedQn === undefined) throw new CodecUnavailableError();
+        qn = supportedQn;
+      }
     }
     const matchedQnTracks = allTracks.filter((t) => t.id === qn);
     if (!matchedQnTracks.length) throw new Error(`源站未返回实际清晰度 ${qn} 对应的 DASH representation`);
     let tracksToSort = matchedQnTracks;
-    let audioTracks = sortByBandwidthDesc(data.dash.audio?.map(normalizeDashMedia));
     if (playbackProfile) {
       const supportedVideo = matchedQnTracks.filter((video) =>
         audioTracks.length > 0
@@ -336,8 +354,11 @@ export function normalizePlayUrlData(
       bestAudio: audio[0],
       currentQn: qn,
       acceptQuality,
-      fallbackReason: qualitySelection === 'highest-available' && qn !== data.quality
-        ? '已按源站实际返回的视频轨道选择当前可用最高画质' : undefined,
+      fallbackReason: qualitySelection === 'highest-available' && highestAvailableQn !== undefined && qn < highestAvailableQn
+        ? `当前客户端声明的播放能力不支持源站最高画质编码，已选择可播放的最高画质 ${qn}`
+        : qualitySelection === 'highest-available' && qn !== data.quality
+          ? '已按源站实际返回的视频轨道选择当前可用最高画质'
+          : undefined,
     };
   }
 

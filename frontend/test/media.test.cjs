@@ -390,6 +390,11 @@ test('browser capability collector is bounded and fingerprints deterministically
       item.pipeline === 'mse' && item.videoCodec === 'h264' &&
       item.audioCodec === 'aac' && item.exactCodecStrings.includes('avc1.64001f')
     ))
+    assert.ok(profile.mediaCapabilities.some(item =>
+      item.transport === 'dash' && item.container === 'dash' &&
+      item.pipeline === 'mse' && item.videoCodec === 'h264' &&
+      item.audioCodec === 'aac' && item.exactCodecStrings.includes('avc1.640032')
+    ))
     global.MediaSource.isTypeSupported = () => false
     const unsupported = playbackProfile.collectPlaybackClientProfileSync()
     assert.ok(!unsupported.mediaCapabilities.some(item =>

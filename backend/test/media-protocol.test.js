@@ -122,6 +122,39 @@ test('Bilibili auto quality uses real returned tracks when anonymous quality met
   assert.equal(genuineHd.currentQn, 120);
   assert.equal(genuineHd.bestVideo.id, 120);
 });
+test('Bilibili automatic quality selects the highest DASH rendition supported by the client profile', () => {
+  const profile = {
+    profileVersion: 1,
+    environment: 'web',
+    mediaCapabilities: [{
+      transport: 'dash', container: 'dash', videoCodec: 'h264', audioCodec: 'aac',
+      pipeline: 'mse', exactCodecStrings: ['avc1.640028', 'mp4a.40.2'],
+      supportsCustomHeaders: true,
+    }],
+    supportsProviderProxy: true,
+    supportsInsecureHttpMedia: true,
+    mixedContentRestricted: false,
+    subtitlePreference: 'external',
+    liveTransports: [],
+  };
+  const data = {
+    quality: 80,
+    accept_quality: [80, 64],
+    dash: {
+      video: [
+        { id: 80, bandwidth: 4_000_000, codecs: 'avc1.640032', base_url: 'https://cdn.example/1080' },
+        { id: 64, bandwidth: 2_000_000, codecs: 'avc1.640028', base_url: 'https://cdn.example/720' },
+      ],
+      audio: [{ id: 30232, bandwidth: 192_000, codecs: 'mp4a.40.2', base_url: 'https://cdn.example/audio' }],
+    },
+  };
+
+  const automatic = normalizePlayUrlData(data, 120, undefined, profile, 'highest-available');
+  assert.equal(automatic.currentQn, 64);
+  assert.equal(automatic.bestVideo.id, 64);
+  assert.match(automatic.fallbackReason, /播放能力.*最高画质编码/);
+  assert.throws(() => normalizePlayUrlData(data, 80, undefined, profile, 'exact'), /播放能力.*编码组合/);
+});
 test('BrowserResolver entire captured-response -> probe -> descriptor chain preserves cross-origin sanitization', async t => {
   let listener;
   const page = { route: async () => {}, on: (_event, cb) => { listener = cb; }, goto: async () => listener({ url: () => 'https://8.8.8.8/movie.mp4', headers: () => ({ 'content-type': 'video/mp4' }), request: () => ({ allHeaders: async () => ({ cookie: 'private', authorization: 'private' }) }) }), waitForTimeout: async () => {}, url: () => 'https://8.8.8.8/page' };

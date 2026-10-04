@@ -134,16 +134,20 @@ const CODEC_PROBES: CodecProbe[] = [
     mime: 'video/mp4; codecs="avc1.42E01E,mp4a.40.2"',
     exactCodecStrings: ['avc1.42e01e', 'mp4a.40.2'],
   },
-  ...['avc1.64001f', 'avc1.640028', 'avc1.640029', 'avc1.640033'].map(
-    (codec): CodecProbe => ({
-      container: 'mp4',
-      transport: 'progressive',
-      videoCodec: 'h264',
-      audioCodec: 'aac',
-      mime: `video/mp4; codecs="${codec},mp4a.40.2"`,
-      exactCodecStrings: [codec, 'mp4a.40.2'],
-    })
-  ),
+  ...[
+    'avc1.64001f',
+    'avc1.640028',
+    'avc1.640029',
+    'avc1.640032',
+    'avc1.640033',
+  ].map((codec): CodecProbe => ({
+    container: 'mp4',
+    transport: 'progressive',
+    videoCodec: 'h264',
+    audioCodec: 'aac',
+    mime: `video/mp4; codecs="${codec},mp4a.40.2"`,
+    exactCodecStrings: [codec, 'mp4a.40.2'],
+  })),
   {
     container: 'mp4',
     transport: 'progressive',
