@@ -20,6 +20,7 @@ import {
 } from './playurl';
 import {
   getVipStatus,
+  getDefaultQn,
   VIP_ONLY_QNS,
   QN_QUALITY_MAP,
 } from './permission';
@@ -467,9 +468,10 @@ export async function resolveBilibiliVideo(
         }))
       : undefined;
 
-  // 根据会员状态和登录态确定默认清晰度
-  // 未登录 B站 时默认 480P（B站对未登录用户限制为 480P 及以下）
-  const defaultQn = 127;
+  // 自动解析从当前账号可请求的上限开始，再依据源站实际返回的轨道
+  // 选择可用最高画质。直接请求 8K (127) 会让普通账号在部分视频上
+  // 收到权限错误，导致原本可播放的 1080P/720P 也无法解析。
+  const defaultQn = getDefaultQn(isVip, Boolean(cookie));
   const requestedQn = qn ?? defaultQn;
 
   // preferMp4 优先路径：直接请求 MP4 单流（fnval=1 + platform=html5），浏览器原生播放无需 MSE

@@ -263,7 +263,7 @@ test('DASH default Highest uses actual available quality, never marks an unavail
   const cdn = require('../dist/services/bilibili/cdn');
   t.mock.method(video, 'getVideoInfo', async () => ({ bvid: 'BV1111111111', cid: 1, title: 'test', duration: 3 }));
   t.mock.method(play, 'getPlayUrl', async (_id, _cid, _cookie, options) => {
-    assert.equal(options.qn, 127);
+    assert.equal(options.qn, 32);
     return { format: 'dash', currentQn: 80, bestVideo: { id: 80, baseUrl: 'https://cdn.example/1080', codecs: 'avc1', bandwidth: 1000 }, acceptQuality: [{ id: 120, label: '4K' }, { id: 80, label: '1080P' }] };
   });
   t.mock.method(cdn, 'findReachableMediaUrl', async () => null);
@@ -271,4 +271,29 @@ test('DASH default Highest uses actual available quality, never marks an unavail
   assert.equal(result.actualQuality, 80); assert.equal(result.requestedQuality, undefined);
   assert.equal(result.availableMaximumQuality, 80); assert.equal(result.sourceMaximumQuality, 120);
   assert.match(result.qualityLabel, /当前可用最高/);
+});
+
+test('Bilibili automatic quality starts within the account limit before choosing actual source quality', async t => {
+  const video = require('../dist/services/bilibili/video');
+  const play = require('../dist/services/bilibili/playurl');
+  const cdn = require('../dist/services/bilibili/cdn');
+  const permission = require('../dist/services/bilibili/permission');
+  const requestedQns = [];
+  t.mock.method(permission, 'getVipStatus', async cookie => cookie === 'fixture-vip-cookie');
+  t.mock.method(video, 'getVideoInfo', async () => ({ bvid: 'BV1111111111', cid: 1, title: 'test', duration: 3 }));
+  t.mock.method(play, 'getPlayUrl', async (_id, _cid, _cookie, options) => {
+    assert.equal(options.qualitySelection, 'highest-available');
+    requestedQns.push(options.qn);
+    return { format: 'dash', currentQn: 64, bestVideo: { id: 64, baseUrl: 'https://cdn.example/720', codecs: 'avc1', bandwidth: 700 }, acceptQuality: [{ id: 80, label: '1080P' }, { id: 64, label: '720P' }] };
+  });
+  t.mock.method(cdn, 'findReachableMediaUrl', async () => null);
+  const resolver = new BilibiliResolver();
+  const anonymous = await resolver.resolve('BV1111111111', { userId: '1' });
+  const standard = await resolver.resolve('BV1111111111', { userId: '1', cookie: 'fixture-session-cookie' });
+  const vip = await resolver.resolve('BV1111111111', { userId: '1', cookie: 'fixture-vip-cookie' });
+  assert.deepEqual(requestedQns, [32, 80, 120]);
+  for (const result of [anonymous, standard, vip]) {
+    assert.equal(result.actualQuality, 64);
+    assert.match(result.qualityLabel, /720P（当前可用最高）/);
+  }
 });
