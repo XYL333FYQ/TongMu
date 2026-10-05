@@ -113,7 +113,11 @@ new Function('require', 'module', 'exports', output)(
           }),
       }
     if (name === '@/lib/roomDirectory')
-      return { roomPath: (id) => `/room/${encodeURIComponent(id)}` }
+      return {
+        roomPath: (id) => `/room/${encodeURIComponent(id)}`,
+        onlineMemberCount: (room) =>
+          room.memberCount ?? room.viewerCount + Number(room.sharerOnline),
+      }
     throw new Error(`Unexpected import: ${name}`)
   },
   loaded,
