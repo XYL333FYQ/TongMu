@@ -104,6 +104,10 @@ export function createRoomsRouter(io: SocketIOServer): Router {
           viewerCountMap.set(v.roomId, (viewerCountMap.get(v.roomId) || 0) + 1);
         }
         const sharerSet = new Set(allSharers.map((s) => s.roomId));
+        const memberCountMap = new Map(viewerCountMap);
+        for (const s of allSharers) {
+          memberCountMap.set(s.roomId, (memberCountMap.get(s.roomId) || 0) + 1);
+        }
 
         const result = rooms.map((room) => ({
               id: room.id,
@@ -115,6 +119,7 @@ export function createRoomsRouter(io: SocketIOServer): Router {
               maxViewers: room.maxViewers,
               hasPassword: !!room.password,
               viewerCount: viewerCountMap.get(room.roomId) ?? 0,
+              memberCount: memberCountMap.get(room.roomId) ?? 0,
               sharerOnline: sharerSet.has(room.roomId) || roomDelegates.has(room.roomId),
               mode: room.mode,
               activity: room.activity,

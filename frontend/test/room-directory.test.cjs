@@ -24,7 +24,19 @@ function load(relativePath, imports = {}) {
   return loaded.exports
 }
 
-const { roomPath, featuredRooms } = load('src/lib/roomDirectory.ts')
+const { roomPath, featuredRooms, onlineMemberCount } = load(
+  'src/lib/roomDirectory.ts'
+)
+
+test('online members include the host and use the server total without counting an acting host twice', () => {
+  assert.equal(onlineMemberCount({ viewerCount: 0, sharerOnline: true }), 1)
+  assert.equal(onlineMemberCount({ viewerCount: 2, sharerOnline: true }), 3)
+  assert.equal(onlineMemberCount({ viewerCount: 0, sharerOnline: false }), 0)
+  assert.equal(
+    onlineMemberCount({ viewerCount: 2, sharerOnline: true, memberCount: 2 }),
+    2
+  )
+})
 
 test('room entry trims IDs, rejects blank IDs and keeps a room ID in one encoded URL segment', () => {
   assert.equal(roomPath('  Ab12Cd34  '), '/room/Ab12Cd34')

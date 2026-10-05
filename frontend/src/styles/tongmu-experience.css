@@ -2384,12 +2384,12 @@ body[data-no-hover-transform='true'] .tongmu-home__empty button:hover {
 }
 .tm-room-workspace {
   width: min(1840px, 100%);
-  margin: auto;
+  margin: 0 auto;
   padding: 20px clamp(16px, 2.5vw, 44px) 32px;
 }
 .tm-room-workspace:not(.tm-room-workspace--fullscreen) {
-  /* Reserve the room header and the utility-button row below the scroll area. */
-  max-height: calc(100dvh - 176px - env(safe-area-inset-bottom));
+  /* The room has no global header. Keep only the bottom utility row clear. */
+  max-height: calc(100dvh - 80px - env(safe-area-inset-bottom));
   overflow-y: auto;
 }
 @media (max-width: 600px), (max-height: 600px) {

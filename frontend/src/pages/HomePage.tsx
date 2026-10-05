@@ -15,7 +15,7 @@ import {
 import { JoinRoomDialog } from '@/components/JoinRoomDialog'
 import { useRoomExitGuard } from '@/hooks/useRoomExitGuard'
 import type { RoomDirectoryView } from '@/hooks/useRoomDirectory'
-import { featuredRooms, roomPath } from '@/lib/roomDirectory'
+import { featuredRooms, onlineMemberCount, roomPath } from '@/lib/roomDirectory'
 import { useAuthStore } from '@/store/authStore'
 import { useRoomStore } from '@/store/roomStore'
 import { useSystemSettingsStore } from '@/store/systemSettingsStore'
@@ -304,8 +304,9 @@ export default function HomePage({
                         : t('Host is offline')}
                       <span className="tongmu-home__room-count">
                         <Users className="h-3.5 w-3.5" aria-hidden="true" />
-                        {room.viewerCount}
-                        {room.maxViewers > 0 ? ` / ${room.maxViewers}` : ''}
+                        {t('{value1}  online', {
+                          value1: onlineMemberCount(room),
+                        })}
                       </span>
                     </span>
                   </span>

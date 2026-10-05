@@ -20,7 +20,7 @@ import { Button } from '@/components/ui/Button'
 import { Spinner } from '@/components/ui/Spinner'
 import { JoinRoomDialog } from '@/components/JoinRoomDialog'
 import { RoomCoverImage } from '@/components/RoomCoverImage'
-import { roomPath } from '@/lib/roomDirectory'
+import { onlineMemberCount, roomPath } from '@/lib/roomDirectory'
 
 /** The old home and discovery URLs share one directory and one set of actions. */
 export default function HallPage() {
@@ -223,7 +223,9 @@ export default function HallPage() {
                     <div className="tm-room-card-details">
                       <p className="tm-room-card-meta">
                         <Users size={14} aria-hidden="true" />
-                        {room.viewerCount} / {room.maxViewers}
+                        {t('{value1}  online', {
+                          value1: onlineMemberCount(room),
+                        })}
                       </p>
                       <small>#{room.roomId}</small>
                     </div>

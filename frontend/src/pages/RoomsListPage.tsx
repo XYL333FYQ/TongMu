@@ -15,7 +15,11 @@ import { Tag } from '@/components/ui/Tag'
 import { Spinner } from '@/components/ui/Spinner'
 import { useAuthStore } from '@/store/authStore'
 import type { RoomDirectoryView } from '@/hooks/useRoomDirectory'
-import { roomPath, type RoomListItem } from '@/lib/roomDirectory'
+import {
+  onlineMemberCount,
+  roomPath,
+  type RoomListItem,
+} from '@/lib/roomDirectory'
 import { cn } from '@/lib/utils'
 import { formatRecentTime } from '@/lib/formatTime'
 import { useHideBodyScrollbar } from '@/hooks/useHideBodyScrollbar'
@@ -327,7 +331,9 @@ export default function RoomsListPage({
                     <dl className="room-discovery-card__details">
                       <dt>{t('Members')}</dt>
                       <dd className="room-discovery-card__count">
-                        {room.viewerCount} / {room.maxViewers}
+                        {t('{value1}  online', {
+                          value1: onlineMemberCount(room),
+                        })}
                       </dd>
                       <dt>{t('Room ID')}</dt>
                       <dd className="truncate text-right font-mono">
