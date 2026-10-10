@@ -35,6 +35,17 @@ TongMu 从 ZViewer 代码库演进而来。媒体核心的代理、清单和 pro
                  config/  -> SQLite, credentials, uploads, media cache
 ```
 
+## 下一次新 VPS 部署（香港数据全部放弃）
+
+旧香港服务器即将到期，`TongMu` 的下一次部署按**全新实例**处理，不迁移旧数据库或密钥。
+现已准备可复用的 Ubuntu 初始化脚本、GitHub `production` 部署环境、服务器预检和 HTTPS/Nginx 模板。
+
+**完整步骤：[`docs/new-vps-deployment.md`](docs/new-vps-deployment.md)**
+
+> 目前没有配置或启用新的 VPS。只有未来在 GitHub `production` 环境中完整填写
+> `TONGMU_PRODUCTION_*` 并显式设置 `TONGMU_DEPLOY_ENABLED=true`，
+> `Deploy TongMu` 才能在远程服务器执行部署。代码 push 和 CI 不会触发 VPS 部署。
+
 ## 快速 Docker 部署
 
 根目录的 `docker-compose.yml` 是唯一推荐入口。它使用包含 BrowserResolver、Playwright 和 Chromium 的 `Dockerfile.linux-browser`，并保留 `/app/config` 的持久化语义。
@@ -156,6 +167,6 @@ TongMu/
 
 ## GitHub Actions
 
-- `ci.yml`：在 push/PR 上执行后端 lint/test、前端 test/build、关键 E2E 和 Compose 配置检查；main push 还必须通过同一 SHA 的 Docker/Chromium 烟测，CI 成功后才会触发自动部署。
+- `ci.yml`：在 push/PR 上执行后端 lint/test、前端 test/build、关键 E2E 和 Compose 配置检查；main push 还必须通过同一 SHA 的 Docker/Chromium 烟测，部署仍需手动运行独立的 `deploy.yml`，CI 成功并不会自动连接 VPS。
 - `build.yml`：仅 tag / `workflow_dispatch` 构建并签名 Windows/Linux immutable release candidate；校验 tag/version/SHA、lockfile、manifest 和包内清单，上传名含 version/platform/arch/SHA。它不自动创建 GitHub Release，也没有 `contents: write`。
 - `docker.yml`：供 main CI 调用，也可用 `workflow_dispatch` 手动运行 BrowserResolver 镜像烟测；不登录 Docker Hub，也不自动 push。
