@@ -11,27 +11,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  image:
-    name: Build and verify on GitHub
-    uses: ./.github/workflows/docker.yml
-    with:
-      publish_image: true
-    permissions:
-      contents: read
-      packages: write
-
-  deploy:
-    name: Deploy verified image to VPS
-    needs: image
-    if: github.event_name == 'workflow_dispatch'
+  activation_gate:
+    name: Confirm explicit future VPS enablement
     runs-on: ubuntu-latest
-    # 生产 VPS 的地址/密钥不再读取旧香港仓库级 VPS_* Secrets。
-    # 新机器尚未配置时本 Job 会安全拒绝，不接触任何服务器。
     environment: production
-    timeout-minutes: 75
     permissions:
       contents: read
-      packages: read
     steps:
       - name: Require explicit future production target
         shell: bash
@@ -66,6 +51,30 @@ jobs:
           fi
           echo "新 VPS 目标检查通过（不打印连接密钥）。"
 
+
+  image:
+    name: Build and verify on GitHub
+    needs: activation_gate
+    uses: ./.github/workflows/docker.yml
+    with:
+      publish_image: true
+    permissions:
+      contents: read
+      packages: write
+
+  deploy:
+    name: Deploy verified image to VPS
+    needs: image
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    # 生产 VPS 的地址/密钥不再读取旧香港仓库级 VPS_* Secrets。
+    # 新机器尚未配置时本 Job 会安全拒绝，不接触任何服务器。
+    environment: production
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      packages: read
+    steps:
       - uses: actions/checkout@v5
 
       - name: Prepare SSH
