@@ -12,7 +12,8 @@ server {
     listen [::]:80;
     server_name __TONGMU_DOMAIN__;
 
-    client_max_body_size 100m;
+    # 对齐后端上传文件上限 10GB；实际可用空间仍取决于 VPS 磁盘容量。
+    client_max_body_size 10g;
 
     location / {
         proxy_pass http://127.0.0.1:3333;
