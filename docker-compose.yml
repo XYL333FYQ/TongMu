@@ -16,7 +16,8 @@ services:
       MEDIA_BROWSER_MAX_CONCURRENCY: "${MEDIA_BROWSER_MAX_CONCURRENCY:-1}"
     ports:
       - "127.0.0.1:3333:3333"
-      - "3334:3334"
+      # 默认不暴露 RTMP。仅在需要外部 OBS 推流时显式设置 TONGMU_RTMP_BIND_IP=0.0.0.0，并限制安全组来源。
+      - "${TONGMU_RTMP_BIND_IP:-127.0.0.1}:3334:3334"
     # Playwright Chromium 需要更大的 shared memory，避免页面解析时崩溃。
     shm_size: "1gb"
     # 该 volume 名称故意保留，避免已有部署因品牌改名看不到旧数据。
