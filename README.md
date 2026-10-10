@@ -35,6 +35,15 @@ TongMu 从 ZViewer 代码库演进而来。媒体核心的代理、清单和 pro
                  config/  -> SQLite, credentials, uploads, media cache
 ```
 
+## 全新 VPS 部署（不恢复旧数据）
+
+如果准备换服务器并从零开始，请按照 **[新 Ubuntu VPS 部署手册](docs/fresh-vps-deployment.md)** 初始化机器、填写新的生产环境配置，再到 GitHub Actions 手动运行 `Deploy TongMu`。
+
+- 部署和生产诊断只读取独立 `production` Environment 的 `PRODUCTION_*` 配置，不使用旧香港 `VPS_*` Secrets。
+- 服务器身份与生产配置未通过预检时，在构建镜像前停止；**push、PR 或合并本身不自动部署到 VPS**。
+- 新 VPS 会创建全新的 `zviewer-browser-data` 持久卷；不需要备份/恢复旧香港数据。
+- HTTPS 反向代理模板在 `deploy/nginx/tongmu.conf.example`，OBS RTMP `3334` 默认仅绑定本机。
+
 ## 快速 Docker 部署
 
 根目录的 `docker-compose.yml` 是唯一推荐入口。它使用包含 BrowserResolver、Playwright 和 Chromium 的 `Dockerfile.linux-browser`，并保留 `/app/config` 的持久化语义。

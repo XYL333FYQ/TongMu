@@ -1,0 +1,65 @@
+name: TongMu VPS configuration checks
+
+# 独立的快速配置检查：不读取 Secrets，不连接/启动任何 VPS，不发布镜像。
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/deploy.yml"
+      - ".github/workflows/production-diagnostics.yml"
+      - ".github/workflows/check-vps-config.yml"
+      - "scripts/deploy/**"
+      - "deploy/nginx/**"
+      - "docker-compose.yml"
+      - ".env.example"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/deploy.yml"
+      - ".github/workflows/production-diagnostics.yml"
+      - ".github/workflows/check-vps-config.yml"
+      - "scripts/deploy/**"
+      - "deploy/nginx/**"
+      - "docker-compose.yml"
+      - ".env.example"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v5
+      - name: Shell syntax
+        run: |
+          bash -n scripts/deploy/bootstrap-ubuntu.sh scripts/deploy/verify-target.sh scripts/deploy/prepare-ssh.sh scripts/deploy/verify-runtime.sh scripts/deploy/test-fresh-vps-guard.sh
+
+      - name: Deployment target guard and existing release safeguards
+        run: |
+          bash scripts/deploy/test-fresh-vps-guard.sh
+          python3 scripts/deploy/test_prebuilt_image.py
+          python3 scripts/deploy/test_retained_release_images.py
+
+      - name: Validate fresh Compose
+        run: |
+          cp .env.example .env
+          docker compose config --quiet
+          rm -f .env
+
+      - name: Assert deployment remains manual-only and isolated
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'workflow_dispatch:' .github/workflows/deploy.yml
+          if grep -Eq '^  push:|^  pull_request:' .github/workflows/deploy.yml; then
+            echo 'The VPS deployment workflow must remain manual-only.' >&2
+            exit 1
+          fi
+          if grep -E 'secrets\.VPS_(HOST|USER|PORT|SSH_KEY)' .github/workflows/deploy.yml .github/workflows/production-diagnostics.yml; then
+            echo 'Found deprecated Hong Kong repository secrets.' >&2
+            exit 1
+          fi
+          grep -Fq 'environment: production' .github/workflows/deploy.yml
+          grep -Fq 'environment: production' .github/workflows/production-diagnostics.yml
+          echo '✓ VPS deployment is manual-only, uses production environment, and no longer references old VPS secrets.'
