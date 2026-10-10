@@ -63,7 +63,8 @@ jobs:
 
       - name: Validate new VPS deployment scripts
         run: |
-          bash -n scripts/deploy/bootstrap-ubuntu.sh scripts/deploy/verify-target.sh scripts/deploy/prepare-ssh.sh scripts/deploy/verify-runtime.sh
+          bash -n scripts/deploy/bootstrap-ubuntu.sh scripts/deploy/verify-target.sh scripts/deploy/prepare-ssh.sh scripts/deploy/verify-runtime.sh scripts/deploy/test-fresh-vps-guard.sh
+          bash scripts/deploy/test-fresh-vps-guard.sh
           python3 scripts/deploy/test_prebuilt_image.py
 
       - name: Validate recommended Compose
