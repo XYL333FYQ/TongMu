@@ -9,20 +9,32 @@ permissions:
 jobs:
   inspect:
     runs-on: ubuntu-latest
+    environment: production
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v5
       - name: Inspect service and public source access without changing the VPS
         shell: bash
         env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_USER: ${{ secrets.VPS_USER }}
-          VPS_PORT: ${{ secrets.VPS_PORT }}
-          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ vars.TONGMU_PRODUCTION_HOST }}
+          VPS_USER: ${{ vars.TONGMU_PRODUCTION_SSH_USER }}
+          VPS_PORT: ${{ vars.TONGMU_PRODUCTION_SSH_PORT }}
+          VPS_SSH_KEY: ${{ secrets.TONGMU_PRODUCTION_SSH_KEY }}
+          SSH_HOST_KEY_FINGERPRINT: ${{ vars.TONGMU_PRODUCTION_SSH_HOST_KEY_SHA256 }}
         run: |
           set -Eeuo pipefail
+          if [[ -z "$VPS_HOST" || -z "$VPS_USER" || -z "$VPS_PORT" || -z "$VPS_SSH_KEY" || -z "$SSH_HOST_KEY_FINGERPRINT" ]]; then
+            echo "::error::新 VPS 未配置，诊断未执行。"
+            exit 1
+          fi
+          if [[ "$VPS_HOST" == "8.217.140.53" || ! "$VPS_PORT" =~ ^[0-9]{1,5}$ ]] || (( 10#$VPS_PORT < 1 || 10#$VPS_PORT > 65535 )); then
+            echo "::error::拒绝访问旧香港 VPS 或非法 SSH 端口。"
+            exit 1
+          fi
           install -d -m 700 ~/.ssh
           printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/tongmu_actions
           chmod 600 ~/.ssh/tongmu_actions
-          ssh-keyscan -p "$VPS_PORT" -H "$VPS_HOST" >> ~/.ssh/known_hosts
-          ssh -i ~/.ssh/tongmu_actions -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" 'bash -se' < scripts/deploy/diagnose-production.sh
+          ssh-keyscan -T 10 -t ed25519 -p "$VPS_PORT" -H "$VPS_HOST" > ~/.ssh/known_hosts
+          actual_fingerprint="$(ssh-keygen -lf ~/.ssh/known_hosts -E sha256 | awk 'NR==1 {print $2}')"
+          [[ "$actual_fingerprint" == "$SSH_HOST_KEY_FINGERPRINT" ]] || { echo "::error::SSH 主机指纹不匹配。"; exit 1; }
+          ssh -i ~/.ssh/tongmu_actions -o StrictHostKeyChecking=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" 'bash -se' < scripts/deploy/diagnose-production.sh
