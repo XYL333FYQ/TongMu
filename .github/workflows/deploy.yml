@@ -25,33 +25,86 @@ jobs:
     needs: image
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    # 生产 VPS 的地址/密钥不再读取旧香港仓库级 VPS_* Secrets。
+    # 新机器尚未配置时本 Job 会安全拒绝，不接触任何服务器。
+    environment: production
     timeout-minutes: 75
     permissions:
       contents: read
       packages: read
     steps:
+      - name: Require explicit future production target
+        shell: bash
+        env:
+          DEPLOY_ENABLED: ${{ vars.TONGMU_DEPLOY_ENABLED }}
+          VPS_HOST: ${{ vars.TONGMU_PRODUCTION_HOST }}
+          VPS_PORT: ${{ vars.TONGMU_PRODUCTION_SSH_PORT }}
+          VPS_USER: ${{ vars.TONGMU_PRODUCTION_SSH_USER }}
+          VPS_SSH_KEY: ${{ secrets.TONGMU_PRODUCTION_SSH_KEY }}
+          SSH_HOST_KEY_FINGERPRINT: ${{ vars.TONGMU_PRODUCTION_SSH_HOST_KEY_SHA256 }}
+        run: |
+          set -Eeuo pipefail
+          if [[ "$DEPLOY_ENABLED" != "true" ]]; then
+            echo "::error::未来 VPS 尚未启用：请先配置 production Environment，再显式设置 TONGMU_DEPLOY_ENABLED=true。"
+            exit 1
+          fi
+          if [[ -z "$VPS_HOST" || -z "$VPS_PORT" || -z "$VPS_USER" || -z "$VPS_SSH_KEY" || -z "$SSH_HOST_KEY_FINGERPRINT" ]]; then
+            echo "::error::缺少 production 环境中的新 VPS 连接配置或 SSH 主机指纹。"
+            exit 1
+          fi
+          if [[ ! "$VPS_PORT" =~ ^[0-9]{1,5}$ ]] || (( 10#$VPS_PORT < 1 || 10#$VPS_PORT > 65535 )); then
+            echo "::error::SSH 端口不合法。"
+            exit 1
+          fi
+          if [[ ! "$SSH_HOST_KEY_FINGERPRINT" =~ ^SHA256:[A-Za-z0-9+/]{43}$ ]]; then
+            echo "::error::SSH 主机指纹格式应为 SHA256: 后接 43 位 base64 字符。"
+            exit 1
+          fi
+          if [[ "$VPS_HOST" == "8.217.140.53" ]]; then
+            echo "::error::旧香港 VPS 已退役，拒绝向旧 IP 部署。"
+            exit 1
+          fi
+          echo "新 VPS 目标检查通过（不打印连接密钥）。"
+
       - uses: actions/checkout@v5
 
       - name: Prepare SSH
         shell: bash
         env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_PORT: ${{ secrets.VPS_PORT }}
-          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ vars.TONGMU_PRODUCTION_HOST }}
+          VPS_PORT: ${{ vars.TONGMU_PRODUCTION_SSH_PORT }}
+          VPS_SSH_KEY: ${{ secrets.TONGMU_PRODUCTION_SSH_KEY }}
+          SSH_HOST_KEY_FINGERPRINT: ${{ vars.TONGMU_PRODUCTION_SSH_HOST_KEY_SHA256 }}
         run: |
           set -Eeuo pipefail
           install -d -m 700 ~/.ssh
           printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/tongmu_actions
           chmod 600 ~/.ssh/tongmu_actions
-          ssh-keyscan -p "$VPS_PORT" -H "$VPS_HOST" >> ~/.ssh/known_hosts
+          ssh-keyscan -T 10 -t ed25519 -p "$VPS_PORT" -H "$VPS_HOST" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
+          actual_fingerprint="$(ssh-keygen -lf ~/.ssh/known_hosts -E sha256 | awk 'NR==1 {print $2}')"
+          if [[ "$actual_fingerprint" != "$SSH_HOST_KEY_FINGERPRINT" ]]; then
+            echo "::error::新 VPS 的 ED25519 主机指纹不匹配，拒绝 SSH 连接。"
+            exit 1
+          fi
+
+      - name: Check new VPS prerequisites (read-only)
+        shell: bash
+        env:
+          VPS_HOST: ${{ vars.TONGMU_PRODUCTION_HOST }}
+          VPS_PORT: ${{ vars.TONGMU_PRODUCTION_SSH_PORT }}
+          VPS_USER: ${{ vars.TONGMU_PRODUCTION_SSH_USER }}
+        run: |
+          set -Eeuo pipefail
+          ssh -i ~/.ssh/tongmu_actions -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" \
+            'bash -se' < scripts/deploy/preflight-new-vps.sh
 
       - name: Pull incremental image layers and start the verified image
         shell: bash
         env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_USER: ${{ secrets.VPS_USER }}
-          VPS_PORT: ${{ secrets.VPS_PORT }}
+          VPS_HOST: ${{ vars.TONGMU_PRODUCTION_HOST }}
+          VPS_USER: ${{ vars.TONGMU_PRODUCTION_SSH_USER }}
+          VPS_PORT: ${{ vars.TONGMU_PRODUCTION_SSH_PORT }}
           DEPLOY_SHA: ${{ github.sha }}
           DEPLOY_ID: ${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           IMAGE_REGISTRY: ghcr.io/${{ github.repository }}
